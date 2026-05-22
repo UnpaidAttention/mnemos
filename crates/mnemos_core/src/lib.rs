@@ -22,4 +22,4 @@ pub mod watcher;
 pub use error::{MnemosError, Result};
 // pub use storage::Storage;               // re-enabled in Task 10
 pub use tier::Tier;
-// pub use types::{Memory, MemoryType};    // re-enabled in Task 7
+pub use types::{Memory, MemoryType}; // re-enabled in Task 7
