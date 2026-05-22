@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = ["crates/mnemos_core", "crates/mnemos_cli"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Shaun Jones <sjones@armellini.com>"]
+repository = "https://github.com/sjones/mnemos"
+rust-version = "1.78"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "signal"] }
+
+# Database
+libsql = { version = "0.5", default-features = false, features = ["core", "serde"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+
+# Time + IDs
+chrono = { version = "0.4", features = ["serde"] }
+ulid = { version = "1", features = ["serde"] }
+
+# Errors + logs
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+directories = "5"
+
+# File watching
+notify = "6"
+notify-debouncer-full = "0.3"
+
+# Test helpers
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+insta = { version = "1", features = ["yaml"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
