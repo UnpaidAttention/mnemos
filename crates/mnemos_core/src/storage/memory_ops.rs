@@ -134,3 +134,62 @@ fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
         .map(|d| d.with_timezone(&Utc))
         .map_err(|e| MnemosError::Validation(format!("bad timestamp '{s}': {e}")))
 }
+
+/// Mark `old_id` as invalid at `invalid_at`, set its `superseded_by` to
+/// `new_id`, and insert a `supersedes` link from `new_id` → `old_id`.
+///
+/// Returns `MnemosError::MemoryNotFound` if `old_id` is already invalidated
+/// or does not exist.
+pub async fn supersede_memory(
+    storage: &Storage,
+    old_id: &str,
+    new_id: &str,
+    invalid_at: DateTime<Utc>,
+) -> Result<()> {
+    let (conn, _guard) = storage.write_conn().await?;
+    let tx = conn.transaction().await?;
+
+    let affected = tx
+        .execute(
+            "UPDATE memories
+                SET invalid_at = ?, superseded_by = ?
+              WHERE id = ? AND invalid_at IS NULL",
+            params![
+                invalid_at.to_rfc3339(),
+                new_id.to_string(),
+                old_id.to_string()
+            ],
+        )
+        .await?;
+    if affected == 0 {
+        return Err(MnemosError::MemoryNotFound(old_id.into()));
+    }
+
+    tx.execute(
+        "INSERT OR IGNORE INTO memory_links (source_id, target_id, kind)
+             VALUES (?, ?, 'supersedes')",
+        params![new_id.to_string(), old_id.to_string()],
+    )
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Set `invalid_at` on a memory without creating a supersession link.
+///
+/// Useful for plain retraction / expiry. Returns `MnemosError::MemoryNotFound`
+/// if the memory is already invalidated or does not exist.
+pub async fn soft_invalidate(storage: &Storage, id: &str, at: DateTime<Utc>) -> Result<()> {
+    let (conn, _guard) = storage.write_conn().await?;
+    let affected = conn
+        .execute(
+            "UPDATE memories SET invalid_at = ? WHERE id = ? AND invalid_at IS NULL",
+            params![at.to_rfc3339(), id.to_string()],
+        )
+        .await?;
+    if affected == 0 {
+        return Err(MnemosError::MemoryNotFound(id.into()));
+    }
+    Ok(())
+}
