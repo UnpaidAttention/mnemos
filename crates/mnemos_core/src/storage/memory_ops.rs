@@ -193,3 +193,58 @@ pub async fn soft_invalidate(storage: &Storage, id: &str, at: DateTime<Utc>) -> 
     }
     Ok(())
 }
+
+/// Filter criteria for [`list_memories`].
+#[derive(Debug, Default, Clone)]
+pub struct ListFilter {
+    /// Restrict results to memories in these tiers. `None` means all tiers.
+    pub tiers: Option<Vec<Tier>>,
+    /// Restrict results to a specific workspace. `None` matches all workspaces.
+    pub workspace: Option<String>,
+    /// When `false` (the default), soft-invalidated memories are excluded.
+    pub include_invalid: bool,
+    /// Maximum number of results to return. `None` means no limit.
+    pub limit: Option<usize>,
+}
+
+/// Return memories matching `filter`, ordered newest-first by `created_at`.
+pub async fn list_memories(storage: &Storage, filter: ListFilter) -> Result<Vec<Memory>> {
+    let conn = storage.conn()?;
+    let mut sql = String::from(
+        "SELECT id, tier, kind, title, body,
+                tags_json, entities_json, links_json, provenance_json,
+                created_at, ingested_at, valid_at, invalid_at, superseded_by,
+                strength, importance, last_accessed, access_count,
+                workspace, source_tool, mnemos_version
+         FROM memories WHERE 1=1",
+    );
+    let mut args: Vec<libsql::Value> = vec![];
+
+    if !filter.include_invalid {
+        sql.push_str(" AND invalid_at IS NULL");
+    }
+    if let Some(ws) = filter.workspace.as_ref() {
+        sql.push_str(" AND (workspace IS NULL OR workspace = ?)");
+        args.push(ws.clone().into());
+    }
+    if let Some(tiers) = filter.tiers.as_ref() {
+        if !tiers.is_empty() {
+            let placeholders = vec!["?"; tiers.len()].join(",");
+            sql.push_str(&format!(" AND tier IN ({placeholders})"));
+            for t in tiers {
+                args.push(t.as_str().to_string().into());
+            }
+        }
+    }
+    sql.push_str(" ORDER BY created_at DESC");
+    if let Some(limit) = filter.limit {
+        sql.push_str(&format!(" LIMIT {limit}"));
+    }
+
+    let mut rows = conn.query(&sql, args).await?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await? {
+        out.push(row_to_memory(&row)?);
+    }
+    Ok(out)
+}
