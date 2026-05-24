@@ -158,6 +158,17 @@ const V1_STATEMENTS: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS idx_audit_memory ON audit_log(memory_id)",
     "CREATE INDEX IF NOT EXISTS idx_audit_ts     ON audit_log(ts)",
+    // Append-only enforcement on audit_log
+    "CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+        BEFORE UPDATE ON audit_log
+        BEGIN
+            SELECT RAISE(ABORT, 'audit_log is append-only: UPDATE not allowed');
+        END",
+    "CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+        BEFORE DELETE ON audit_log
+        BEGIN
+            SELECT RAISE(ABORT, 'audit_log is append-only: DELETE not allowed');
+        END",
     // ── FTS5 virtual tables ──────────────────────────────────────────────
     "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
         memory_id UNINDEXED, title, body,
