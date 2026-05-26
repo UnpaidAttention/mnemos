@@ -25,6 +25,22 @@ async fn ollama_batch_matches_single() {
     assert_eq!(batch[0], a);
 }
 
+#[tokio::test]
+#[ignore]
+async fn ollama_batch_processes_more_than_8_inputs_in_order() {
+    let e = OllamaEmbedder::new(OllamaConfig::default());
+    let texts: Vec<String> = (0..20).map(|i| format!("input #{i}")).collect();
+    let vectors = e.embed_batch(&texts).await.unwrap();
+    assert_eq!(vectors.len(), 20);
+    // Each vector should be 768d (nomic-embed-text)
+    for v in &vectors {
+        assert_eq!(v.len(), 768);
+    }
+    // Order preservation: embedding "input #0" once and via batch should match.
+    let v0_alone = e.embed("input #0").await.unwrap();
+    assert_eq!(vectors[0], v0_alone);
+}
+
 #[test]
 fn ollama_config_defaults() {
     let c = OllamaConfig::default();

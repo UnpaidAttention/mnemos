@@ -125,14 +125,19 @@ impl Embedder for OllamaEmbedder {
 
     /// Concurrent fan-out — Ollama serves embeddings in parallel reliably.
     ///
-    /// Up to 8 requests are in-flight simultaneously; the results are returned
-    /// in the same order as the input slice.
+    /// Texts are processed in chunks of up to 8 concurrent requests; results
+    /// are returned in the same order as the input slice.  Chunked `join_all`
+    /// is used instead of `stream::buffered` to avoid async_trait + HRTB
+    /// lifetime issues with borrowed futures.
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        use futures::stream::{FuturesOrdered, StreamExt};
-        let mut ordered: FuturesOrdered<_> = texts.iter().map(|t| self.embed(t.as_str())).collect();
-        let mut out = Vec::with_capacity(texts.len());
-        while let Some(result) = ordered.next().await {
-            out.push(result?);
+        use futures::future::join_all;
+        const MAX_CONCURRENT: usize = 8;
+        let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+        for batch in texts.chunks(MAX_CONCURRENT) {
+            let results = join_all(batch.iter().map(|t| self.embed(t))).await;
+            for r in results {
+                out.push(r?);
+            }
         }
         Ok(out)
     }
