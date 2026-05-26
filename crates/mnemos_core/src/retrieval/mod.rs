@@ -1,5 +1,6 @@
 pub mod bm25;
 pub mod dense;
+pub mod reweight;
 pub mod rrf;
 
 use crate::tier::Tier;
