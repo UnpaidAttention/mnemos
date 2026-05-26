@@ -41,7 +41,7 @@ impl Default for RecallOpts {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallHit {
     pub memory: Memory,
     /// Aggregate score after fusion + reweighting + (optional) rerank.
@@ -56,7 +56,7 @@ pub struct RecallHit {
     pub explain: Option<Explain>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Explain {
     pub bm25_rank: Option<usize>,
     pub dense_rank: Option<usize>,

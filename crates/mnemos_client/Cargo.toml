@@ -17,6 +17,9 @@ thiserror = { workspace = true }
 url = { workspace = true }
 directories = { workspace = true }
 async-trait = { workspace = true }
+urlencoding = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+mnemos_daemon = { path = "../mnemos_daemon" }
