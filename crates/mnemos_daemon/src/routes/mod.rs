@@ -2,6 +2,7 @@
 //! /v1/* is gated by the bearer-token middleware.
 
 pub mod health;
+pub mod memories;
 
 use axum::{
     extract::State,
@@ -16,7 +17,9 @@ use crate::state::AppState;
 pub fn build_router(state: AppState) -> Router {
     let public = Router::new().route("/health", axum::routing::get(health::get_health));
 
-    let v1 = Router::new().route("/v1/working", axum::routing::get(stub_working));
+    let v1 = Router::new()
+        .merge(memories::router())
+        .route("/v1/working", axum::routing::get(stub_working));
 
     let v1_with_auth = v1.route_layer(from_fn_with_state(state.clone(), bearer_auth));
 
