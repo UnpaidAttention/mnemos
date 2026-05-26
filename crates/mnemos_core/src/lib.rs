@@ -11,6 +11,7 @@ pub mod file_io;
 pub mod frontmatter;
 pub mod id;
 pub mod paths;
+pub mod providers;
 pub mod rebuild;
 pub mod retrieval;
 pub mod storage;

@@ -42,6 +42,9 @@ directories = "5"
 notify = "6"
 notify-debouncer-full = "0.3"
 
+# Async traits
+async-trait = "0.1"
+
 # Hashing
 sha2 = "0.10"
 
