@@ -1,0 +1,15 @@
+## Mnemos persistent memory
+
+This session has a persistent memory server (Mnemos) registered as an MCP
+provider. At the start of every session, read the `mnemos://working`
+resource — it contains identity facts and active project context.
+
+Available tools:
+- `remember(body, title?, tier?, tags?, importance?)` — store a memory.
+- `recall(query, k=5, explain?)` — retrieve relevant memories.
+- `forget(memory_id, reason?)` — soft-invalidate.
+- `get_memory(memory_id)` / `list_memories(...)` — browse.
+
+When the user states a durable preference, project context, or rule that's
+not obvious from the codebase, call `remember(...)` with `tier=procedural`
+(rules) or `tier=working` (identity/project) so it persists across sessions.

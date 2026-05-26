@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mnemos": {
+      "command": "mnemos-mcp-stdio",
+      "args": [],
+      "env": {
+        "MNEMOS_DAEMON_URL": "http://127.0.0.1:7423"
+      }
+    }
+  }
+}
