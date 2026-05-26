@@ -60,6 +60,9 @@ pub async fn bm25_recall(
             memory,
             score: -raw, // higher = better
             bm25_rank: Some(rank),
+            dense_rank: None,
+            dense_distance: None,
+            explain: None,
         });
     }
     Ok(hits)
