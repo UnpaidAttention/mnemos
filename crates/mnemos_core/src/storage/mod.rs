@@ -63,17 +63,23 @@ impl Storage {
             db: Arc::new(db),
             write_lock: Arc::new(Mutex::new(())),
         };
-        // apply_migrations opens the first connection, which triggers libsql's
-        // one-time sqlite3_config(SERIALIZED) + sqlite3_initialize() call.
-        // We must register the sqlite-vec auto-extension AFTER that first
-        // connection so that sqlite3_auto_extension (which calls
-        // sqlite3_initialize internally) does not run before libsql has had the
-        // chance to configure the threading mode.  Extensions registered via
-        // sqlite3_auto_extension apply to all future connections, so every
-        // caller that opens a connection after Storage::open returns will have
-        // vec_version() and vec0 available.
+        // Ordering contract (do not change without understanding all three steps):
+        //
+        // 1. `build()` above creates the Database handle.
+        // 2. Opening the FIRST connection via `connect()` triggers libsql's
+        //    one-time sqlite3_config(SERIALIZED) + sqlite3_initialize() call.
+        //    `sqlite3_auto_extension` calls `sqlite3_initialize` internally and
+        //    will return SQLITE_MISUSE (rc=21) if called before libsql has
+        //    finished its own threading setup.  Therefore we must open at least
+        //    one connection before calling `ensure_vec_extension_registered`.
+        // 3. Extensions registered via `sqlite3_auto_extension` apply to all
+        //    FUTURE connections, so the connection that triggered libsql init
+        //    does NOT get vec0 — but every connection opened afterward (including
+        //    the ones used by `apply_migrations`) will have vec_version() and
+        //    vec0 available, which is what migration v2 requires.
+        drop(storage.conn()?); // step 2: trigger libsql's sqlite3_initialize
+        ensure_vec_extension_registered(); // step 3: safe now
         storage.apply_migrations().await?;
-        ensure_vec_extension_registered();
         Ok(storage)
     }
 

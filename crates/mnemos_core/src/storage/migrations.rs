@@ -37,9 +37,37 @@ impl Storage {
             )
             .await?;
         }
+        if current < 2 {
+            migration_v2(&conn).await?;
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (2)",
+                (),
+            )
+            .await?;
+        }
         Ok(())
     }
 }
+
+async fn migration_v2(conn: &libsql::Connection) -> Result<()> {
+    for stmt in V2_STATEMENTS {
+        conn.execute(stmt, ()).await?;
+    }
+    Ok(())
+}
+
+const V2_STATEMENTS: &[&str] = &[
+    // 768d matches nomic-embed-text. If you change embedding model dim,
+    // bump to a v3 migration with a new table.
+    "CREATE VIRTUAL TABLE IF NOT EXISTS memory_vec USING vec0(
+        memory_id TEXT PRIMARY KEY,
+        embedding FLOAT[768]
+    )",
+    "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vec USING vec0(
+        chunk_id TEXT PRIMARY KEY,
+        embedding FLOAT[768]
+    )",
+];
 
 async fn migration_v1(conn: &libsql::Connection) -> Result<()> {
     for stmt in V1_STATEMENTS {
