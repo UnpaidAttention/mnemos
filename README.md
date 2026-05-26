@@ -4,32 +4,51 @@ Local-first, file-as-source-of-truth memory provider for AI tools. Plan 1
 ships the CLI foundation — vectors, daemon, MCP, and UI come in later
 plans.
 
-## What works today (v0.1.0)
+## What works today (v0.2.0)
 
-- `mnemos remember "<body>"` — store a memory (markdown file + DB + vector).
-- `mnemos recall "<query>"` — hybrid retrieval (BM25 + dense via sqlite-vec, fused with RRF, re-weighted by recency/importance/strength/tier).
-  - `--rerank` enables an optional cross-encoder reranker (requires `--features rerank-onnx` at build time + model files in `~/.local/share/mnemos/models/`).
-  - `--explain` emits structured per-hit scoring breakdown.
-- `mnemos embed status` — report how many memories are embedded.
-- `mnemos embed backfill` — embed every memory missing a vector.
-- `mnemos get <id>` / `mnemos list` / `mnemos forget <id>` — basic CRUD with
-  bi-temporal soft invalidation.
-- `mnemos rebuild` — reconstruct the DB index + vectors from files.
-- `mnemos doctor` / `mnemos status` — diagnostics.
+- **Long-running daemon** (`mnemosd`) — REST + WebSocket + MCP over Streamable HTTP at `127.0.0.1:7423`.
+- **CLI talks to the daemon when one is running**, falls back to direct vault otherwise.
+- **MCP integration** — `mnemos-mcp-stdio` subprocess speaks the MCP protocol to Claude Code, Gemini CLI, and any MCP-aware client. Reference adapter for Claude Code at `adapters/claude-code/`.
+- `mnemos daemon start|stop|status|logs` — process management.
+- `mnemos remember "<body>"` — store a memory.
+- `mnemos recall "<query>" --rerank --explain` — hybrid retrieval (BM25 + dense + RRF + reweight + optional cross-encoder rerank, wired from `config.toml`).
+- `mnemos embed status|backfill` — embedding maintenance.
+- `mnemos get <id>` / `mnemos list` / `mnemos forget <id>` — CRUD with bi-temporal soft invalidation.
+- `mnemos rebuild` / `mnemos doctor` — diagnostics + recovery.
 
-### Embedder selection (via env var)
+### Configuration
 
-| `MNEMOS_EMBEDDER` | Behavior |
-|---|---|
-| `ollama` (default) | Use Ollama at `http://localhost:11434`, model `nomic-embed-text` (768d). Override URL with `MNEMOS_OLLAMA_URL`; model with `MNEMOS_OLLAMA_MODEL`. |
-| `mock` | Deterministic test embedder (768d by default; set `MNEMOS_EMBEDDER_DIM` to override). |
-| `none` | No embedder; falls back to BM25-only retrieval. |
+Settings live in `~/.config/mnemos/config.toml` (created on first run). See
+`docs/superpowers/specs/2026-05-22-mnemos-memory-provider-design.md` for the
+full schema; key keys:
 
-Pull the default Ollama model before first use:
+```toml
+[daemon]
+host = "127.0.0.1"
+port = 7423
 
-```bash
-ollama pull nomic-embed-text
+[embedder]
+kind = "ollama"            # "ollama" | "mock" | "none"
+url = "http://localhost:11434"
+model = "nomic-embed-text"
+dim = 768
+
+[reranker]
+enabled = false            # set true + build with --features rerank-onnx to enable
+
+[mcp]
+enabled = true
 ```
+
+Environment variables still override (Plan 2 compat):
+`MNEMOS_EMBEDDER`, `MNEMOS_OLLAMA_URL`, `MNEMOS_OLLAMA_MODEL`,
+`MNEMOS_EMBEDDER_DIM`, `MNEMOS_VAULT`, `MNEMOS_DAEMON_PORT`, `MNEMOS_LOG`.
+
+### Auth
+
+Daemon endpoints require `Authorization: Bearer <token>`. The token lives at
+`~/.config/mnemos/token` (mode 0600), auto-generated on first daemon start.
+`/health` is exempt for monitoring.
 
 ## Install (from source)
 

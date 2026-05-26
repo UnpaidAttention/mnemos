@@ -2,6 +2,32 @@
 
 All notable changes to this project are recorded here.
 
+## [0.2.0] - 2026-05-26
+
+### Added
+- `mnemos_daemon` crate — long-running HTTP+WebSocket+MCP server.
+- `mnemos_client` crate — typed Rust HTTP client for the daemon.
+- REST API: `/v1/memories[/{id}/audit|/search|/time-travel]`, `/v1/sessions[/{id}[/chunks|/end]]`, `/v1/entities[/{id}[/graph]]`, `/v1/working`.
+- WebSocket `/v1/events` — typed event stream (MemoryCreated, MemoryInvalidated, SessionStarted, SessionEnded).
+- MCP over Streamable HTTP at `/mcp` — `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`.
+- `mnemos-mcp-stdio` subprocess transport for MCP stdio clients.
+- `mnemos daemon start|stop|status|logs` CLI subcommand.
+- `config.toml` schema with env-var overrides (Plan 2's env vars graduate to overrides).
+- Bearer-token auth, auto-issued at `~/.config/mnemos/token` (mode 0600).
+- PID file + graceful shutdown on SIGTERM/SIGINT.
+- Claude Code reference adapter (`adapters/claude-code/`).
+- Schema v3: `vault_meta` table tracks embedder dim + model_id; `Vault::open_with_embedder` errors on dim mismatch.
+- `Embedder::model_id()` default trait method; `OllamaEmbedder` overrides with concurrent `embed_batch` (8-way fanout).
+
+### Changed
+- CLI `--rerank` flag now actually reranks when the daemon's `[reranker]` config enables a reranker (was a stderr warning in v0.1.0).
+- `Vault::open_with_embedder` enforces embedder dim/model_id consistency against the stored vault metadata.
+
+### Notes
+- Daemon binds to `127.0.0.1` by default — exposing publicly requires explicit config (and a TLS terminator).
+- ONNX reranker still feature-gated (`cargo build --features rerank-onnx`).
+- All test fixtures use `MockEmbedder`; CI does not require Ollama.
+
 ## [0.1.0] - 2026-05-26
 
 ### Added
