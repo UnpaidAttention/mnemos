@@ -38,7 +38,12 @@ async fn external_edit_emits_changed_event() {
         .expect("watcher should emit event within 3s")
         .expect("channel should not close");
     match event {
-        WatchEvent::Changed(p) => assert_eq!(p, file),
+        // macOS temp dirs (/var/folders/...) are symlinks to /private/var/...,
+        // and fsevents reports the canonical path. Compare canonicalized paths
+        // so the assertion is robust across platforms.
+        WatchEvent::Changed(p) => {
+            assert_eq!(p.canonicalize().unwrap(), file.canonicalize().unwrap())
+        }
         other => panic!("expected Changed, got {other:?}"),
     }
 }
