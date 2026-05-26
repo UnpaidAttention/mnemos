@@ -1,5 +1,6 @@
 pub mod bm25;
 pub mod dense;
+pub mod hybrid;
 pub mod reweight;
 pub mod rrf;
 
@@ -8,11 +9,20 @@ use crate::types::Memory;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RecallOpts {
     pub k: usize,
     pub tiers: Option<Vec<Tier>>,
     pub workspace: Option<String>,
     pub include_invalid: bool,
+    /// RRF fusion constant. Canonical value is 60.
+    pub rrf_k: usize,
+    /// Reweighting parameters.
+    pub reweight: reweight::ReweightConfig,
+    /// Populate per-hit Explain field when true.
+    pub explain: bool,
+    /// Enable cross-encoder reranking (Task 12+ adds the actual reranker).
+    pub rerank: bool,
 }
 
 impl Default for RecallOpts {
@@ -22,6 +32,10 @@ impl Default for RecallOpts {
             tiers: None,
             workspace: None,
             include_invalid: false,
+            rrf_k: 60,
+            reweight: reweight::ReweightConfig::default(),
+            explain: false,
+            rerank: false,
         }
     }
 }

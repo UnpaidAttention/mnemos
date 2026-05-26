@@ -22,6 +22,7 @@ pub async fn run(vault: Option<PathBuf>, json: bool, args: RecallArgs) -> Result
         tiers,
         workspace: args.workspace,
         include_invalid: args.include_invalid,
+        ..Default::default()
     };
     let hits = bm25_recall(vault.storage(), &args.query, opts).await?;
     if json {
