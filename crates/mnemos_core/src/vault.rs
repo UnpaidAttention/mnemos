@@ -1,19 +1,22 @@
-use crate::error::Result;
+use crate::error::{MnemosError, Result};
 use crate::file_io::{content_hash, read_memory_file, write_memory_file};
 use crate::frontmatter::parse_frontmatter;
 use crate::id::new_memory_id;
 use crate::paths::Paths;
+use crate::providers::Embedder;
 use crate::storage::audit::write_audit;
 use crate::storage::memory_ops::{
     get_memory, insert_memory, list_memories, soft_invalidate, ListFilter,
 };
+use crate::storage::vec_ops::{delete_memory_vec, insert_memory_vec};
 use crate::storage::Storage;
 use crate::tier::Tier;
 use crate::types::{Memory, MemoryType};
 use chrono::Utc;
 use serde_json::json;
+use std::sync::Arc;
 
-/// High-level vault: owns `Paths` and `Storage` together.
+/// High-level vault: owns `Paths`, `Storage`, and an optional `Embedder`.
 ///
 /// All higher-level code (CLI, daemon, MCP server) should work through
 /// `Vault` rather than coordinating the two components directly.
@@ -21,6 +24,7 @@ use serde_json::json;
 pub struct Vault {
     paths: Paths,
     storage: Storage,
+    embedder: Option<Arc<dyn Embedder>>,
 }
 
 /// Options for [`Vault::remember`].
@@ -36,11 +40,27 @@ pub struct RememberOpts {
 }
 
 impl Vault {
-    /// Open a vault: ensure directories exist, open the DB, run migrations.
+    /// Open a vault without an embedder (embedding is skipped on `remember`).
     pub async fn open(paths: Paths) -> Result<Self> {
+        Self::open_with_embedder(paths, None).await
+    }
+
+    /// Open a vault with an optional embedder.
+    ///
+    /// When `embedder` is `Some`, every call to [`remember`][Vault::remember]
+    /// will generate and store a vector embedding.  When `None`, the
+    /// `memory_vec` table is left untouched.
+    pub async fn open_with_embedder(
+        paths: Paths,
+        embedder: Option<Arc<dyn Embedder>>,
+    ) -> Result<Self> {
         paths.ensure_dirs()?;
         let storage = Storage::open(&paths.db_path).await?;
-        Ok(Self { paths, storage })
+        Ok(Self {
+            paths,
+            storage,
+            embedder,
+        })
     }
 
     /// Borrow the underlying storage handle (e.g. for audit queries in tests).
@@ -51,6 +71,11 @@ impl Vault {
     /// Borrow the resolved path set.
     pub fn paths(&self) -> &Paths {
         &self.paths
+    }
+
+    /// Borrow the embedder, if one was supplied at open time.
+    pub fn embedder(&self) -> Option<&Arc<dyn Embedder>> {
+        self.embedder.as_ref()
     }
 
     /// Write a new memory to disk and the DB, then emit a `create` audit entry.
@@ -100,6 +125,18 @@ impl Vault {
             Some(json!({"tier": mem.tier.as_str(), "title": mem.title})),
         )
         .await?;
+        if let Some(emb) = &self.embedder {
+            // Embed the body (not the title; titles are sometimes auto-generated and noisy).
+            let vector = emb.embed(body).await?;
+            if vector.len() != emb.dim() {
+                return Err(MnemosError::Internal(format!(
+                    "embedder returned {} dims, expected {}",
+                    vector.len(),
+                    emb.dim()
+                )));
+            }
+            insert_memory_vec(&self.storage, &id, &vector).await?;
+        }
         Ok(id)
     }
 
@@ -139,6 +176,11 @@ impl Vault {
             )
             .await?;
         }
+
+        // Remove the vector from the KNN index.  We delete unconditionally: if
+        // no embedding was ever stored the DELETE is a silent no-op.  Chunks are
+        // intentionally left alone — they belong to a separate conceptual layer.
+        delete_memory_vec(&self.storage, id).await?;
 
         write_audit(
             &self.storage,
