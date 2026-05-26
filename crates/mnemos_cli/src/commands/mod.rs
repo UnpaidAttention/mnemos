@@ -1,4 +1,5 @@
 pub mod doctor;
+pub mod embed;
 pub mod forget;
 pub mod get;
 pub mod list;

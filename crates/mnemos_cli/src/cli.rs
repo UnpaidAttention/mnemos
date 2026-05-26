@@ -38,6 +38,8 @@ pub enum Cmd {
     Doctor,
     /// Quick vault health summary.
     Status,
+    /// Embedding maintenance.
+    Embed(EmbedArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -87,4 +89,21 @@ pub struct ListArgs {
     pub include_invalid: bool,
     #[arg(short, long, default_value_t = 50)]
     pub limit: usize,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct EmbedArgs {
+    #[command(subcommand)]
+    pub action: EmbedAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EmbedAction {
+    /// Report how many memories have embeddings vs not.
+    Status,
+    /// Embed every memory that's missing a vector.
+    Backfill {
+        #[arg(long, default_value_t = 8)]
+        batch_size: usize,
+    },
 }
