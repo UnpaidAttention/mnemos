@@ -17,6 +17,12 @@ use crate::config::Config;
 use crate::state::AppState;
 use std::sync::Arc;
 
+/// Block on the axum service until the listener errors or the future is dropped.
+pub async fn serve(listener: tokio::net::TcpListener, app: axum::Router) -> anyhow::Result<()> {
+    axum::serve(listener, app.into_make_service()).await?;
+    Ok(())
+}
+
 pub async fn build_app(config: Config, vault: Vault) -> Result<(axum::Router, AppState)> {
     let token_path = config_token_path()?;
     let token = auth::ensure_token(&token_path)?;
