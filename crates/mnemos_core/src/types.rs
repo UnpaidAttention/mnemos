@@ -34,7 +34,7 @@ pub struct Memory {
     #[serde(rename = "type")]
     pub kind: MemoryType,
     pub title: String,
-    #[serde(skip)]
+    #[serde(default)]
     pub body: String,
     #[serde(default)]
     pub tags: Vec<String>,

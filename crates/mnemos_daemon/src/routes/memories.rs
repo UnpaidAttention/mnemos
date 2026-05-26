@@ -95,69 +95,12 @@ async fn post_memory(
     Ok((StatusCode::CREATED, Json(PostMemoryResp { id })))
 }
 
-/// Response envelope for `GET /v1/memories/{id}`.
-///
-/// We mirror every field from `Memory` but include `body` explicitly because
-/// `Memory` carries `#[serde(skip)]` on that field (list endpoints omit the
-/// body for payload reasons; the single-get endpoint always returns it).
-#[derive(Debug, Serialize)]
-struct GetMemoryResp {
-    id: String,
-    #[serde(rename = "type")]
-    kind: mnemos_core::types::MemoryType,
-    tier: String,
-    title: String,
-    body: String,
-    tags: Vec<String>,
-    entities: Vec<String>,
-    links: Vec<String>,
-    strength: f64,
-    importance: f64,
-    workspace: Option<String>,
-    source_tool: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    ingested_at: chrono::DateTime<chrono::Utc>,
-    valid_at: chrono::DateTime<chrono::Utc>,
-    invalid_at: Option<chrono::DateTime<chrono::Utc>>,
-    superseded_by: Option<String>,
-    last_accessed: chrono::DateTime<chrono::Utc>,
-    access_count: u64,
-    mnemos_version: u32,
-}
-
-impl From<mnemos_core::types::Memory> for GetMemoryResp {
-    fn from(m: mnemos_core::types::Memory) -> Self {
-        Self {
-            id: m.id,
-            kind: m.kind,
-            tier: m.tier.as_str().to_string(),
-            title: m.title,
-            body: m.body,
-            tags: m.tags,
-            entities: m.entities,
-            links: m.links,
-            strength: m.strength,
-            importance: m.importance,
-            workspace: m.workspace,
-            source_tool: m.source_tool,
-            created_at: m.created_at,
-            ingested_at: m.ingested_at,
-            valid_at: m.valid_at,
-            invalid_at: m.invalid_at,
-            superseded_by: m.superseded_by,
-            last_accessed: m.last_accessed,
-            access_count: m.access_count,
-            mnemos_version: m.mnemos_version,
-        }
-    }
-}
-
 async fn get_memory(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<GetMemoryResp>, ApiError> {
+) -> Result<Json<mnemos_core::types::Memory>, ApiError> {
     let mem = state.vault.get(&id).await?;
-    Ok(Json(GetMemoryResp::from(mem)))
+    Ok(Json(mem))
 }
 
 #[derive(Debug, Deserialize)]

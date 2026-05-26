@@ -120,6 +120,34 @@ async fn get_memories_id_audit_returns_create_entry() {
     assert!(entries.iter().any(|e| e["action"] == "create"));
 }
 
+#[tokio::test]
+async fn search_hits_include_body() {
+    let (app, token) = fixture().await;
+    call(
+        app.clone(),
+        "POST",
+        "/v1/memories",
+        Some(&token),
+        r#"{"body":"distinctive body about platypus","title":"p"}"#,
+    )
+    .await;
+    let (_, b) = call(
+        app,
+        "POST",
+        "/v1/memories/search",
+        Some(&token),
+        r#"{"query":"platypus","k":3}"#,
+    )
+    .await;
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    let hits = v["hits"].as_array().unwrap();
+    assert!(!hits.is_empty());
+    assert_eq!(
+        hits[0]["memory"]["body"], "distinctive body about platypus",
+        "search hits must include the memory body"
+    );
+}
+
 async fn call(
     app: axum::Router,
     method: &str,

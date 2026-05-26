@@ -46,3 +46,20 @@ fn memory_type_serializes_kebab_case() {
     let json = serde_json::to_string(&MemoryType::CommunitySummary).unwrap();
     assert_eq!(json, "\"community-summary\"");
 }
+
+#[test]
+fn memory_json_includes_body() {
+    let mut mem = Memory::new_now(
+        "mem_X".into(),
+        mnemos_core::Tier::Semantic,
+        MemoryType::Fact,
+        "t".into(),
+        "the body text".into(),
+    );
+    mem.body = "the body text".into();
+    let json = serde_json::to_value(&mem).unwrap();
+    assert_eq!(
+        json["body"], "the body text",
+        "body must be present in JSON serialization"
+    );
+}

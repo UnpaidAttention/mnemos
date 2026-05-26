@@ -9,12 +9,10 @@ pub mod transport;
 pub use error::{ClientError, Result};
 
 use mnemos_core::retrieval::RecallHit;
-use mnemos_core::types::{Memory, MemoryType};
-use mnemos_core::Tier;
+use mnemos_core::types::Memory;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::str::FromStr;
 
 #[derive(Clone)]
 pub struct Client {
@@ -56,19 +54,14 @@ impl Client {
     }
 
     pub async fn get_memory(&self, id: &str) -> Result<Memory> {
-        // The daemon's GET /v1/memories/{id} returns a superset of Memory that
-        // includes `body` (which Memory's own serde impl skips).  We deserialize
-        // into our own wire type first, then convert.
-        let r: GetMemoryResp = self
-            .tx
+        self.tx
             .request(
                 Method::GET,
                 &format!("/v1/memories/{id}"),
                 None::<&()>,
                 true,
             )
-            .await?;
-        Ok(r.into())
+            .await
     }
 
     pub async fn forget(&self, id: &str, reason: Option<&str>) -> Result<()> {
@@ -195,72 +188,4 @@ struct RecallReq {
     include_invalid: bool,
     explain: bool,
     rerank: bool,
-}
-
-/// Wire type for `GET /v1/memories/{id}` — mirrors `GetMemoryResp` in the
-/// daemon, which explicitly includes `body` (unlike `Memory`'s serde impl).
-#[derive(Deserialize)]
-struct GetMemoryResp {
-    id: String,
-    #[serde(rename = "type")]
-    kind: MemoryType,
-    tier: String,
-    title: String,
-    body: String,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default)]
-    entities: Vec<String>,
-    #[serde(default)]
-    links: Vec<String>,
-    strength: f64,
-    importance: f64,
-    #[serde(default)]
-    workspace: Option<String>,
-    #[serde(default)]
-    source_tool: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    ingested_at: chrono::DateTime<chrono::Utc>,
-    valid_at: chrono::DateTime<chrono::Utc>,
-    #[serde(default)]
-    invalid_at: Option<chrono::DateTime<chrono::Utc>>,
-    #[serde(default)]
-    superseded_by: Option<String>,
-    last_accessed: chrono::DateTime<chrono::Utc>,
-    access_count: u64,
-    #[serde(default = "default_mnemos_version")]
-    mnemos_version: u32,
-}
-
-fn default_mnemos_version() -> u32 {
-    1
-}
-
-impl From<GetMemoryResp> for Memory {
-    fn from(r: GetMemoryResp) -> Self {
-        let tier = Tier::from_str(&r.tier).unwrap_or_default();
-        Memory {
-            id: r.id,
-            tier,
-            kind: r.kind,
-            title: r.title,
-            body: r.body,
-            tags: r.tags,
-            entities: r.entities,
-            links: r.links,
-            provenance: vec![],
-            created_at: r.created_at,
-            ingested_at: r.ingested_at,
-            valid_at: r.valid_at,
-            invalid_at: r.invalid_at,
-            superseded_by: r.superseded_by,
-            strength: r.strength,
-            importance: r.importance,
-            last_accessed: r.last_accessed,
-            access_count: r.access_count,
-            workspace: r.workspace,
-            source_tool: r.source_tool,
-            mnemos_version: r.mnemos_version,
-        }
-    }
 }

@@ -49,10 +49,17 @@ pub fn parse_frontmatter(text: &str) -> Result<(Memory, String)> {
 
 /// Serialize a [`Memory`] back to a markdown string with YAML frontmatter.
 ///
-/// The YAML block contains all fields except `body` (which is `#[serde(skip)]`
-/// on the type). The body is appended after the closing `---` separator.
+/// The YAML block contains all fields except `body` — body lives below the
+/// closing `---` delimiter. `Memory.body` is `#[serde(default)]` (not skip),
+/// so it serializes normally in JSON/API contexts. Here we strip the `body`
+/// key from the YAML mapping before writing the file so body does not appear
+/// both inline in YAML and appended below the delimiter.
 pub fn serialize_with_frontmatter(mem: &Memory) -> Result<String> {
-    let yaml = serde_yaml::to_string(mem)?;
+    let mut val = serde_yaml::to_value(mem)?;
+    if let serde_yaml::Value::Mapping(ref mut map) = val {
+        map.remove("body");
+    }
+    let yaml = serde_yaml::to_string(&val)?;
     Ok(format!("---\n{yaml}---\n\n{}", mem.body))
 }
 
