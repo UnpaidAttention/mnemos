@@ -69,6 +69,48 @@ async fn mcp_unknown_method_returns_method_not_found_error() {
     assert_eq!(v["error"]["code"], -32601);
 }
 
+#[tokio::test]
+async fn mcp_notifications_initialized_returns_200_no_error() {
+    let (app, token) = fixture().await;
+    let body = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+    let (s, b) = call(app, "POST", "/mcp", Some(&token), body).await;
+    assert_eq!(s, 200);
+    // Notification → no JSON-RPC response body (empty or non-error).
+    assert!(
+        b.is_empty() || !b.contains("\"error\""),
+        "notification must not produce an error response, got: {b}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_initialize_advertises_stable_protocol_version() {
+    let (app, token) = fixture().await;
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+    let (_, b) = call(app, "POST", "/mcp", Some(&token), body).await;
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["result"]["protocolVersion"], "2024-11-05");
+}
+
+#[tokio::test]
+async fn mcp_requires_auth() {
+    let (app, _token) = fixture().await;
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+    let (s, _) = call(app, "POST", "/mcp", None, body).await;
+    assert_eq!(s, 401, "/mcp must require a bearer token");
+}
+
+#[tokio::test]
+async fn mcp_tools_call_unknown_tool_returns_invalid_params() {
+    let (app, token) = fixture().await;
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"nonexistent_tool","arguments":{}}}"#;
+    let (_, b) = call(app, "POST", "/mcp", Some(&token), body).await;
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(
+        v["error"]["code"], -32602,
+        "unknown tool name is INVALID_PARAMS"
+    );
+}
+
 async fn call(
     app: axum::Router,
     method: &str,

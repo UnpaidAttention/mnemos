@@ -3,7 +3,13 @@ pub mod protocol;
 pub mod resources;
 pub mod tools;
 
-use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::post,
+    Json, Router,
+};
 use serde_json::{json, Value};
 
 use crate::mcp::protocol::{
@@ -16,10 +22,12 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/mcp", post(handle))
 }
 
-async fn handle(
-    State(state): State<AppState>,
-    Json(req): Json<JsonRpcRequest>,
-) -> (StatusCode, Json<JsonRpcResponse>) {
+async fn handle(State(state): State<AppState>, Json(req): Json<JsonRpcRequest>) -> Response {
+    // JSON-RPC notifications (no id, no response expected). MCP sends
+    // `notifications/initialized` after initialize. Ack with 200, empty body.
+    if req.method.starts_with("notifications/") {
+        return StatusCode::OK.into_response();
+    }
     if req.jsonrpc != "2.0" {
         return (
             StatusCode::OK,
@@ -28,7 +36,8 @@ async fn handle(
                 INVALID_REQUEST,
                 "jsonrpc must be '2.0'",
             )),
-        );
+        )
+            .into_response();
     }
     let id = req.id.clone();
     let resp = match req.method.as_str() {
@@ -50,14 +59,14 @@ async fn handle(
         "prompts/get" => prompts_get(id, &state, req.params.as_ref().unwrap_or(&Value::Null)).await,
         other => JsonRpcResponse::error(id, METHOD_NOT_FOUND, format!("unknown method: {other}")),
     };
-    (StatusCode::OK, Json(resp))
+    (StatusCode::OK, Json(resp)).into_response()
 }
 
 fn initialize(id: Option<Value>) -> JsonRpcResponse {
     JsonRpcResponse::success(
         id,
         json!({
-            "protocolVersion": "2025-06-18",
+            "protocolVersion": "2024-11-05",
             "capabilities": {
                 "tools": { "listChanged": false },
                 "resources": { "listChanged": false },
@@ -82,7 +91,15 @@ async fn tools_call(id: Option<Value>, state: &AppState, params: &Value) -> Json
     let args = params.get("arguments").cloned().unwrap_or(Value::Null);
     match tools::call(state, name, &args).await {
         Ok(result) => JsonRpcResponse::success(id, result),
-        Err(e) => JsonRpcResponse::error(id, INTERNAL_ERROR, e.to_string()),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = if msg.starts_with("unknown tool") {
+                INVALID_PARAMS
+            } else {
+                INTERNAL_ERROR
+            };
+            JsonRpcResponse::error(id, code, msg)
+        }
     }
 }
 
