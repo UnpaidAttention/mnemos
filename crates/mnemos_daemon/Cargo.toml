@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 mnemos_core = { path = "../mnemos_core" }
+libsql = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

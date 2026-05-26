@@ -3,6 +3,7 @@
 
 pub mod health;
 pub mod memories;
+pub mod sessions;
 
 use axum::{
     extract::State,
@@ -19,6 +20,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let v1 = Router::new()
         .merge(memories::router())
+        .merge(sessions::router())
         .route("/v1/working", axum::routing::get(stub_working));
 
     let v1_with_auth = v1.route_layer(from_fn_with_state(state.clone(), bearer_auth));
