@@ -53,6 +53,9 @@ async fn start_session(
     )
     .await
     .map_err(mnemos_core::error::MnemosError::from)?;
+    state
+        .events
+        .publish(crate::events::Event::SessionStarted { id: id.clone() });
     Ok((StatusCode::CREATED, Json(StartSessionResp { id })))
 }
 
@@ -121,6 +124,9 @@ async fn end_session(
     if n == 0 {
         return Err(ApiError::not_found(format!("session {id}")));
     }
+    state
+        .events
+        .publish(crate::events::Event::SessionEnded { id: id.clone() });
     Ok(StatusCode::OK)
 }
 

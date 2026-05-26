@@ -1,11 +1,16 @@
-//! Top-level router. Public routes (e.g. /health) are mounted unauthenticated;
-//! /v1/* is gated by the bearer-token middleware.
+//! Top-level router.
+//!
+//! * Public routes (e.g. `/health`) — no auth.
+//! * `/v1/events` — auth via query param handled inside the handler; must be
+//!   mounted OUTSIDE the bearer middleware or the upgrade would be 401'd first.
+//! * All other `/v1/*` routes — bearer token middleware.
 
 pub mod entities;
 pub mod health;
 pub mod memories;
 pub mod sessions;
 pub mod working;
+pub mod ws;
 
 use axum::{
     extract::State,
@@ -20,15 +25,17 @@ use crate::state::AppState;
 pub fn build_router(state: AppState) -> Router {
     let public = Router::new().route("/health", axum::routing::get(health::get_health));
 
-    let v1 = Router::new()
+    let authed: Router<AppState> = Router::new()
         .merge(memories::router())
         .merge(sessions::router())
         .merge(entities::router())
-        .merge(working::router());
+        .merge(working::router())
+        .route_layer(from_fn_with_state(state.clone(), bearer_auth));
 
-    let v1_with_auth = v1.route_layer(from_fn_with_state(state.clone(), bearer_auth));
+    // ws_router does its own query-param auth — do NOT wrap in bearer middleware.
+    let ws_router: Router<AppState> = ws::router();
 
-    public.merge(v1_with_auth).with_state(state)
+    public.merge(authed).merge(ws_router).with_state(state)
 }
 
 async fn bearer_auth(

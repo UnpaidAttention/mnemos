@@ -84,6 +84,14 @@ async fn post_memory(
             },
         )
         .await?;
+    // Fetch the stored record so we can emit accurate title + tier.
+    if let Ok(mem) = state.vault.get(&id).await {
+        state.events.publish(crate::events::Event::MemoryCreated {
+            id: id.clone(),
+            title: mem.title.clone(),
+            tier: mem.tier.as_str().to_string(),
+        });
+    }
     Ok((StatusCode::CREATED, Json(PostMemoryResp { id })))
 }
 
@@ -129,6 +137,12 @@ async fn delete_memory(
     Query(q): Query<DeleteQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     state.vault.forget(&id, q.reason.as_deref()).await?;
+    state
+        .events
+        .publish(crate::events::Event::MemoryInvalidated {
+            id: id.clone(),
+            reason: q.reason.clone(),
+        });
     Ok(Json(
         serde_json::json!({ "id": id, "status": "invalidated" }),
     ))

@@ -37,3 +37,5 @@ tempfile = { workspace = true }
 reqwest = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }
+tokio-tungstenite = "0.24"
+futures = { workspace = true }
