@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use mnemos_core::paths::Paths;
 use mnemos_core::vault::Vault;
+use mnemos_daemon::build_app_with_reranker;
 use mnemos_daemon::config::{Config, EmbedderKind};
-use mnemos_daemon::{build_app_with_reranker, serve};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -66,6 +66,7 @@ fn init_tracing(cfg: &mnemos_daemon::config::LoggingConfig) {
 async fn serve_cmd(cfg: Config) -> Result<()> {
     let paths = Paths::with_root(&cfg.vault.root);
     let embedder = build_embedder_for_daemon(&cfg)?;
+    let reranker = build_reranker_for_daemon(&cfg)?;
     let vault = Vault::open_with_embedder(paths, embedder)
         .await
         .context("opening vault")?;
@@ -74,9 +75,37 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
         .await
         .with_context(|| format!("bind {bind}"))?;
     tracing::info!(addr = %listener.local_addr()?, "mnemosd listening");
-    let reranker = build_reranker_for_daemon(&cfg)?;
+
+    let pid_path = mnemos_daemon::pid_path()?;
+    let _pid = mnemos_daemon::pid::PidFile::acquire(&pid_path)
+        .with_context(|| format!("acquire PID file {}", pid_path.display()))?;
+    tracing::info!(pid_file = %pid_path.display(), pid = std::process::id(), "PID file acquired");
+
     let (app, _state) = build_app_with_reranker(cfg, vault, reranker).await?;
-    serve(listener, app).await
+
+    // Await SIGTERM or SIGINT (Unix) / Ctrl-C (non-Unix) then exit gracefully
+    // so that `_pid` is dropped and the PID file is removed.
+    let shutdown = async {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+            let mut int = signal(SignalKind::interrupt()).expect("install SIGINT handler");
+            tokio::select! {
+                _ = term.recv() => {},
+                _ = int.recv() => {},
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    };
+
+    axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(shutdown)
+        .await?;
+    Ok(())
 }
 
 fn build_reranker_for_daemon(

@@ -8,6 +8,7 @@ pub mod config;
 pub mod error;
 pub mod events;
 pub mod mcp;
+pub mod pid;
 pub mod routes;
 pub mod state;
 
@@ -57,4 +58,15 @@ pub fn token_path() -> Result<std::path::PathBuf> {
 
 fn config_token_path() -> Result<std::path::PathBuf> {
     token_path()
+}
+
+/// Resolve the canonical path to the daemon's PID file.
+///
+/// Uses the XDG state directory when available (e.g. `~/.local/state/mnemos/mnemosd.pid`);
+/// falls back to the data directory on platforms where state dir is absent.
+pub fn pid_path() -> Result<std::path::PathBuf> {
+    let dirs = directories::ProjectDirs::from("dev", "mnemos", "mnemos")
+        .ok_or_else(|| anyhow::anyhow!("could not resolve XDG state dir"))?;
+    let state_dir = dirs.state_dir().unwrap_or_else(|| dirs.data_dir());
+    Ok(state_dir.join("mnemosd.pid"))
 }
