@@ -4,4 +4,4 @@
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all)]
 
-// Modules populated by subsequent tasks.
+pub mod config;
