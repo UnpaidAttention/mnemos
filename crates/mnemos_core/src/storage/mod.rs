@@ -4,6 +4,7 @@ pub mod entity_ops;
 pub mod memory_ops;
 pub mod migrations;
 pub mod triggers;
+pub mod vec_ops;
 
 use crate::error::{MnemosError, Result};
 use libsql::{Builder, Connection, Database};
