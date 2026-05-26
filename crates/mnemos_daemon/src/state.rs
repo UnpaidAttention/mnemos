@@ -1,5 +1,6 @@
 //! Shared application state passed to all route handlers.
 
+use mnemos_core::providers::Reranker;
 use mnemos_core::vault::Vault;
 use std::sync::Arc;
 
@@ -12,4 +13,5 @@ pub struct AppState {
     pub vault: Vault,
     pub token: String,
     pub events: EventBus,
+    pub reranker: Option<Arc<dyn Reranker>>,
 }

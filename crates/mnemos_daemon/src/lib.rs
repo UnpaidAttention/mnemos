@@ -25,6 +25,14 @@ pub async fn serve(listener: tokio::net::TcpListener, app: axum::Router) -> anyh
 }
 
 pub async fn build_app(config: Config, vault: Vault) -> Result<(axum::Router, AppState)> {
+    build_app_with_reranker(config, vault, None).await
+}
+
+pub async fn build_app_with_reranker(
+    config: Config,
+    vault: Vault,
+    reranker: Option<Arc<dyn mnemos_core::providers::Reranker>>,
+) -> Result<(axum::Router, AppState)> {
     let token_path = config_token_path()?;
     let token = auth::ensure_token(&token_path)?;
     let state = AppState {
@@ -32,6 +40,7 @@ pub async fn build_app(config: Config, vault: Vault) -> Result<(axum::Router, Ap
         vault,
         token,
         events: events::EventBus::new(),
+        reranker,
     };
     let app = routes::build_router(state.clone());
     Ok((app, state))
