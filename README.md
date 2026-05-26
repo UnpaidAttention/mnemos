@@ -17,7 +17,7 @@ plans.
 ## Install (from source)
 
 ```bash
-git clone https://github.com/sjones/mnemos
+git clone https://github.com/UnpaidAttention/mnemos
 cd mnemos
 cargo install --path crates/mnemos_cli
 ```
