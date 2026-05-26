@@ -1,6 +1,9 @@
+use mnemos_core::providers::{mock::MockEmbedder, Embedder};
 use mnemos_core::rebuild::rebuild_index;
+use mnemos_core::storage::vec_ops::knn_memory;
 use mnemos_core::vault::{RememberOpts, Vault};
 use mnemos_core::{paths::Paths, Tier};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Calling `rebuild_index` on an already-populated vault must succeed cleanly.
@@ -80,4 +83,74 @@ async fn rebuild_recreates_index_from_files() {
         let mem = vault.get(id).await.unwrap();
         assert!(mem.title.starts_with("Title "));
     }
+}
+
+#[tokio::test]
+async fn rebuild_re_embeds_when_embedder_provided() {
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths::with_root(tmp.path());
+    let emb: Arc<dyn Embedder> = Arc::new(MockEmbedder::new(768));
+
+    // Seed with embeddings
+    let id = {
+        let v = Vault::open_with_embedder(paths.clone(), Some(emb.clone()))
+            .await
+            .unwrap();
+        v.remember(
+            "body",
+            RememberOpts {
+                title: Some("t".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+    };
+
+    // Wipe DB; rebuild with same embedder
+    tokio::fs::remove_file(&paths.db_path).await.unwrap();
+    let stats = mnemos_core::rebuild::rebuild_index_with_embedder(&paths, Some(emb.clone()))
+        .await
+        .unwrap();
+    assert_eq!(stats.memories_indexed, 1);
+    assert_eq!(stats.embeddings_indexed, 1);
+    assert_eq!(stats.errors, 0);
+
+    // KNN should find the memory after rebuild
+    let v_after = Vault::open_with_embedder(paths.clone(), Some(emb.clone()))
+        .await
+        .unwrap();
+    let q = emb.embed("body").await.unwrap();
+    let hits = knn_memory(v_after.storage(), &q, 1).await.unwrap();
+    assert_eq!(hits[0].memory_id, id);
+}
+
+#[tokio::test]
+async fn rebuild_without_embedder_skips_embeddings() {
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths::with_root(tmp.path());
+    let emb: Arc<dyn Embedder> = Arc::new(MockEmbedder::new(768));
+
+    {
+        let v = Vault::open_with_embedder(paths.clone(), Some(emb.clone()))
+            .await
+            .unwrap();
+        let _ = v
+            .remember(
+                "body",
+                RememberOpts {
+                    title: Some("t".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    tokio::fs::remove_file(&paths.db_path).await.unwrap();
+
+    let stats = mnemos_core::rebuild::rebuild_index_with_embedder(&paths, None)
+        .await
+        .unwrap();
+    assert_eq!(stats.memories_indexed, 1);
+    assert_eq!(stats.embeddings_indexed, 0);
 }
