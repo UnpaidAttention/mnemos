@@ -12,7 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Windows is intentionally excluded: the `libsql-sys` backend is
+        # Unix-only in the pinned version (uses std::os::unix). Windows support
+        # is blocked on libsql gaining Windows compatibility (or swapping the
+        # storage backend) — revisit in Plan 7 packaging.
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -24,4 +28,8 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
-        run: cargo test --workspace --all-features
+        # Default features only. The opt-in `rerank-onnx` feature pulls `ort`
+        # (ONNX runtime) which needs system onnxruntime + a working release;
+        # the current pinned `ort` RC does not compile in CI. rerank-onnx is
+        # built/verified manually until a stable `ort` lands.
+        run: cargo test --workspace
