@@ -7,6 +7,7 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod mcp;
 pub mod routes;
 pub mod state;
 

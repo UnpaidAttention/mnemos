@@ -23,13 +23,15 @@ use axum::{
 use crate::state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
-    let public = Router::new().route("/health", axum::routing::get(health::get_health));
+    let public: Router<AppState> =
+        Router::new().route("/health", axum::routing::get(health::get_health));
 
     let authed: Router<AppState> = Router::new()
         .merge(memories::router())
         .merge(sessions::router())
         .merge(entities::router())
         .merge(working::router())
+        .merge(crate::mcp::router())
         .route_layer(from_fn_with_state(state.clone(), bearer_auth));
 
     // ws_router does its own query-param auth — do NOT wrap in bearer middleware.
