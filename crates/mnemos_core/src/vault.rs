@@ -109,8 +109,37 @@ impl Vault {
     }
 
     /// Soft-invalidate a memory and write a `forget` audit entry.
+    ///
+    /// After invalidating the DB row the markdown file is rewritten so that
+    /// `invalid_at` is present in the frontmatter.  This preserves the
+    /// "files are source of truth" invariant: if the DB is wiped and rebuilt
+    /// from disk the memory will remain invalidated rather than being
+    /// resurrected as fully valid.
     pub async fn forget(&self, id: &str, reason: Option<&str>) -> Result<()> {
-        soft_invalidate(&self.storage, id, Utc::now()).await?;
+        let now = Utc::now();
+        soft_invalidate(&self.storage, id, now).await?;
+
+        // Fetch the updated row and rewrite the file with the new invalid_at.
+        let mut mem = get_memory(&self.storage, id).await?;
+        mem.invalid_at = Some(now); // ensure consistency with the DB value
+        let new_path = write_memory_file(&self.paths, &mem).await?;
+
+        // Update the DB row's file_path (in case it changed) and content_hash
+        // (the frontmatter changed even though the body did not).
+        let new_hash = content_hash(&mem.body);
+        {
+            let (conn, _g) = self.storage.write_conn().await?;
+            conn.execute(
+                "UPDATE memories SET file_path = ?, content_hash = ? WHERE id = ?",
+                libsql::params![
+                    new_path.to_string_lossy().to_string(),
+                    new_hash,
+                    id.to_string()
+                ],
+            )
+            .await?;
+        }
+
         write_audit(
             &self.storage,
             opts_actor(),

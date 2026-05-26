@@ -17,8 +17,33 @@ pub struct RebuildStats {
 
 pub async fn rebuild_index(paths: &Paths) -> Result<RebuildStats> {
     paths.ensure_dirs()?;
-    // Open Storage which will create a fresh DB + run migrations
+    // Open Storage which will create a fresh DB + run migrations.
     let storage = Storage::open(&paths.db_path).await?;
+
+    // Truncate derived index tables so that re-indexing an already-populated
+    // vault produces the same state as a fresh ingestion.  Order matters:
+    // `memory_fts` first (virtual table, no FK), then `memory_links`, then
+    // the child tables, and finally `memories` itself.
+    //
+    // Tables NOT truncated:
+    //   - `audit_log`   — append-only; DELETE is forbidden by triggers.
+    //   - `entities` / `entity_edges` — not derived from .md files; they would
+    //     be managed independently in later plans.
+    {
+        let (conn, _g) = storage.write_conn().await?;
+        let tx = conn.transaction().await?;
+        for stmt in [
+            "DELETE FROM memory_fts",
+            "DELETE FROM memory_links",
+            "DELETE FROM memory_chunks",
+            "DELETE FROM entity_mentions",
+            "DELETE FROM memories",
+        ] {
+            tx.execute(stmt, ()).await?;
+        }
+        tx.commit().await?;
+    }
+
     let mut stats = RebuildStats::default();
 
     for tier in Tier::all() {

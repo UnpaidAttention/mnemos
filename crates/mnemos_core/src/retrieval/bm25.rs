@@ -30,6 +30,9 @@ pub async fn bm25_recall(
         sql.push_str(" AND m.invalid_at IS NULL");
     }
     if let Some(ws) = opts.workspace.as_ref() {
+        // Workspace filter returns both workspace-tagged AND unscoped (global) memories,
+        // per design spec: "workspace='~/code/foo' → returns: workspace-tagged + global".
+        // Global memories (e.g. identity facts) surface in every workspace.
         sql.push_str(" AND (m.workspace IS NULL OR m.workspace = ?)");
         args.push(ws.clone().into());
     }

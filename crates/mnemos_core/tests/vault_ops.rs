@@ -1,3 +1,4 @@
+use mnemos_core::rebuild::rebuild_index;
 use mnemos_core::vault::{RememberOpts, Vault};
 use mnemos_core::{paths::Paths, tier::Tier, types::MemoryType};
 use tempfile::TempDir;
@@ -59,4 +60,40 @@ async fn forget_invalidates_memory_and_audits() {
         .unwrap();
     assert!(entries.iter().any(|e| e.action == "create"));
     assert!(entries.iter().any(|e| e.action == "forget"));
+}
+
+/// A `forget`-then-`rebuild` cycle must keep the memory invalidated.
+///
+/// Before the fix, `Vault::forget` only updated the DB; the markdown file
+/// retained `invalid_at: null` in its frontmatter.  A subsequent rebuild
+/// would re-read the file and re-insert the memory as fully valid, silently
+/// un-doing the soft-deletion.
+#[tokio::test]
+async fn forget_then_rebuild_keeps_memory_invalidated() {
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths::with_root(tmp.path());
+    let id = {
+        let vault = Vault::open(paths.clone()).await.unwrap();
+        let id = vault
+            .remember(
+                "body",
+                RememberOpts {
+                    title: Some("doomed".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        vault.forget(&id, Some("test")).await.unwrap();
+        id
+    };
+    // Rebuild from files — the file must carry `invalid_at` in its frontmatter.
+    rebuild_index(&paths).await.unwrap();
+    // Memory should remain invalidated after the rebuild.
+    let vault = Vault::open(paths.clone()).await.unwrap();
+    let mem = vault.get(&id).await.unwrap();
+    assert!(
+        mem.invalid_at.is_some(),
+        "memory should still be invalidated after rebuild"
+    );
 }
