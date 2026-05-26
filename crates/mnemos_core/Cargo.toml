@@ -27,9 +27,15 @@ sha2 = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 
+# Optional: ONNX reranker (feature: rerank-onnx)
+ort = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+ndarray = { workspace = true, optional = true }
+
 [features]
-# ONNX-based reranker (bge-reranker-base); populated in Task 12.
-rerank-onnx = []
+default = []
+# ONNX-based reranker (bge-reranker-base).
+rerank-onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

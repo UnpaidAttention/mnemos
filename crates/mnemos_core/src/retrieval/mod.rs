@@ -1,6 +1,7 @@
 pub mod bm25;
 pub mod dense;
 pub mod hybrid;
+pub mod rerank;
 pub mod reweight;
 pub mod rrf;
 

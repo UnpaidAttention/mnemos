@@ -2,7 +2,7 @@
 //! RRF, applies reweighting, optionally reranks, returns top-k.
 
 use crate::error::Result;
-use crate::providers::Embedder;
+use crate::providers::{Embedder, Reranker};
 use crate::retrieval::bm25::bm25_recall;
 use crate::retrieval::dense::dense_recall;
 use crate::retrieval::reweight::apply_reweight_with_breakdown;
@@ -110,6 +110,47 @@ pub async fn hybrid_recall(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     hits.truncate(opts.k);
+
+    Ok(hits)
+}
+
+/// Like [`hybrid_recall`], but accepts an optional [`Reranker`] that re-scores
+/// results when `opts.rerank` is `true`.
+///
+/// The reranker is called with `(query, [title\n\nbody, ...])` for every hit
+/// returned by the base retriever, then scores are applied in-place and results
+/// are re-sorted highest-first.
+pub async fn hybrid_recall_with_rerank(
+    storage: &Storage,
+    embedder: Option<&dyn Embedder>,
+    reranker: Option<&dyn Reranker>,
+    query: &str,
+    opts: RecallOpts,
+) -> Result<Vec<RecallHit>> {
+    let mut hits = hybrid_recall(storage, embedder, query, opts.clone()).await?;
+
+    if opts.rerank {
+        if let Some(rr) = reranker {
+            let candidates: Vec<String> = hits
+                .iter()
+                .map(|h| format!("{}\n\n{}", h.memory.title, h.memory.body))
+                .collect();
+            let scores = rr.rerank(query, &candidates).await?;
+            for (h, s) in hits.iter_mut().zip(scores.iter()) {
+                let score_f64 = f64::from(*s);
+                h.score = score_f64;
+                if let Some(e) = h.explain.as_mut() {
+                    e.rerank_score = Some(score_f64);
+                    e.final_score = score_f64;
+                }
+            }
+            hits.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
 
     Ok(hits)
 }
