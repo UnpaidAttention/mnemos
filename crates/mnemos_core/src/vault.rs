@@ -27,6 +27,19 @@ pub struct Vault {
     embedder: Option<Arc<dyn Embedder>>,
 }
 
+/// Statistics returned by [`Vault::backfill_embeddings`].
+#[derive(Debug, Default, serde::Serialize)]
+pub struct BackfillStats {
+    /// Number of memories that were newly embedded during this run.
+    pub embedded: usize,
+    /// Number of active memories that already had an embedding and were left
+    /// untouched.
+    pub skipped: usize,
+    /// Number of memories whose embedding failed (embedder error or storage
+    /// error).  These are left without a vector and can be retried.
+    pub errors: usize,
+}
+
 /// Options for [`Vault::remember`].
 #[derive(Debug, Clone, Default)]
 pub struct RememberOpts {
@@ -204,6 +217,79 @@ impl Vault {
     /// on-disk truth rather than the indexed copy.
     pub async fn read_from_disk(&self, path: &std::path::Path) -> Result<(Memory, String)> {
         read_memory_file(path).await
+    }
+
+    /// Embed every active memory that does not yet have a vector in
+    /// `memory_vec`.
+    ///
+    /// This is useful when a vault was initially used without an embedder and
+    /// you later want to enable semantic search without re-inserting memories.
+    /// Memories that already have an embedding are counted in
+    /// [`BackfillStats::skipped`] and left untouched.
+    ///
+    /// `batch_size` controls how many memory bodies are sent to the embedder
+    /// in a single call.  Implementations that support real batching (e.g.
+    /// HTTP-based embedders) benefit from a larger value; the default
+    /// implementation falls back to sequential single-embed calls.
+    ///
+    /// Returns an error immediately (before processing any memories) when no
+    /// embedder is configured.
+    pub async fn backfill_embeddings(&self, batch_size: usize) -> Result<BackfillStats> {
+        let embedder = self.embedder.as_ref().ok_or_else(|| {
+            MnemosError::Validation("backfill requires an embedder to be configured".into())
+        })?;
+
+        let mut stats = BackfillStats::default();
+
+        // Find every active memory that has no entry in memory_vec yet.
+        let conn = self.storage.conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT m.id, m.body
+                   FROM memories m
+                  WHERE m.id NOT IN (SELECT memory_id FROM memory_vec)
+                    AND m.invalid_at IS NULL",
+                (),
+            )
+            .await?;
+
+        let mut todo: Vec<(String, String)> = Vec::new();
+        while let Some(row) = rows.next().await? {
+            todo.push((row.get(0)?, row.get(1)?));
+        }
+        drop(rows);
+
+        // Count how many active memories already have embeddings so we can
+        // populate `skipped` accurately.
+        let total_active: usize = {
+            let mut rs = conn
+                .query("SELECT COUNT(*) FROM memories WHERE invalid_at IS NULL", ())
+                .await?;
+            let r = rs
+                .next()
+                .await?
+                .ok_or_else(|| MnemosError::Internal("COUNT(*) returned no rows".into()))?;
+            r.get::<i64>(0)? as usize
+        };
+        stats.skipped = total_active.saturating_sub(todo.len());
+
+        // Embed and store in batches.
+        for chunk in todo.chunks(batch_size.max(1)) {
+            let bodies: Vec<String> = chunk.iter().map(|(_, b)| b.clone()).collect();
+            match embedder.embed_batch(&bodies).await {
+                Ok(vectors) => {
+                    for ((id, _), vec) in chunk.iter().zip(vectors.iter()) {
+                        match insert_memory_vec(&self.storage, id, vec).await {
+                            Ok(()) => stats.embedded += 1,
+                            Err(_) => stats.errors += 1,
+                        }
+                    }
+                }
+                Err(_) => stats.errors += chunk.len(),
+            }
+        }
+
+        Ok(stats)
     }
 }
 
