@@ -25,6 +25,7 @@ notify-debouncer-full = { workspace = true }
 directories = { workspace = true }
 sha2 = { workspace = true }
 async-trait = { workspace = true }
+futures = { workspace = true }
 reqwest = { workspace = true }
 
 # Optional: ONNX reranker (feature: rerank-onnx)

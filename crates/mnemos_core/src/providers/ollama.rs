@@ -79,6 +79,10 @@ impl Embedder for OllamaEmbedder {
         self.config.dim
     }
 
+    fn model_id(&self) -> &str {
+        &self.config.model
+    }
+
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let url = format!(
             "{}/api/embeddings",
@@ -117,5 +121,19 @@ impl Embedder for OllamaEmbedder {
         }
 
         Ok(parsed.embedding)
+    }
+
+    /// Concurrent fan-out — Ollama serves embeddings in parallel reliably.
+    ///
+    /// Up to 8 requests are in-flight simultaneously; the results are returned
+    /// in the same order as the input slice.
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        use futures::stream::{FuturesOrdered, StreamExt};
+        let mut ordered: FuturesOrdered<_> = texts.iter().map(|t| self.embed(t.as_str())).collect();
+        let mut out = Vec::with_capacity(texts.len());
+        while let Some(result) = ordered.next().await {
+            out.push(result?);
+        }
+        Ok(out)
     }
 }

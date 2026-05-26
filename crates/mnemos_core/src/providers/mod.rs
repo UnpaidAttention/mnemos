@@ -20,6 +20,12 @@ pub trait Embedder: Send + Sync {
     /// Vector dimension produced by this embedder (e.g. 768 for nomic-embed-text).
     fn dim(&self) -> usize;
 
+    /// Stable identifier for the model (used to detect model swaps).
+    /// Override per implementation; default is "unknown".
+    fn model_id(&self) -> &str {
+        "unknown"
+    }
+
     /// Embed a single string.
     async fn embed(&self, text: &str) -> Result<Vec<f32>>;
 

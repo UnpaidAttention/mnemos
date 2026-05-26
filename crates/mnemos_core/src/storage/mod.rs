@@ -108,4 +108,48 @@ impl Storage {
         let v: i64 = row.get(0_i32)?;
         Ok(v as u32)
     }
+
+    /// Read the stored embedder metadata (dim and model_id) from `vault_meta`.
+    pub async fn get_vault_meta(&self) -> Result<VaultMeta> {
+        let conn = self.conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT embedder_dim, embedder_model_id FROM vault_meta WHERE id = 1",
+                (),
+            )
+            .await?;
+        let row = rows.next().await?;
+        match row {
+            Some(r) => Ok(VaultMeta {
+                embedder_dim: r.get::<Option<i64>>(0)?.map(|x| x as usize),
+                embedder_model_id: r.get::<Option<String>>(1)?,
+            }),
+            None => Ok(VaultMeta {
+                embedder_dim: None,
+                embedder_model_id: None,
+            }),
+        }
+    }
+
+    /// Persist the embedder dim and model_id into `vault_meta`.
+    pub async fn set_vault_meta(&self, dim: usize, model_id: &str) -> Result<()> {
+        let (conn, _g) = self.write_conn().await?;
+        conn.execute(
+            "UPDATE vault_meta SET embedder_dim = ?, embedder_model_id = ?, updated_at = ? WHERE id = 1",
+            libsql::params![
+                dim as i64,
+                model_id.to_string(),
+                chrono::Utc::now().to_rfc3339()
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+/// Metadata about the embedder that was used to populate this vault.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VaultMeta {
+    pub embedder_dim: Option<usize>,
+    pub embedder_model_id: Option<String>,
 }

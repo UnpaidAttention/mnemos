@@ -63,12 +63,48 @@ impl Vault {
     /// When `embedder` is `Some`, every call to [`remember`][Vault::remember]
     /// will generate and store a vector embedding.  When `None`, the
     /// `memory_vec` table is left untouched.
+    ///
+    /// If an embedder is provided and this vault has previously been used with
+    /// a different dimension, an error is returned to prevent silently mixing
+    /// incompatible vectors.  A model-id change at the same dimension produces
+    /// a warning and updates the stored model id.
     pub async fn open_with_embedder(
         paths: Paths,
         embedder: Option<Arc<dyn Embedder>>,
     ) -> Result<Self> {
         paths.ensure_dirs()?;
         let storage = Storage::open(&paths.db_path).await?;
+
+        if let Some(e) = embedder.as_ref() {
+            let meta = storage.get_vault_meta().await?;
+            match (meta.embedder_dim, meta.embedder_model_id.as_deref()) {
+                (None, _) | (_, None) => {
+                    // First time an embedder is configured — record it.
+                    storage.set_vault_meta(e.dim(), e.model_id()).await?;
+                }
+                (Some(stored_dim), Some(stored_model)) => {
+                    if stored_dim != e.dim() {
+                        return Err(MnemosError::Validation(format!(
+                            "embedder dim mismatch: vault stored {stored_dim}d, \
+                             embedder produces {}d (model {} → {})",
+                            e.dim(),
+                            stored_model,
+                            e.model_id()
+                        )));
+                    }
+                    if stored_model != e.model_id() {
+                        tracing::warn!(
+                            "vault model_id changed: {} → {} (dim {} unchanged)",
+                            stored_model,
+                            e.model_id(),
+                            stored_dim
+                        );
+                        storage.set_vault_meta(e.dim(), e.model_id()).await?;
+                    }
+                }
+            }
+        }
+
         Ok(Self {
             paths,
             storage,

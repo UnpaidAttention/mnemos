@@ -45,6 +45,14 @@ impl Storage {
             )
             .await?;
         }
+        if current < 3 {
+            migration_v3(&conn).await?;
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (3)",
+                (),
+            )
+            .await?;
+        }
         Ok(())
     }
 }
@@ -67,6 +75,23 @@ const V2_STATEMENTS: &[&str] = &[
         chunk_id TEXT PRIMARY KEY,
         embedding FLOAT[768]
     )",
+];
+
+async fn migration_v3(conn: &libsql::Connection) -> Result<()> {
+    for stmt in V3_STATEMENTS {
+        conn.execute(stmt, ()).await?;
+    }
+    Ok(())
+}
+
+const V3_STATEMENTS: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS vault_meta (
+        id                INTEGER PRIMARY KEY CHECK(id = 1),
+        embedder_dim      INTEGER,
+        embedder_model_id TEXT,
+        updated_at        TEXT NOT NULL
+    )",
+    "INSERT OR IGNORE INTO vault_meta (id, updated_at) VALUES (1, '1970-01-01T00:00:00Z')",
 ];
 
 async fn migration_v1(conn: &libsql::Connection) -> Result<()> {
