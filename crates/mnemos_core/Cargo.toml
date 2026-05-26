@@ -25,6 +25,7 @@ notify-debouncer-full = { workspace = true }
 directories = { workspace = true }
 sha2 = { workspace = true }
 async-trait = { workspace = true }
+reqwest = { workspace = true }
 
 [features]
 # ONNX-based reranker (bge-reranker-base); populated in Task 12.
