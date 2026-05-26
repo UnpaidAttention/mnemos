@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 mnemos_core = { path = "../mnemos_core" }
+mnemos_client = { path = "../mnemos_client" }
+mnemos_daemon = { path = "../mnemos_daemon" }
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -21,6 +23,11 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 directories = { workspace = true }
 chrono = { workspace = true }
+reqwest = { workspace = true }
+which = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

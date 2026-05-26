@@ -40,6 +40,8 @@ pub enum Cmd {
     Status,
     /// Embedding maintenance.
     Embed(EmbedArgs),
+    /// Daemon process management.
+    Daemon(DaemonArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -105,5 +107,26 @@ pub enum EmbedAction {
     Backfill {
         #[arg(long, default_value_t = 8)]
         batch_size: usize,
+    },
+}
+
+#[derive(clap::Args, Debug)]
+pub struct DaemonArgs {
+    #[command(subcommand)]
+    pub action: DaemonAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DaemonAction {
+    /// Spawn `mnemosd` as a background process.
+    Start,
+    /// Send SIGTERM to the daemon (graceful shutdown).
+    Stop,
+    /// Print whether a daemon is running, its PID, and its address.
+    Status,
+    /// Tail the daemon log file.
+    Logs {
+        #[arg(long, default_value_t = 100)]
+        lines: usize,
     },
 }

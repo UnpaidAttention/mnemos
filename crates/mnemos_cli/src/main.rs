@@ -22,6 +22,7 @@ async fn main() -> Result<()> {
         Cmd::Doctor => commands::doctor::run(args.vault, args.json).await,
         Cmd::Status => commands::status::run(args.vault, args.json).await,
         Cmd::Embed(a) => commands::embed::run(args.vault, args.json, a).await,
+        Cmd::Daemon(a) => commands::daemon::run(args.vault, args.json, a).await,
     }
 }
 
