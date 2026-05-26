@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/mnemos_core", "crates/mnemos_cli"]
+members = [
+    "crates/mnemos_core",
+    "crates/mnemos_cli",
+    "crates/mnemos_daemon",
+    "crates/mnemos_client",
+]
 
 [workspace.package]
 version = "0.0.1"
@@ -44,6 +49,18 @@ notify-debouncer-full = "0.3"
 
 # Async traits
 async-trait = "0.1"
+
+# HTTP server + middleware
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower = { version = "0.5", features = ["util", "timeout"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "auth", "limit"] }
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client", "http1", "tokio"] }
+http-body-util = "0.1"
+toml = "0.8"
+rand = "0.8"
+futures = "0.3"
+url = "2"
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
