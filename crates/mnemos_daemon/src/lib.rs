@@ -4,4 +4,5 @@
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all)]
 
+pub mod auth;
 pub mod config;
