@@ -1,9 +1,11 @@
 //! Top-level router. Public routes (e.g. /health) are mounted unauthenticated;
 //! /v1/* is gated by the bearer-token middleware.
 
+pub mod entities;
 pub mod health;
 pub mod memories;
 pub mod sessions;
+pub mod working;
 
 use axum::{
     extract::State,
@@ -21,7 +23,8 @@ pub fn build_router(state: AppState) -> Router {
     let v1 = Router::new()
         .merge(memories::router())
         .merge(sessions::router())
-        .route("/v1/working", axum::routing::get(stub_working));
+        .merge(entities::router())
+        .merge(working::router());
 
     let v1_with_auth = v1.route_layer(from_fn_with_state(state.clone(), bearer_auth));
 
@@ -42,8 +45,4 @@ async fn bearer_auth(
         Some(tok) if crate::auth::validate_token(&state.token, tok) => Ok(next.run(request).await),
         _ => Err(StatusCode::UNAUTHORIZED),
     }
-}
-
-async fn stub_working() -> &'static str {
-    "(working tier placeholder)"
 }
