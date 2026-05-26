@@ -10,7 +10,12 @@ rust-version.workspace = true
 name = "mnemosd"
 path = "src/main.rs"
 
+[[bin]]
+name = "mnemos-mcp-stdio"
+path = "src/bin/mnemos_mcp_stdio.rs"
+
 [dependencies]
+reqwest = { workspace = true }
 mnemos_core = { path = "../mnemos_core" }
 libsql = { workspace = true }
 tokio = { workspace = true }
@@ -34,7 +39,6 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-reqwest = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 tokio-tungstenite = "0.24"

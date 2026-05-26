@@ -17,7 +17,7 @@ rust-version = "1.78"
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "signal"] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "signal", "process"] }
 
 # Database
 libsql = { version = "0.5", default-features = false, features = ["core", "serde"] }

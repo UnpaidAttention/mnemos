@@ -37,8 +37,15 @@ pub async fn build_app(config: Config, vault: Vault) -> Result<(axum::Router, Ap
     Ok((app, state))
 }
 
-fn config_token_path() -> Result<std::path::PathBuf> {
+/// Resolve the canonical path to the daemon's auth token file.
+///
+/// The file lives at `~/.config/mnemos/token` (XDG config dir).
+pub fn token_path() -> Result<std::path::PathBuf> {
     let dirs = directories::ProjectDirs::from("dev", "mnemos", "mnemos")
         .ok_or_else(|| anyhow::anyhow!("could not resolve XDG config dir"))?;
     Ok(dirs.config_dir().join("token"))
+}
+
+fn config_token_path() -> Result<std::path::PathBuf> {
+    token_path()
 }
