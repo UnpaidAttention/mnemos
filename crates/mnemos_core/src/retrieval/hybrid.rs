@@ -19,7 +19,8 @@ pub async fn hybrid_recall(
     opts: RecallOpts,
 ) -> Result<Vec<RecallHit>> {
     // Over-fetch from each retriever so RRF has material to fuse.
-    let stage_k = (opts.k * 5).max(opts.k);
+    // `k * 5` is always >= k for non-negative k, so .max(k) is redundant.
+    let stage_k = opts.k * 5;
     let stage_opts = RecallOpts {
         k: stage_k,
         explain: false, // we'll populate explain at the end
@@ -136,6 +137,13 @@ pub async fn hybrid_recall_with_rerank(
                 .map(|h| format!("{}\n\n{}", h.memory.title, h.memory.body))
                 .collect();
             let scores = rr.rerank(query, &candidates).await?;
+            if scores.len() != hits.len() {
+                return Err(crate::error::MnemosError::Internal(format!(
+                    "reranker returned {} scores for {} candidates",
+                    scores.len(),
+                    hits.len()
+                )));
+            }
             for (h, s) in hits.iter_mut().zip(scores.iter()) {
                 let score_f64 = f64::from(*s);
                 h.score = score_f64;

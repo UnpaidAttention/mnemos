@@ -24,6 +24,11 @@ impl Embedder for MockEmbedder {
     }
 
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        // NOTE: `DefaultHasher` is explicitly **not** stable across Rust versions
+        // (per the standard library docs). Vectors produced here may change on a
+        // toolchain upgrade. This is fine for unit / integration tests that compare
+        // relative distances, but must NOT be used for golden-file tests that
+        // snapshot raw float values.
         let mut h = DefaultHasher::new();
         text.hash(&mut h);
         let seed = h.finish();

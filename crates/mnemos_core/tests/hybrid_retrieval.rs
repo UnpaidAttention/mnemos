@@ -1,6 +1,10 @@
+use async_trait::async_trait;
+use mnemos_core::error::Result;
 use mnemos_core::paths::Paths;
-use mnemos_core::providers::{mock::MockEmbedder, Embedder};
-use mnemos_core::retrieval::{hybrid::hybrid_recall, RecallOpts};
+use mnemos_core::providers::{mock::MockEmbedder, Embedder, Reranker};
+use mnemos_core::retrieval::{
+    hybrid::hybrid_recall, hybrid::hybrid_recall_with_rerank, RecallOpts,
+};
 use mnemos_core::vault::{RememberOpts, Vault};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -131,4 +135,53 @@ async fn hybrid_respects_k_limit() {
         .await
         .unwrap();
     assert!(hits.len() <= 3);
+}
+
+/// Reranker that returns one fewer score than asked for.
+struct BrokenReranker;
+
+#[async_trait]
+impl Reranker for BrokenReranker {
+    async fn rerank(&self, _q: &str, candidates: &[String]) -> Result<Vec<f32>> {
+        // Return scores of len = candidates.len() - 1 (or 0 if candidates is empty).
+        Ok(vec![1.0_f32; candidates.len().saturating_sub(1)])
+    }
+}
+
+#[tokio::test]
+async fn rerank_score_count_mismatch_errors() {
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths::with_root(tmp.path());
+    let emb: Arc<dyn Embedder> = Arc::new(MockEmbedder::new(768));
+    let vault = Vault::open_with_embedder(paths, Some(emb.clone()))
+        .await
+        .unwrap();
+    for i in 0..3 {
+        vault
+            .remember(
+                &format!("m{i}"),
+                RememberOpts {
+                    title: Some(format!("t{i}")),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let reranker: Arc<dyn Reranker> = Arc::new(BrokenReranker);
+    let opts = RecallOpts {
+        explain: true,
+        rerank: true,
+        k: 3,
+        ..Default::default()
+    };
+    let result = hybrid_recall_with_rerank(
+        vault.storage(),
+        Some(emb.as_ref()),
+        Some(reranker.as_ref()),
+        "m",
+        opts,
+    )
+    .await;
+    assert!(result.is_err(), "mismatched score count should error");
 }

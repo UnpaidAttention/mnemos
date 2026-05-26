@@ -32,7 +32,7 @@ pub struct VecHit {
 
 /// Serialize a `&[f32]` as the byte representation sqlite-vec expects
 /// (a BLOB of little-endian f32s).
-fn f32s_to_bytes(v: &[f32]) -> Vec<u8> {
+pub(crate) fn f32s_to_bytes(v: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 4);
     for f in v {
         out.extend_from_slice(&f.to_le_bytes());

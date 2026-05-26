@@ -8,6 +8,11 @@ use libsql::Value;
 /// Dense KNN over `memory_vec`, joined with `memories` for tier/workspace
 /// filtering and full hydration. Returns `RecallHit`s sorted by ascending
 /// L2 distance (best first).
+///
+/// **Caller is responsible for over-fetching.** This function passes `opts.k`
+/// directly to vec0's `k =` parameter. If you need to retrieve more candidates
+/// than the final result set (e.g. for downstream fusion in [`hybrid_recall`]),
+/// pre-inflate `opts.k` before calling.
 pub async fn dense_recall(
     storage: &Storage,
     embedder: &dyn Embedder,
@@ -22,11 +27,7 @@ pub async fn dense_recall(
             embedder.dim()
         )));
     }
-    let bytes = f32s_to_bytes(&q_vec);
-
-    // Over-fetch from vec0 so post-join tier/workspace filtering still
-    // produces ~k results.
-    let fetch_k = (opts.k * 5).max(opts.k);
+    let bytes = crate::storage::vec_ops::f32s_to_bytes(&q_vec);
 
     let conn = storage.conn()?;
     let mut sql = String::from(
@@ -41,7 +42,7 @@ pub async fn dense_recall(
          WHERE v.embedding MATCH ? AND v.k = ?",
     );
 
-    let mut args: Vec<Value> = vec![bytes.into(), (fetch_k as i64).into()];
+    let mut args: Vec<Value> = vec![bytes.into(), (opts.k as i64).into()];
 
     if !opts.include_invalid {
         sql.push_str(" AND m.invalid_at IS NULL");
@@ -84,12 +85,4 @@ pub async fn dense_recall(
         });
     }
     Ok(hits)
-}
-
-fn f32s_to_bytes(v: &[f32]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(v.len() * 4);
-    for f in v {
-        out.extend_from_slice(&f.to_le_bytes());
-    }
-    out
 }
