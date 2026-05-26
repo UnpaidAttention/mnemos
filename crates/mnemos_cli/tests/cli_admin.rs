@@ -4,7 +4,8 @@ use tempfile::TempDir;
 
 fn cmd(tmp: &TempDir) -> Command {
     let mut c = Command::cargo_bin("mnemos").unwrap();
-    c.env("MNEMOS_VAULT", tmp.path());
+    c.env("MNEMOS_VAULT", tmp.path())
+        .env("MNEMOS_EMBEDDER", "mock");
     c
 }
 

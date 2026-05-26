@@ -69,6 +69,12 @@ pub struct RecallArgs {
     pub workspace: Option<String>,
     #[arg(long)]
     pub include_invalid: bool,
+    /// Cross-encoder rerank the top-k results.
+    #[arg(long)]
+    pub rerank: bool,
+    /// Emit per-hit explainability trace.
+    #[arg(long)]
+    pub explain: bool,
 }
 
 #[derive(clap::Args, Debug)]

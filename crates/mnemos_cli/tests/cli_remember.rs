@@ -7,6 +7,7 @@ fn remember_writes_file_and_prints_id() {
     let tmp = TempDir::new().unwrap();
     let mut cmd = Command::cargo_bin("mnemos").unwrap();
     cmd.env("MNEMOS_VAULT", tmp.path())
+        .env("MNEMOS_EMBEDDER", "mock")
         .args([
             "remember", "the body", "--title", "my title", "--tier", "semantic",
         ])
@@ -26,6 +27,7 @@ fn remember_emits_json_when_flagged() {
     let mut cmd = Command::cargo_bin("mnemos").unwrap();
     let out = cmd
         .env("MNEMOS_VAULT", tmp.path())
+        .env("MNEMOS_EMBEDDER", "mock")
         .args(["--json", "remember", "body", "--title", "j"])
         .assert()
         .success()

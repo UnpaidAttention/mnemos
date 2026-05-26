@@ -7,7 +7,8 @@ fn recall_returns_matching_memory_by_keyword() {
     let tmp = TempDir::new().unwrap();
     let bin = || {
         let mut c = Command::cargo_bin("mnemos").unwrap();
-        c.env("MNEMOS_VAULT", tmp.path());
+        c.env("MNEMOS_VAULT", tmp.path())
+            .env("MNEMOS_EMBEDDER", "mock");
         c
     };
     bin()
@@ -40,7 +41,8 @@ fn recall_returns_matching_memory_by_keyword() {
 fn recall_json_includes_score_and_id() {
     let tmp = TempDir::new().unwrap();
     let mut c = Command::cargo_bin("mnemos").unwrap();
-    c.env("MNEMOS_VAULT", tmp.path());
+    c.env("MNEMOS_VAULT", tmp.path())
+        .env("MNEMOS_EMBEDDER", "mock");
     c.args(["remember", "platypus body", "--title", "Platypus fact"])
         .assert()
         .success();
@@ -48,6 +50,7 @@ fn recall_json_includes_score_and_id() {
     let mut c = Command::cargo_bin("mnemos").unwrap();
     let out = c
         .env("MNEMOS_VAULT", tmp.path())
+        .env("MNEMOS_EMBEDDER", "mock")
         .args(["--json", "recall", "platypus"])
         .assert()
         .success()
