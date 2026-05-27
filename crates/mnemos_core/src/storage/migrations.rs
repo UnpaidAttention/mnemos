@@ -53,9 +53,30 @@ impl Storage {
             )
             .await?;
         }
+        if current < 4 {
+            migration_v4(&conn).await?;
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (4)",
+                (),
+            )
+            .await?;
+        }
         Ok(())
     }
 }
+
+async fn migration_v4(conn: &libsql::Connection) -> Result<()> {
+    for stmt in V4_STATEMENTS {
+        conn.execute(stmt, ()).await?;
+    }
+    Ok(())
+}
+
+const V4_STATEMENTS: &[&str] = &[
+    // Stamped by the pipeline runner once a session's chunks have been
+    // processed into memories, so SessionEnded is idempotent.
+    "ALTER TABLE sessions ADD COLUMN processed_at TEXT",
+];
 
 async fn migration_v2(conn: &libsql::Connection) -> Result<()> {
     for stmt in V2_STATEMENTS {
