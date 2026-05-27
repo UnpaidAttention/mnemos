@@ -35,6 +35,7 @@ pub async fn run(vault: Option<PathBuf>, json: bool, args: RememberArgs) -> Resu
                 importance: args.importance,
                 workspace: args.workspace,
                 source_tool: args.source_tool,
+                provenance: vec![],
             },
         )
         .await?;

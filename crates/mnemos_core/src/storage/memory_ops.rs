@@ -251,3 +251,61 @@ pub async fn list_memories(storage: &Storage, filter: ListFilter) -> Result<Vec<
     }
     Ok(out)
 }
+
+/// Record provenance links from a memory to the chunks it was derived from.
+/// Idempotent (`INSERT OR IGNORE`). No-op for an empty chunk list.
+pub async fn link_memory_chunks(
+    storage: &Storage,
+    memory_id: &str,
+    chunk_ids: &[String],
+) -> Result<()> {
+    if chunk_ids.is_empty() {
+        return Ok(());
+    }
+    let (conn, _guard) = storage.write_conn().await?;
+    for cid in chunk_ids {
+        conn.execute(
+            "INSERT OR IGNORE INTO memory_chunks (memory_id, chunk_id) VALUES (?, ?)",
+            params![memory_id.to_string(), cid.clone()],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Time-travel recall: full-text match `query` restricted to memories that were
+/// valid at `as_of` (`valid_at <= as_of < invalid_at`). Ordered by FTS rank.
+///
+/// The query is treated as a single FTS phrase (quotes stripped) so arbitrary
+/// user input cannot produce an FTS syntax error.
+pub async fn recall_as_of(
+    storage: &Storage,
+    query: &str,
+    as_of: DateTime<Utc>,
+    k: usize,
+) -> Result<Vec<Memory>> {
+    let phrase = format!("\"{}\"", query.replace('"', " "));
+    let conn = storage.conn()?;
+    let mut rows = conn
+        .query(
+            "SELECT m.id, m.tier, m.kind, m.title, m.body,
+                    m.tags_json, m.entities_json, m.links_json, m.provenance_json,
+                    m.created_at, m.ingested_at, m.valid_at, m.invalid_at, m.superseded_by,
+                    m.strength, m.importance, m.last_accessed, m.access_count,
+                    m.workspace, m.source_tool, m.mnemos_version
+               FROM memory_fts f
+               JOIN memories m ON m.id = f.memory_id
+              WHERE memory_fts MATCH ?1
+                AND m.valid_at <= ?2
+                AND (m.invalid_at IS NULL OR m.invalid_at > ?2)
+              ORDER BY rank
+              LIMIT ?3",
+            params![phrase, as_of.to_rfc3339(), k as i64],
+        )
+        .await?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await? {
+        out.push(row_to_memory(&row)?);
+    }
+    Ok(out)
+}

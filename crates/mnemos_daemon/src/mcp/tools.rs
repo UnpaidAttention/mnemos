@@ -125,6 +125,7 @@ async fn remember(state: &AppState, args: &Value) -> anyhow::Result<Value> {
                 importance: args["importance"].as_f64(),
                 workspace: args["workspace"].as_str().map(String::from),
                 source_tool: args["source_tool"].as_str().map(String::from),
+                provenance: vec![],
             },
         )
         .await?;

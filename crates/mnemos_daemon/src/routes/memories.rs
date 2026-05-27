@@ -81,6 +81,7 @@ async fn post_memory(
                 importance: req.importance,
                 workspace: req.workspace,
                 source_tool: req.source_tool,
+                provenance: vec![],
             },
         )
         .await?;

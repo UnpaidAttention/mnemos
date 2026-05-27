@@ -11,7 +11,7 @@ use crate::storage::memory_ops::{
 use crate::storage::vec_ops::{delete_memory_vec, insert_memory_vec};
 use crate::storage::Storage;
 use crate::tier::Tier;
-use crate::types::{Memory, MemoryType};
+use crate::types::{Memory, MemoryType, Provenance};
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
@@ -50,6 +50,9 @@ pub struct RememberOpts {
     pub importance: Option<f64>,
     pub workspace: Option<String>,
     pub source_tool: Option<String>,
+    /// Provenance links (session + chunk ids) for memories derived by the
+    /// async pipeline. Empty for manually-created memories.
+    pub provenance: Vec<Provenance>,
 }
 
 impl Vault {
@@ -143,7 +146,7 @@ impl Vault {
             tags: opts.tags,
             entities: vec![],
             links: vec![],
-            provenance: vec![],
+            provenance: opts.provenance,
             created_at: now,
             ingested_at: now,
             valid_at: now,
@@ -245,6 +248,52 @@ impl Vault {
     /// List memories matching the given filter.
     pub async fn list(&self, filter: ListFilter) -> Result<Vec<Memory>> {
         list_memories(&self.storage, filter).await
+    }
+
+    /// Patch mutable metadata (tags and/or importance) on a memory.
+    ///
+    /// Updates the DB row, rewrites the markdown file so disk remains the
+    /// source of truth, writes an `update` audit entry, and returns the
+    /// refreshed memory. `title` and `body` are not patchable here — those go
+    /// through file edits + reindex.
+    pub async fn patch(
+        &self,
+        id: &str,
+        tags: Option<Vec<String>>,
+        importance: Option<f64>,
+    ) -> Result<Memory> {
+        let mut mem = get_memory(&self.storage, id).await?;
+        if let Some(t) = tags {
+            mem.tags = t;
+        }
+        if let Some(i) = importance {
+            mem.importance = i;
+        }
+        let new_path = write_memory_file(&self.paths, &mem).await?;
+        let new_hash = content_hash(&mem.body);
+        {
+            let (conn, _g) = self.storage.write_conn().await?;
+            conn.execute(
+                "UPDATE memories SET tags_json = ?, importance = ?, file_path = ?, content_hash = ? WHERE id = ?",
+                libsql::params![
+                    serde_json::to_string(&mem.tags)?,
+                    mem.importance,
+                    new_path.to_string_lossy().to_string(),
+                    new_hash,
+                    id.to_string()
+                ],
+            )
+            .await?;
+        }
+        write_audit(
+            &self.storage,
+            opts_actor(),
+            "update",
+            Some(id),
+            Some(json!({ "tags": mem.tags, "importance": mem.importance })),
+        )
+        .await?;
+        get_memory(&self.storage, id).await
     }
 
     /// Read a memory file from disk, bypassing the DB cache.
