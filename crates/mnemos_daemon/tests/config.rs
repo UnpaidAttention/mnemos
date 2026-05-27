@@ -80,3 +80,11 @@ fn llm_defaults_to_ollama_llama() {
     assert_eq!(cfg.llm.model, "llama3.2");
     assert!(cfg.llm.url.contains("11434"));
 }
+
+#[test]
+fn retrieval_ppr_defaults() {
+    use mnemos_daemon::config::Config;
+    let cfg = Config::default();
+    assert_eq!(cfg.retrieval.ppr_alpha, 0.85);
+    assert_eq!(cfg.retrieval.ppr_iterations, 30);
+}

@@ -11,7 +11,10 @@ use crate::state::AppState;
 /// Run hybrid recall: BM25 + Dense + (optional) graph PPR, with reranking when
 /// requested + configured. The graph is built per-call from storage and is
 /// skipped automatically when empty.
-pub async fn recall(state: &AppState, query: &str, opts: RecallOpts) -> Result<Vec<RecallHit>> {
+pub async fn recall(state: &AppState, query: &str, mut opts: RecallOpts) -> Result<Vec<RecallHit>> {
+    opts.ppr_alpha = state.config.retrieval.ppr_alpha;
+    opts.ppr_iterations = state.config.retrieval.ppr_iterations;
+
     let embedder = state.vault.embedder().cloned();
     let embedder_ref = embedder.as_ref().map(|a| a.as_ref());
 

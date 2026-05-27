@@ -75,6 +75,8 @@ pub struct RetrievalConfig {
     pub default_k: usize,
     pub rrf_k: usize,
     pub reweight: ReweightConfig,
+    pub ppr_alpha: f64,
+    pub ppr_iterations: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +170,8 @@ impl Default for RetrievalConfig {
             default_k: 10,
             rrf_k: 60,
             reweight: ReweightConfig::default(),
+            ppr_alpha: 0.85,
+            ppr_iterations: 30,
         }
     }
 }
