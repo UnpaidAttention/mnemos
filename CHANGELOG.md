@@ -2,6 +2,32 @@
 
 All notable changes to this project are recorded here.
 
+## [0.3.0] - 2026-05-27
+
+### Added
+- `LlmProvider` trait with `OllamaLlm` (default) and deterministic `MockLlm` for CI.
+- Async learning pipeline triggered on `SessionEnded`: extract → resolve
+  (ADD/UPDATE/DELETE/NOOP) → entity-link → graph-update.
+- Hourly Ebbinghaus decay worker + `POST /v1/maintenance/decay` + `mnemos decay`.
+- `GET /v1/pipelines` status endpoint (counters, recent runs, configured model).
+- `PATCH /v1/memories/{id}` (tags/importance) and `POST /v1/memories/time-travel`
+  (replacing the Plan 3 `501` stubs).
+- `[llm]` config section with `MNEMOS_LLM*` env overrides.
+- Schema v4: `sessions.processed_at` for idempotent pipeline processing.
+
+### Fixed
+- Reject chunks posted to a nonexistent session (was silently creating orphans).
+- Daemon graceful shutdown now joins the background pipeline + decay workers.
+
+### Changed
+- Extracted a shared recall helper used by both the REST search endpoint and the
+  MCP recall tool (removing duplicated logic).
+
+### Deferred
+- MCP `sampling/createMessage` (extraction via the calling client's LLM): async
+  pipelines run after the triggering request returns, so there is no
+  request-scoped connection to sample from. Revisit with a streaming transport.
+
 ## [0.2.0] - 2026-05-26
 
 ### Added

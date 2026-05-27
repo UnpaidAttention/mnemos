@@ -4,7 +4,7 @@ Local-first, file-as-source-of-truth memory provider for AI tools. Plan 1
 ships the CLI foundation — vectors, daemon, MCP, and UI come in later
 plans.
 
-## What works today (v0.2.0)
+## What works today (v0.3.0)
 
 - **Long-running daemon** (`mnemosd`) — REST + WebSocket + MCP over Streamable HTTP at `127.0.0.1:7423`.
 - **CLI talks to the daemon when one is running**, falls back to direct vault otherwise.
@@ -49,6 +49,49 @@ Environment variables still override (Plan 2 compat):
 Daemon endpoints require `Authorization: Bearer <token>`. The token lives at
 `~/.config/mnemos/token` (mode 0600), auto-generated on first daemon start.
 `/health` is exempt for monitoring.
+
+## Automatic learning pipeline (v0.3.0)
+
+When a session ends, the daemon turns its conversation chunks into durable
+memories automatically — no manual `remember` calls required:
+
+1. **Extract** — atomic facts are pulled from the session transcript.
+2. **Resolve** — each fact is ADDed, used to UPDATE (supersede) an existing
+   memory, DELETE (invalidate) a contradicted one, or skipped as a NOOP.
+3. **Entity-link** — named entities are upserted and linked to the memory.
+4. **Graph-update** — relationship edges between entities are recorded.
+
+A background worker also runs an hourly **Ebbinghaus decay** pass: unused
+working/episodic memories lose strength and are eventually invalidated, while
+important and semantic memories persist far longer.
+
+### Configuring the LLM
+
+```toml
+[llm]
+kind = "ollama"        # "ollama" | "mock" | "none"
+url = "http://localhost:11434"
+model = "llama3.2"
+timeout_secs = 120
+```
+
+Env overrides: `MNEMOS_LLM`, `MNEMOS_LLM_URL`, `MNEMOS_LLM_MODEL`.
+Set `kind = "none"` to disable automatic learning (manual `remember` still works).
+
+### New endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET`  | `/v1/pipelines` | Pipeline status: counters, recent runs, configured model |
+| `POST` | `/v1/maintenance/decay` | Trigger a decay pass now |
+| `PATCH`| `/v1/memories/{id}` | Patch a memory's tags / importance |
+| `POST` | `/v1/memories/time-travel` | Recall as of a past timestamp |
+
+### CLI
+
+```bash
+mnemos decay        # run a decay pass locally
+```
 
 ## Install (from source)
 
