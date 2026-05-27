@@ -84,6 +84,19 @@ pub fn descriptors() -> Vec<Value> {
                 }
             }
         }),
+        json!({
+            "name": "reflect",
+            "description": "Run a reflection pass now: synthesize recent memories into typed reflections.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "list_reflections",
+            "description": "List reflection-tier memories.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "limit": { "type": "integer", "default": 50 } }
+            }
+        }),
     ]
 }
 
@@ -95,6 +108,8 @@ pub async fn call(state: &AppState, name: &str, args: &Value) -> anyhow::Result<
         "forget" => forget(state, args).await,
         "get_memory" => get_memory(state, args).await,
         "list_memories" => list_memories(state, args).await,
+        "reflect" => reflect_tool(state, args).await,
+        "list_reflections" => list_reflections_tool(state, args).await,
         other => Err(anyhow::anyhow!("unknown tool: {other}")),
     }
 }
@@ -201,6 +216,34 @@ async fn list_memories(state: &AppState, args: &Value) -> anyhow::Result<Value> 
         })
         .await?;
     Ok(tool_content_json(json!({ "memories": memories })))
+}
+
+async fn reflect_tool(state: &AppState, _args: &Value) -> anyhow::Result<Value> {
+    let llm = state
+        .llm
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("no LLM configured; reflection unavailable"))?;
+    let created = mnemos_core::pipeline::reflect::reflect(
+        &state.vault,
+        llm.as_ref(),
+        state.config.reflection.max_sources,
+    )
+    .await?;
+    Ok(tool_content_json(json!({ "created": created })))
+}
+
+async fn list_reflections_tool(state: &AppState, args: &Value) -> anyhow::Result<Value> {
+    use mnemos_core::storage::memory_ops::ListFilter;
+    let limit = args["limit"].as_u64().map(|n| n as usize);
+    let reflections = state
+        .vault
+        .list(ListFilter {
+            tiers: Some(vec![mnemos_core::Tier::Reflection]),
+            limit,
+            ..Default::default()
+        })
+        .await?;
+    Ok(tool_content_json(json!({ "reflections": reflections })))
 }
 
 fn tool_content_json(value: Value) -> Value {

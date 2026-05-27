@@ -10,6 +10,7 @@ pub mod health;
 pub mod memories;
 pub mod pipelines;
 pub mod recall_helper;
+pub mod reflections;
 pub mod sessions;
 pub mod working;
 pub mod ws;
@@ -34,6 +35,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(entities::router())
         .merge(working::router())
         .merge(pipelines::router())
+        .merge(reflections::router())
         .merge(crate::mcp::router())
         .route_layer(from_fn_with_state(state.clone(), bearer_auth));
 
