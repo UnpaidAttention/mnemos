@@ -69,6 +69,14 @@ impl Storage {
             )
             .await?;
         }
+        if current < 6 {
+            migration_v6(&conn).await?;
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (6)",
+                (),
+            )
+            .await?;
+        }
         Ok(())
     }
 }
@@ -103,6 +111,22 @@ const V5_STATEMENTS: &[&str] = &[
         last_reflected_at TEXT
     )",
     "INSERT OR IGNORE INTO reflection_state (id, salience) VALUES (1, 0)",
+];
+
+async fn migration_v6(conn: &libsql::Connection) -> Result<()> {
+    for stmt in V6_STATEMENTS {
+        conn.execute(stmt, ()).await?;
+    }
+    Ok(())
+}
+
+const V6_STATEMENTS: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS entity_communities (
+        entity_id    TEXT PRIMARY KEY,
+        community_id INTEGER NOT NULL,
+        detected_at  TEXT NOT NULL
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_entity_communities_cid ON entity_communities(community_id)",
 ];
 
 async fn migration_v2(conn: &libsql::Connection) -> Result<()> {

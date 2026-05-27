@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod chunk_ops;
+pub mod community_ops;
 pub mod entity_ops;
 pub mod memory_ops;
 pub mod migrations;
