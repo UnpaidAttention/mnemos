@@ -23,6 +23,8 @@ use serde_json::json;
 ///   `{"relations":[{"source":"A","relation":"REL","target":"B"}]}`
 /// * `TASK=reflect`   → one reflection per `REFLECT:<kind>|<text>` occurrence →
 ///   `{"reflections":[{"kind":"<kind>","text":"<text>"}]}`
+/// * `TASK=community` → echoes entity list as a deterministic community summary →
+///   `{"title":"Community summary","summary":"<content>"}`
 /// * no recognised marker → echoes the joined user content verbatim.
 #[derive(Debug, Clone, Default)]
 pub struct MockLlm;
@@ -82,6 +84,9 @@ impl LlmProvider for MockLlm {
                 .filter(|v| !v["text"].as_str().unwrap_or("").is_empty())
                 .collect();
             json!({ "reflections": reflections }).to_string()
+        } else if req.system.contains("TASK=community") {
+            // Deterministic summary: echo the entity list back.
+            json!({ "title": "Community summary", "summary": content.trim() }).to_string()
         } else if req.system.contains("TASK=relations") {
             let relations: Vec<_> = content
                 .split_whitespace()

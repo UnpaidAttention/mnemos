@@ -3,6 +3,7 @@
 //! LlmProvider`; the daemon's `PipelineRunner` orchestrates them off the
 //! `SessionEnded` event.
 
+pub mod community;
 pub mod decay;
 pub mod entities;
 pub mod extract;

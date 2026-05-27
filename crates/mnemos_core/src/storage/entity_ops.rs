@@ -76,6 +76,24 @@ pub async fn link_entity_mention(
     Ok(())
 }
 
+/// Resolve entity names for the given ids (skips ids that no longer exist).
+pub async fn entity_names(storage: &Storage, ids: &[String]) -> Result<Vec<String>> {
+    let conn = storage.conn()?;
+    let mut out = Vec::new();
+    for id in ids {
+        let mut rows = conn
+            .query(
+                "SELECT name FROM entities WHERE id = ?",
+                params![id.clone()],
+            )
+            .await?;
+        if let Some(r) = rows.next().await? {
+            out.push(r.get::<String>(0)?);
+        }
+    }
+    Ok(out)
+}
+
 /// Insert a relationship edge, or reinforce the existing active one.
 ///
 /// "Active" = same `(source, target, relation)` with `invalid_at IS NULL`. When
