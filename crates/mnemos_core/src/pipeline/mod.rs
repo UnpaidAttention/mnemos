@@ -3,11 +3,12 @@
 //! LlmProvider`; the daemon's `PipelineRunner` orchestrates them off the
 //! `SessionEnded` event.
 
+pub mod entities;
 pub mod extract;
 pub mod resolve;
 // Later pipeline stages are declared by the tasks that create their files, so
 // the crate keeps compiling between tasks:
-//   entities (Task 7), graph (Task 8), decay (Task 9).
+//   graph (Task 8), decay (Task 9).
 
 use serde::{Deserialize, Serialize};
 
