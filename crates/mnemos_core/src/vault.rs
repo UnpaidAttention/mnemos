@@ -3,6 +3,7 @@ use crate::file_io::{content_hash, read_memory_file, write_memory_file};
 use crate::frontmatter::parse_frontmatter;
 use crate::id::new_memory_id;
 use crate::paths::Paths;
+use crate::pipeline::decay::{decay_pass, DecayConfig, DecayStats};
 use crate::providers::Embedder;
 use crate::storage::audit::write_audit;
 use crate::storage::memory_ops::{
@@ -294,6 +295,18 @@ impl Vault {
         )
         .await?;
         get_memory(&self.storage, id).await
+    }
+
+    /// Run a decay pass and invalidate any memories that fell below the floor.
+    /// Invalidation goes through `forget` so the change is persisted to disk.
+    pub async fn run_decay(&self, cfg: &DecayConfig) -> Result<DecayStats> {
+        let stats = decay_pass(&self.storage, Utc::now(), cfg).await?;
+        for id in &stats.to_invalidate {
+            if let Err(e) = self.forget(id, Some("decayed below strength floor")).await {
+                tracing::warn!(memory_id = %id, error = %e, "decay invalidation failed");
+            }
+        }
+        Ok(stats)
     }
 
     /// Read a memory file from disk, bypassing the DB cache.
