@@ -8,6 +8,7 @@
 pub mod mock;
 pub mod mock_llm;
 pub mod ollama;
+pub mod ollama_llm;
 
 #[cfg(feature = "rerank-onnx")]
 pub mod onnx_reranker;
