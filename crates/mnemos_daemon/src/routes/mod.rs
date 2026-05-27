@@ -5,6 +5,7 @@
 //!   mounted OUTSIDE the bearer middleware or the upgrade would be 401'd first.
 //! * All other `/v1/*` routes — bearer token middleware.
 
+pub mod communities;
 pub mod entities;
 pub mod graph;
 pub mod health;
@@ -35,6 +36,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(sessions::router())
         .merge(entities::router())
         .merge(graph::router())
+        .merge(communities::router())
         .merge(working::router())
         .merge(pipelines::router())
         .merge(reflections::router())
