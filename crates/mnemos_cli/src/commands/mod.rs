@@ -1,4 +1,5 @@
 pub mod daemon;
+pub mod decay;
 pub mod doctor;
 pub mod embed;
 pub mod forget;

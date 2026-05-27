@@ -42,6 +42,8 @@ pub enum Cmd {
     Embed(EmbedArgs),
     /// Daemon process management.
     Daemon(DaemonArgs),
+    /// Run a memory decay pass now (Ebbinghaus strength decay).
+    Decay,
 }
 
 #[derive(clap::Args, Debug)]
