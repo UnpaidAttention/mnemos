@@ -148,6 +148,37 @@ async fn search_hits_include_body() {
     );
 }
 
+#[tokio::test]
+async fn patch_updates_tags_and_importance() {
+    let (app, token) = fixture().await;
+    let (s, b) = call(
+        app.clone(),
+        "POST",
+        "/v1/memories",
+        Some(&token),
+        r#"{"body":"patch target","tier":"semantic"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let id = serde_json::from_str::<serde_json::Value>(&b).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (s2, b2) = call(
+        app.clone(),
+        "PATCH",
+        &format!("/v1/memories/{id}"),
+        Some(&token),
+        r#"{"tags":["urgent","work"],"importance":0.95}"#,
+    )
+    .await;
+    assert_eq!(s2, StatusCode::OK, "{b2}");
+    let v: serde_json::Value = serde_json::from_str(&b2).unwrap();
+    assert_eq!(v["tags"][0], "urgent");
+    assert!((v["importance"].as_f64().unwrap() - 0.95).abs() < 1e-9);
+}
+
 async fn call(
     app: axum::Router,
     method: &str,

@@ -106,24 +106,22 @@ async fn get_memory(
 
 #[derive(Debug, Deserialize)]
 struct PatchMemoryReq {
-    // Fields land in Plan 4; struct accepted now so clients don't get 422.
     #[serde(default)]
-    #[allow(dead_code)]
     tags: Option<Vec<String>>,
     #[serde(default)]
-    #[allow(dead_code)]
     importance: Option<f64>,
 }
 
 async fn patch_memory(
-    State(_state): State<AppState>,
-    Path(_id): Path<String>,
-    Json(_req): Json<PatchMemoryReq>,
-) -> Result<StatusCode, ApiError> {
-    Err(ApiError::new(
-        StatusCode::NOT_IMPLEMENTED,
-        "PATCH lands in Plan 4 — use file edits for now",
-    ))
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<PatchMemoryReq>,
+) -> Result<Json<mnemos_core::types::Memory>, ApiError> {
+    let mem = state.vault.patch(&id, req.tags, req.importance).await?;
+    state
+        .events
+        .publish(crate::events::Event::MemoryUpdated { id: id.clone() });
+    Ok(Json(mem))
 }
 
 #[derive(Debug, Deserialize)]
