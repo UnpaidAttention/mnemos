@@ -222,6 +222,34 @@ async fn patch_updates_tags_and_importance() {
     assert!((v["importance"].as_f64().unwrap() - 0.95).abs() < 1e-9);
 }
 
+#[tokio::test]
+async fn search_accepts_graph_flag() {
+    let (app, token) = fixture().await;
+    let (_, _) = call(
+        app.clone(),
+        "POST",
+        "/v1/memories",
+        Some(&token),
+        r#"{"body":"alpha rust topic","tier":"semantic"}"#,
+    )
+    .await;
+    let (s, b) = call(
+        app,
+        "POST",
+        "/v1/memories/search",
+        Some(&token),
+        r#"{"query":"alpha rust","k":10,"graph":true}"#,
+    )
+    .await;
+    assert_eq!(s, axum::http::StatusCode::OK, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert!(v["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|h| h["memory"]["body"] == "alpha rust topic"));
+}
+
 async fn call(
     app: axum::Router,
     method: &str,

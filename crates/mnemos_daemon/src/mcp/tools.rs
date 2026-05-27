@@ -33,7 +33,7 @@ pub fn descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "recall",
-            "description": "Hybrid search (BM25 + dense). Returns ranked hits.",
+            "description": "Hybrid search (BM25 + dense + graph PPR). Returns ranked hits.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -43,7 +43,8 @@ pub fn descriptors() -> Vec<Value> {
                     "workspace": { "type": "string" },
                     "include_invalid": { "type": "boolean", "default": false },
                     "explain": { "type": "boolean", "default": false },
-                    "rerank": { "type": "boolean", "default": false }
+                    "rerank": { "type": "boolean", "default": false },
+                    "graph": { "type": "boolean", "default": true }
                 },
                 "required": ["query"]
             }
@@ -137,6 +138,7 @@ async fn recall(state: &AppState, args: &Value) -> anyhow::Result<Value> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("query required"))?;
     let k = args["k"].as_u64().unwrap_or(10) as usize;
+
     let tiers = args["tier"].as_array().map(|a| {
         a.iter()
             .filter_map(|v| v.as_str())
@@ -150,6 +152,7 @@ async fn recall(state: &AppState, args: &Value) -> anyhow::Result<Value> {
         include_invalid: args["include_invalid"].as_bool().unwrap_or(false),
         explain: args["explain"].as_bool().unwrap_or(false),
         rerank: args["rerank"].as_bool().unwrap_or(false),
+        graph: args["graph"].as_bool().unwrap_or(true),
         ..Default::default()
     };
     let hits = crate::routes::recall_helper::recall(state, query, opts).await?;

@@ -199,10 +199,16 @@ struct SearchReq {
     explain: bool,
     #[serde(default)]
     rerank: bool,
+    #[serde(default = "default_true")]
+    graph: bool,
 }
 
 fn default_k() -> usize {
     10
+}
+
+fn default_true() -> bool {
+    true
 }
 
 async fn search(
@@ -221,6 +227,7 @@ async fn search(
         include_invalid: req.include_invalid,
         explain: req.explain,
         rerank: req.rerank,
+        graph: req.graph,
         ..Default::default()
     };
     let hits = crate::routes::recall_helper::recall(&state, &req.query, opts).await?;
