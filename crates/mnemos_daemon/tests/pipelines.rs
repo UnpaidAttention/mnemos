@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use mnemos_core::paths::Paths;
 use mnemos_core::vault::Vault;
-use mnemos_daemon::{build_app, config::Config};
+use mnemos_daemon::{build_app, build_app_full, config::Config};
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -45,6 +45,65 @@ async fn manual_decay_endpoint_returns_stats() {
     let v: serde_json::Value = serde_json::from_str(&b).unwrap();
     assert_eq!(v["scanned"], 0);
     assert_eq!(v["invalidated"], 0);
+}
+
+#[tokio::test]
+async fn communities_endpoint_runs_detection() {
+    use mnemos_core::providers::mock_llm::MockLlm;
+    use mnemos_core::storage::entity_ops::{upsert_edge, upsert_entity};
+    use std::sync::Arc;
+
+    let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
+    let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
+    // Build a small graph so there is something to cluster.
+    let a = upsert_entity(vault.storage(), "A", "c").await.unwrap();
+    let b = upsert_entity(vault.storage(), "B", "c").await.unwrap();
+    let c = upsert_entity(vault.storage(), "C", "c").await.unwrap();
+    for (x, y) in [(&a, &b), (&b, &c), (&a, &c)] {
+        upsert_edge(vault.storage(), x, y, "rel", "m", chrono::Utc::now())
+            .await
+            .unwrap();
+    }
+    let (app, state, handle) = build_app_full(
+        Config::default(),
+        vault,
+        None,
+        Some(Arc::new(MockLlm::new())),
+    )
+    .await
+    .unwrap();
+
+    let (s, b) = call(
+        app,
+        "POST",
+        "/v1/maintenance/communities",
+        Some(&state.token),
+        "{}",
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert!(!v["summaries"].as_array().unwrap().is_empty());
+
+    if let Some(h) = handle {
+        h.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn communities_endpoint_409_without_llm() {
+    let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
+    let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
+    let (app, state) = build_app(Config::default(), vault).await.unwrap();
+    let (s, _) = call(
+        app,
+        "POST",
+        "/v1/maintenance/communities",
+        Some(&state.token),
+        "{}",
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT);
 }
 
 async fn call(
