@@ -2,6 +2,30 @@
 
 All notable changes to this project are recorded here.
 
+## [0.4.0] - 2026-05-27
+
+### Added
+- Graph PPR retriever (HippoRAG-style): dependency-free `MemoryGraph` +
+  Personalized PageRank, fused into hybrid recall as a third RRF list. `RecallHit`
+  gains `ppr_rank`; `RecallOpts` gains `graph`/`ppr_alpha`/`ppr_iterations`.
+- Reflection: salience-triggered `reflect()` pipeline writing typed reflection
+  memories with `reflects_on` links; `POST/GET /v1/reflections`; MCP `reflect` +
+  `list_reflections`; `[reflection]` config.
+- Community detection: dependency-free Louvain + LLM `community_summary` memories;
+  `POST /v1/maintenance/communities`; global-mode recall (`"global": true`);
+  `[community]` config.
+- Schema v5 (salience accumulator + `memories.reflected_at`) and v6
+  (`entity_communities`).
+- Events `ReflectionCompleted`, `CommunityDetected`.
+
+### Changed
+- `hybrid_recall` / `hybrid_recall_with_rerank` are now thin wrappers over a
+  unified `hybrid_recall_full` that includes the optional graph retriever.
+
+### Notes
+- PPR and Louvain are hand-rolled (no `petgraph` / `leiden_clustering`) for
+  determinism and zero dependency risk. Hierarchical Leiden refinement deferred.
+
 ## [0.3.0] - 2026-05-27
 
 ### Added
