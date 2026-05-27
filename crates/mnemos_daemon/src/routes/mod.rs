@@ -8,6 +8,7 @@
 pub mod entities;
 pub mod health;
 pub mod memories;
+pub mod pipelines;
 pub mod sessions;
 pub mod working;
 pub mod ws;
@@ -31,6 +32,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(sessions::router())
         .merge(entities::router())
         .merge(working::router())
+        .merge(pipelines::router())
         .merge(crate::mcp::router())
         .route_layer(from_fn_with_state(state.clone(), bearer_auth));
 
