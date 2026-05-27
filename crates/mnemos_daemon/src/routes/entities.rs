@@ -18,7 +18,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/v1/entities", get(list_entities))
         .route("/v1/entities/{id}", get(get_entity))
-        .route("/v1/entities/{id}/graph", get(entity_graph_stub))
+        .route("/v1/entities/{id}/graph", get(entity_graph))
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,32 +74,127 @@ async fn get_entity(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    use mnemos_core::error::MnemosError;
     let conn = state.vault.storage().conn()?;
+
     let mut rows = conn
         .query(
-            "SELECT id, name, kind, aliases, description, file_path, created_at \
-             FROM entities WHERE id = ?",
+            "SELECT id, name, kind, aliases, description FROM entities WHERE id = ?",
             params![id.clone()],
         )
         .await
-        .map_err(mnemos_core::error::MnemosError::from)?;
-    match rows
+        .map_err(MnemosError::from)?;
+    let row = rows
         .next()
         .await
-        .map_err(mnemos_core::error::MnemosError::from)?
-    {
-        Some(r) => Ok(Json(serde_json::json!({
-            "id":   r.get::<String>(0).map_err(mnemos_core::error::MnemosError::from)?,
-            "name": r.get::<String>(1).map_err(mnemos_core::error::MnemosError::from)?,
-            "kind": r.get::<String>(2).map_err(mnemos_core::error::MnemosError::from)?,
-        }))),
-        None => Err(ApiError::not_found(format!("entity {id}"))),
+        .map_err(MnemosError::from)?
+        .ok_or_else(|| ApiError::not_found(format!("entity {id}")))?;
+    let aliases: Vec<String> =
+        serde_json::from_str(&row.get::<String>(3).map_err(MnemosError::from)?).unwrap_or_default();
+    let detail = serde_json::json!({
+        "id": row.get::<String>(0).map_err(MnemosError::from)?,
+        "name": row.get::<String>(1).map_err(MnemosError::from)?,
+        "kind": row.get::<String>(2).map_err(MnemosError::from)?,
+        "aliases": aliases,
+        "description": row.get::<Option<String>>(4).map_err(MnemosError::from)?,
+    });
+    drop(rows);
+
+    // memory ids that mention this entity
+    let mut mrows = conn
+        .query(
+            "SELECT memory_id FROM entity_mentions WHERE entity_id = ?",
+            params![id.clone()],
+        )
+        .await
+        .map_err(MnemosError::from)?;
+    let mut memory_ids: Vec<String> = Vec::new();
+    while let Some(r) = mrows.next().await.map_err(MnemosError::from)? {
+        memory_ids.push(r.get::<String>(0).map_err(MnemosError::from)?);
     }
+    drop(mrows);
+
+    // incident active edges
+    let mut erows = conn
+        .query(
+            "SELECT id, source_entity_id, target_entity_id, relation, weight
+               FROM entity_edges
+              WHERE (source_entity_id = ?1 OR target_entity_id = ?1) AND invalid_at IS NULL",
+            params![id.clone()],
+        )
+        .await
+        .map_err(MnemosError::from)?;
+    let mut edges: Vec<serde_json::Value> = Vec::new();
+    while let Some(r) = erows.next().await.map_err(MnemosError::from)? {
+        edges.push(serde_json::json!({
+            "id": r.get::<String>(0).map_err(MnemosError::from)?,
+            "source": r.get::<String>(1).map_err(MnemosError::from)?,
+            "target": r.get::<String>(2).map_err(MnemosError::from)?,
+            "relation": r.get::<String>(3).map_err(MnemosError::from)?,
+            "weight": r.get::<f64>(4).map_err(MnemosError::from)?,
+        }));
+    }
+
+    let mut detail = detail;
+    detail["mention_count"] = serde_json::json!(memory_ids.len());
+    detail["memory_ids"] = serde_json::json!(memory_ids);
+    detail["edges"] = serde_json::json!(edges);
+    Ok(Json(detail))
 }
 
-async fn entity_graph_stub(
-    State(_): State<AppState>,
-    Path(_): Path<String>,
+async fn entity_graph(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    Ok(Json(serde_json::json!({ "nodes": [], "edges": [] })))
+    use mnemos_core::error::MnemosError;
+    use std::collections::BTreeSet;
+    let conn = state.vault.storage().conn()?;
+
+    // incident edges → neighbor ids
+    let mut erows = conn
+        .query(
+            "SELECT id, source_entity_id, target_entity_id, relation, weight
+               FROM entity_edges
+              WHERE (source_entity_id = ?1 OR target_entity_id = ?1) AND invalid_at IS NULL",
+            params![id.clone()],
+        )
+        .await
+        .map_err(MnemosError::from)?;
+    let mut edges: Vec<serde_json::Value> = Vec::new();
+    let mut ids: BTreeSet<String> = BTreeSet::new();
+    ids.insert(id.clone());
+    while let Some(r) = erows.next().await.map_err(MnemosError::from)? {
+        let src: String = r.get(1).map_err(MnemosError::from)?;
+        let tgt: String = r.get(2).map_err(MnemosError::from)?;
+        ids.insert(src.clone());
+        ids.insert(tgt.clone());
+        edges.push(serde_json::json!({
+            "id": r.get::<String>(0).map_err(MnemosError::from)?,
+            "source": src, "target": tgt,
+            "relation": r.get::<String>(3).map_err(MnemosError::from)?,
+            "weight": r.get::<f64>(4).map_err(MnemosError::from)?,
+        }));
+    }
+    drop(erows);
+
+    // node detail for self + neighbors
+    let mut nodes: Vec<serde_json::Value> = Vec::new();
+    for nid in &ids {
+        let mut nr = conn
+            .query(
+                "SELECT id, name, kind FROM entities WHERE id = ?",
+                params![nid.clone()],
+            )
+            .await
+            .map_err(MnemosError::from)?;
+        if let Some(r) = nr.next().await.map_err(MnemosError::from)? {
+            nodes.push(serde_json::json!({
+                "id": r.get::<String>(0).map_err(MnemosError::from)?,
+                "name": r.get::<String>(1).map_err(MnemosError::from)?,
+                "kind": r.get::<String>(2).map_err(MnemosError::from)?,
+            }));
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "nodes": nodes, "edges": edges })))
 }
