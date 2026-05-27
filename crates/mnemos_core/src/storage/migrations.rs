@@ -61,6 +61,14 @@ impl Storage {
             )
             .await?;
         }
+        if current < 5 {
+            migration_v5(&conn).await?;
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (5)",
+                (),
+            )
+            .await?;
+        }
         Ok(())
     }
 }
@@ -76,6 +84,25 @@ const V4_STATEMENTS: &[&str] = &[
     // Stamped by the pipeline runner once a session's chunks have been
     // processed into memories, so SessionEnded is idempotent.
     "ALTER TABLE sessions ADD COLUMN processed_at TEXT",
+];
+
+async fn migration_v5(conn: &libsql::Connection) -> Result<()> {
+    for stmt in V5_STATEMENTS {
+        conn.execute(stmt, ()).await?;
+    }
+    Ok(())
+}
+
+const V5_STATEMENTS: &[&str] = &[
+    // Stamped once a memory has been included in a reflection pass.
+    "ALTER TABLE memories ADD COLUMN reflected_at TEXT",
+    // Single-row salience accumulator driving reflection triggers.
+    "CREATE TABLE IF NOT EXISTS reflection_state (
+        id               INTEGER PRIMARY KEY CHECK(id = 1),
+        salience         REAL NOT NULL DEFAULT 0,
+        last_reflected_at TEXT
+    )",
+    "INSERT OR IGNORE INTO reflection_state (id, salience) VALUES (1, 0)",
 ];
 
 async fn migration_v2(conn: &libsql::Connection) -> Result<()> {

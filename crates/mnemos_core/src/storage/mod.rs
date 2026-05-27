@@ -3,6 +3,7 @@ pub mod chunk_ops;
 pub mod entity_ops;
 pub mod memory_ops;
 pub mod migrations;
+pub mod reflection_ops;
 pub mod triggers;
 pub mod vec_ops;
 

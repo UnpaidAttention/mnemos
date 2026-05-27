@@ -20,7 +20,7 @@ async fn migration_v2_creates_vec_tables() {
             "missing virtual table: {vt}"
         );
     }
-    assert_eq!(storage.schema_version().await.unwrap(), 4);
+    assert_eq!(storage.schema_version().await.unwrap(), 5);
 }
 
 #[tokio::test]
@@ -30,7 +30,7 @@ async fn migration_v2_is_idempotent() {
     let _ = Storage::open(&path).await.unwrap();
     let _ = Storage::open(&path).await.unwrap();
     let s = Storage::open(&path).await.unwrap();
-    assert_eq!(s.schema_version().await.unwrap(), 4);
+    assert_eq!(s.schema_version().await.unwrap(), 5);
 }
 
 #[tokio::test]
@@ -39,5 +39,5 @@ async fn migration_v2_upgrades_from_v1() {
     let path = tmp.path().join("upgrade.db");
     let _ = Storage::open(&path).await.unwrap();
     let s = Storage::open(&path).await.unwrap();
-    assert_eq!(s.schema_version().await.unwrap(), 4);
+    assert_eq!(s.schema_version().await.unwrap(), 5);
 }
