@@ -1,6 +1,6 @@
 //! MCP tool implementations. Each wraps the relevant Vault/retrieval call.
 
-use mnemos_core::retrieval::{hybrid::hybrid_recall, RecallOpts};
+use mnemos_core::retrieval::RecallOpts;
 use mnemos_core::storage::memory_ops::ListFilter;
 use mnemos_core::types::MemoryType;
 use mnemos_core::vault::RememberOpts;
@@ -152,22 +152,7 @@ async fn recall(state: &AppState, args: &Value) -> anyhow::Result<Value> {
         rerank: args["rerank"].as_bool().unwrap_or(false),
         ..Default::default()
     };
-    let embedder = state.vault.embedder().cloned();
-    let embedder_ref = embedder.as_ref().map(|a| a.as_ref());
-    let hits = if opts.rerank && state.reranker.is_some() {
-        use mnemos_core::retrieval::hybrid::hybrid_recall_with_rerank;
-        let rr_arc = state.reranker.clone().unwrap();
-        hybrid_recall_with_rerank(
-            state.vault.storage(),
-            embedder_ref,
-            Some(rr_arc.as_ref()),
-            query,
-            opts,
-        )
-        .await?
-    } else {
-        hybrid_recall(state.vault.storage(), embedder_ref, query, opts).await?
-    };
+    let hits = crate::routes::recall_helper::recall(state, query, opts).await?;
     Ok(tool_content_json(json!({ "hits": hits })))
 }
 

@@ -9,6 +9,7 @@ pub mod entities;
 pub mod health;
 pub mod memories;
 pub mod pipelines;
+pub mod recall_helper;
 pub mod sessions;
 pub mod working;
 pub mod ws;
