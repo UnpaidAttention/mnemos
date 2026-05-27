@@ -273,6 +273,97 @@ pub async fn link_memory_chunks(
     Ok(())
 }
 
+/// Insert a typed link between two memories. Idempotent.
+pub async fn add_memory_link(
+    storage: &Storage,
+    source_id: &str,
+    target_id: &str,
+    kind: &str,
+) -> Result<()> {
+    let (conn, _g) = storage.write_conn().await?;
+    conn.execute(
+        "INSERT OR IGNORE INTO memory_links (source_id, target_id, kind) VALUES (?, ?, ?)",
+        params![
+            source_id.to_string(),
+            target_id.to_string(),
+            kind.to_string()
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Recent valid semantic memories that have not yet been included in a
+/// reflection pass, newest first.
+pub async fn recent_unreflected(storage: &Storage, limit: usize) -> Result<Vec<Memory>> {
+    let conn = storage.conn()?;
+    let mut rows = conn
+        .query(
+            "SELECT id, tier, kind, title, body,
+                    tags_json, entities_json, links_json, provenance_json,
+                    created_at, ingested_at, valid_at, invalid_at, superseded_by,
+                    strength, importance, last_accessed, access_count,
+                    workspace, source_tool, mnemos_version
+               FROM memories
+              WHERE tier = 'semantic' AND invalid_at IS NULL AND reflected_at IS NULL
+              ORDER BY created_at DESC
+              LIMIT ?",
+            params![limit as i64],
+        )
+        .await?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await? {
+        out.push(row_to_memory(&row)?);
+    }
+    Ok(out)
+}
+
+/// Stamp `reflected_at` on the given memories.
+pub async fn mark_reflected(storage: &Storage, ids: &[String], at: DateTime<Utc>) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let (conn, _g) = storage.write_conn().await?;
+    let ts = at.to_rfc3339();
+    for id in ids {
+        conn.execute(
+            "UPDATE memories SET reflected_at = ? WHERE id = ?",
+            params![ts.clone(), id.clone()],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// List valid memories of a given kind, newest first.
+pub async fn list_by_kind(
+    storage: &Storage,
+    kind: MemoryType,
+    limit: usize,
+) -> Result<Vec<Memory>> {
+    let kind_str = serde_json::to_string(&kind)?.trim_matches('"').to_string();
+    let conn = storage.conn()?;
+    let mut rows = conn
+        .query(
+            "SELECT id, tier, kind, title, body,
+                    tags_json, entities_json, links_json, provenance_json,
+                    created_at, ingested_at, valid_at, invalid_at, superseded_by,
+                    strength, importance, last_accessed, access_count,
+                    workspace, source_tool, mnemos_version
+               FROM memories
+              WHERE kind = ? AND invalid_at IS NULL
+              ORDER BY created_at DESC
+              LIMIT ?",
+            params![kind_str, limit as i64],
+        )
+        .await?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await? {
+        out.push(row_to_memory(&row)?);
+    }
+    Ok(out)
+}
+
 /// Time-travel recall: full-text match `query` restricted to memories that were
 /// valid at `as_of` (`valid_at <= as_of < invalid_at`). Ordered by FTS rank.
 ///

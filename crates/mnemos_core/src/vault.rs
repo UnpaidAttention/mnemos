@@ -7,7 +7,7 @@ use crate::pipeline::decay::{decay_pass, DecayConfig, DecayStats};
 use crate::providers::Embedder;
 use crate::storage::audit::write_audit;
 use crate::storage::memory_ops::{
-    get_memory, insert_memory, list_memories, soft_invalidate, ListFilter,
+    add_memory_link, get_memory, insert_memory, list_memories, soft_invalidate, ListFilter,
 };
 use crate::storage::vec_ops::{delete_memory_vec, insert_memory_vec};
 use crate::storage::Storage;
@@ -295,6 +295,37 @@ impl Vault {
         )
         .await?;
         get_memory(&self.storage, id).await
+    }
+
+    /// Write a reflection-tier memory and link it back to its source memories
+    /// with `reflects_on` edges.
+    pub async fn remember_reflection(
+        &self,
+        body: &str,
+        title: Option<String>,
+        kind: MemoryType,
+        tags: Vec<String>,
+        reflects_on: &[String],
+        provenance: Vec<Provenance>,
+    ) -> Result<String> {
+        let id = self
+            .remember(
+                body,
+                RememberOpts {
+                    title,
+                    tier: Tier::Reflection,
+                    kind,
+                    tags,
+                    provenance,
+                    source_tool: Some("mnemos-reflection".into()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        for src in reflects_on {
+            add_memory_link(&self.storage, &id, src, "reflects_on").await?;
+        }
+        Ok(id)
     }
 
     /// Run a decay pass and invalidate any memories that fell below the floor.
