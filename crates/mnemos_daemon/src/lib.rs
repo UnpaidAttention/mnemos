@@ -7,8 +7,11 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod llm;
 pub mod mcp;
 pub mod pid;
+pub mod pipeline_runner;
+pub mod pipeline_status;
 pub mod routes;
 pub mod state;
 
@@ -34,6 +37,23 @@ pub async fn build_app_with_reranker(
     vault: Vault,
     reranker: Option<Arc<dyn mnemos_core::providers::Reranker>>,
 ) -> Result<(axum::Router, AppState)> {
+    let (app, state, _handle) = build_app_full(config, vault, reranker, None).await?;
+    Ok((app, state))
+}
+
+/// Full constructor: also wires the LLM and spawns the pipeline runner when an
+/// LLM is configured. Returns the runner handle (for graceful shutdown) when a
+/// runner was spawned.
+pub async fn build_app_full(
+    config: Config,
+    vault: Vault,
+    reranker: Option<Arc<dyn mnemos_core::providers::Reranker>>,
+    llm: Option<Arc<dyn mnemos_core::providers::LlmProvider>>,
+) -> Result<(
+    axum::Router,
+    AppState,
+    Option<crate::pipeline_runner::PipelineHandle>,
+)> {
     let token_path = config_token_path()?;
     let token = auth::ensure_token(&token_path)?;
     let state = AppState {
@@ -42,9 +62,16 @@ pub async fn build_app_with_reranker(
         token,
         events: events::EventBus::new(),
         reranker,
+        llm,
+        pipeline_status: pipeline_status::PipelineStatus::new(),
     };
     let app = routes::build_router(state.clone());
-    Ok((app, state))
+    let handle = if state.llm.is_some() {
+        Some(pipeline_runner::spawn(state.clone()))
+    } else {
+        None
+    };
+    Ok((app, state, handle))
 }
 
 /// Resolve the canonical path to the daemon's auth token file.

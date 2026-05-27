@@ -4,6 +4,23 @@ use mnemos_daemon::{build_app, config::Config, serve};
 use tempfile::TempDir;
 
 #[tokio::test]
+async fn build_app_full_without_llm_has_no_pipeline_handle() {
+    use mnemos_daemon::build_app_full;
+
+    let tmp = TempDir::new().unwrap();
+    let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
+    let (_app, state, handle) = build_app_full(Config::default(), vault, None, None)
+        .await
+        .unwrap();
+    assert!(handle.is_none(), "no llm → no runner");
+    assert!(state.llm.is_none());
+    // pipeline status starts empty
+    let (counters, recent) = state.pipeline_status.snapshot().await;
+    assert_eq!(counters.completed, 0);
+    assert!(recent.is_empty());
+}
+
+#[tokio::test]
 async fn serve_binds_and_responds_to_health() {
     let tmp = TempDir::new().unwrap();
     let paths = Paths::with_root(tmp.path());

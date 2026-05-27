@@ -26,6 +26,14 @@ pub enum Event {
     SessionEnded {
         id: String,
     },
+    PipelineCompleted {
+        session_id: String,
+        facts_added: usize,
+    },
+    PipelineFailed {
+        session_id: String,
+        error: String,
+    },
 }
 
 /// Cloneable handle to the broadcast channel that backs all WebSocket subscriptions.
