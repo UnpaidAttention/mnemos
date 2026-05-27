@@ -9,9 +9,11 @@ use libsql::params;
 use mnemos_core::pipeline::entities::link_entities;
 use mnemos_core::pipeline::extract::extract_facts;
 use mnemos_core::pipeline::graph::update_graph;
+use mnemos_core::pipeline::reflect::reflect;
 use mnemos_core::pipeline::resolve::resolve_and_apply;
 use mnemos_core::pipeline::ResolveOp;
 use mnemos_core::providers::LlmProvider;
+use mnemos_core::storage::reflection_ops::{bump_salience, reset_salience};
 use mnemos_core::types::{Chunk, Provenance};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
@@ -74,6 +76,7 @@ async fn process_session(state: &AppState, session_id: &str) {
                 session_id: session_id.to_string(),
                 facts_added: n,
             });
+            maybe_reflect(state, llm.as_ref(), n).await;
         }
         Err(e) => {
             tracing::error!(session_id = %session_id, error = %e, "pipeline failed");
@@ -172,6 +175,33 @@ async fn mark_processed(state: &AppState, session_id: &str) -> anyhow::Result<()
     )
     .await?;
     Ok(())
+}
+
+/// Bump salience by the number of facts added; if it crosses the configured
+/// threshold, run a reflection pass, reset the accumulator, and emit an event.
+async fn maybe_reflect(state: &AppState, llm: &dyn LlmProvider, added: usize) {
+    if added == 0 {
+        return;
+    }
+    let salience = match bump_salience(state.vault.storage(), added as f64).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "salience bump failed");
+            return;
+        }
+    };
+    if salience < state.config.reflection.salience_threshold {
+        return;
+    }
+    match reflect(&state.vault, llm, state.config.reflection.max_sources).await {
+        Ok(created) => {
+            let _ = reset_salience(state.vault.storage(), chrono::Utc::now()).await;
+            state.events.publish(Event::ReflectionCompleted {
+                reflections_created: created.len(),
+            });
+        }
+        Err(e) => tracing::warn!(error = %e, "reflection pass failed"),
+    }
 }
 
 async fn load_chunks(state: &AppState, session_id: &str) -> anyhow::Result<Vec<Chunk>> {

@@ -34,6 +34,12 @@ pub enum Event {
         session_id: String,
         error: String,
     },
+    ReflectionCompleted {
+        reflections_created: usize,
+    },
+    CommunityDetected {
+        communities: usize,
+    },
 }
 
 /// Cloneable handle to the broadcast channel that backs all WebSocket subscriptions.

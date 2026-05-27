@@ -18,6 +18,8 @@ pub struct Config {
     pub retrieval: RetrievalConfig,
     pub mcp: McpConfig,
     pub logging: LoggingConfig,
+    pub reflection: ReflectionConfig,
+    pub community: CommunityConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +192,39 @@ impl Default for LoggingConfig {
         Self {
             level: "info".into(),
             format: "compact".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReflectionConfig {
+    /// Salience accumulator threshold that triggers a reflection pass.
+    pub salience_threshold: f64,
+    /// Max recent un-reflected memories considered per reflection pass.
+    pub max_sources: usize,
+}
+
+impl Default for ReflectionConfig {
+    fn default() -> Self {
+        Self {
+            salience_threshold: 5.0,
+            max_sources: 20,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CommunityConfig {
+    /// Minimum entities for a community to be summarized.
+    pub min_community_size: usize,
+}
+
+impl Default for CommunityConfig {
+    fn default() -> Self {
+        Self {
+            min_community_size: 3,
         }
     }
 }
