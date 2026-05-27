@@ -229,22 +229,28 @@ async fn search(
 
 #[derive(Debug, Deserialize)]
 struct TimeTravelReq {
-    #[allow(dead_code)]
     query: String,
-    #[allow(dead_code)]
     as_of: String,
     #[serde(default = "default_k")]
-    #[allow(dead_code)]
     k: usize,
 }
 
 async fn time_travel(
-    State(_state): State<AppState>,
-    Json(_req): Json<TimeTravelReq>,
-) -> Result<StatusCode, ApiError> {
-    Err(ApiError::new(
-        StatusCode::NOT_IMPLEMENTED,
-        "time-travel lands in Plan 4",
+    State(state): State<AppState>,
+    Json(req): Json<TimeTravelReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let as_of = chrono::DateTime::parse_from_rfc3339(&req.as_of)
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .map_err(|e| ApiError::bad_request(format!("invalid as_of timestamp: {e}")))?;
+    let memories = mnemos_core::storage::memory_ops::recall_as_of(
+        state.vault.storage(),
+        &req.query,
+        as_of,
+        req.k,
+    )
+    .await?;
+    Ok(Json(
+        serde_json::json!({ "as_of": req.as_of, "memories": memories }),
     ))
 }
 

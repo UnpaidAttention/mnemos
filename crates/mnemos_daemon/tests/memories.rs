@@ -149,6 +149,49 @@ async fn search_hits_include_body() {
 }
 
 #[tokio::test]
+async fn time_travel_respects_as_of_window() {
+    let (app, token) = fixture().await;
+    let (s, b) = call(
+        app.clone(),
+        "POST",
+        "/v1/memories",
+        Some(&token),
+        r#"{"body":"timetravel beacon alpha","tier":"semantic"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+
+    let future = (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339();
+    let (s2, b2) = call(
+        app.clone(),
+        "POST",
+        "/v1/memories/time-travel",
+        Some(&token),
+        &format!(r#"{{"query":"beacon","as_of":"{future}","k":10}}"#),
+    )
+    .await;
+    assert_eq!(s2, StatusCode::OK, "{b2}");
+    let v: serde_json::Value = serde_json::from_str(&b2).unwrap();
+    assert!(!v["memories"].as_array().unwrap().is_empty());
+
+    let past = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+    let (s3, b3) = call(
+        app,
+        "POST",
+        "/v1/memories/time-travel",
+        Some(&token),
+        &format!(r#"{{"query":"beacon","as_of":"{past}","k":10}}"#),
+    )
+    .await;
+    assert_eq!(s3, StatusCode::OK);
+    let v3: serde_json::Value = serde_json::from_str(&b3).unwrap();
+    assert!(
+        v3["memories"].as_array().unwrap().is_empty(),
+        "not valid yet in the past"
+    );
+}
+
+#[tokio::test]
 async fn patch_updates_tags_and_importance() {
     let (app, token) = fixture().await;
     let (s, b) = call(
