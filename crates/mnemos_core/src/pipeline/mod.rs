@@ -4,9 +4,10 @@
 //! `SessionEnded` event.
 
 pub mod extract;
+pub mod resolve;
 // Later pipeline stages are declared by the tasks that create their files, so
 // the crate keeps compiling between tasks:
-//   resolve (Task 5), entities (Task 7), graph (Task 8), decay (Task 9).
+//   entities (Task 7), graph (Task 8), decay (Task 9).
 
 use serde::{Deserialize, Serialize};
 
