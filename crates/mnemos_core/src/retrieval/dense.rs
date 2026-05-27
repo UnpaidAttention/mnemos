@@ -81,6 +81,7 @@ pub async fn dense_recall(
             bm25_rank: None,
             dense_rank: Some(rank),
             dense_distance: Some(distance as f32),
+            ppr_rank: None,
             explain: None,
         });
     }

@@ -62,6 +62,7 @@ pub async fn bm25_recall(
             bm25_rank: Some(rank),
             dense_rank: None,
             dense_distance: None,
+            ppr_rank: None,
             explain: None,
         });
     }

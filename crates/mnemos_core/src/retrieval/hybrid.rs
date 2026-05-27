@@ -1,10 +1,12 @@
-//! Hybrid retrieval orchestrator. Runs BM25 and Dense in parallel, fuses with
-//! RRF, applies reweighting, optionally reranks, returns top-k.
+//! Hybrid retrieval orchestrator. Runs BM25, Dense, and (optionally) graph PPR,
+//! fuses with RRF, applies reweighting, optionally reranks, returns top-k.
 
 use crate::error::Result;
+use crate::graph::MemoryGraph;
 use crate::providers::{Embedder, Reranker};
 use crate::retrieval::bm25::bm25_recall;
 use crate::retrieval::dense::dense_recall;
+use crate::retrieval::graph_recall::graph_rank;
 use crate::retrieval::reweight::apply_reweight_with_breakdown;
 use crate::retrieval::rrf::{rrf_fuse, RankedId};
 use crate::retrieval::{Explain, RecallHit, RecallOpts};
@@ -12,31 +14,50 @@ use crate::storage::memory_ops::get_memory;
 use crate::storage::Storage;
 use std::collections::HashMap;
 
-pub async fn hybrid_recall(
+/// Seed-hit count for the PPR retriever.
+const PPR_SEED_HITS: usize = 5;
+
+/// Full hybrid recall: BM25 + Dense + (optional) graph PPR → RRF → reweight →
+/// optional rerank. `graph`/`reranker` may be `None`; PPR is skipped unless a
+/// non-empty graph is supplied and `opts.graph` is true.
+pub async fn hybrid_recall_full(
     storage: &Storage,
     embedder: Option<&dyn Embedder>,
+    reranker: Option<&dyn Reranker>,
+    graph: Option<&MemoryGraph>,
     query: &str,
     opts: RecallOpts,
 ) -> Result<Vec<RecallHit>> {
-    // Over-fetch from each retriever so RRF has material to fuse.
-    // `k * 5` is always >= k for non-negative k, so .max(k) is redundant.
     let stage_k = opts.k * 5;
     let stage_opts = RecallOpts {
         k: stage_k,
-        explain: false, // we'll populate explain at the end
-        rerank: false,  // rerank only at the orchestration layer
+        explain: false,
+        rerank: false,
+        graph: false,
         ..opts.clone()
     };
 
-    // Run BM25 always; Dense only when an embedder is available.
     let bm25 = bm25_recall(storage, query, stage_opts.clone()).await?;
     let dense = if let Some(e) = embedder {
         dense_recall(storage, e, query, stage_opts.clone()).await?
     } else {
         vec![]
     };
+    let ppr_ranked: Vec<RankedId> = match graph {
+        Some(g) if opts.graph && !g.is_empty() => {
+            graph_rank(
+                storage,
+                g,
+                query,
+                opts.ppr_alpha,
+                opts.ppr_iterations,
+                PPR_SEED_HITS,
+            )
+            .await?
+        }
+        _ => vec![],
+    };
 
-    // Build RankedId lists for RRF.
     let bm25_ranked: Vec<RankedId> = bm25
         .iter()
         .enumerate()
@@ -54,9 +75,8 @@ pub async fn hybrid_recall(
         })
         .collect();
 
-    let fused = rrf_fuse(&[&bm25_ranked, &dense_ranked], opts.rrf_k);
+    let fused = rrf_fuse(&[&bm25_ranked, &dense_ranked, &ppr_ranked], opts.rrf_k);
 
-    // Index per-retriever rank and distance for explain / RecallHit fields.
     let bm25_rank_by_id: HashMap<&str, usize> = bm25_ranked
         .iter()
         .map(|r| (r.id.as_str(), r.rank))
@@ -65,12 +85,13 @@ pub async fn hybrid_recall(
         .iter()
         .map(|r| (r.id.as_str(), r.rank))
         .collect();
+    let ppr_rank_by_id: HashMap<&str, usize> =
+        ppr_ranked.iter().map(|r| (r.id.as_str(), r.rank)).collect();
     let dense_dist_by_id: HashMap<&str, f32> = dense
         .iter()
         .filter_map(|h| h.dense_distance.map(|d| (h.memory.id.as_str(), d)))
         .collect();
 
-    // Hydrate Memory for each fused id, apply reweight, package as RecallHit.
     let mut hits: Vec<RecallHit> = Vec::with_capacity(fused.len());
     for f in fused.iter() {
         let memory = get_memory(storage, &f.id).await?;
@@ -83,6 +104,7 @@ pub async fn hybrid_recall(
                 bm25_rank: bm25_rank_by_id.get(f.id.as_str()).copied(),
                 dense_rank: dense_rank_by_id.get(f.id.as_str()).copied(),
                 dense_distance: dense_dist_by_id.get(f.id.as_str()).copied(),
+                ppr_rank: ppr_rank_by_id.get(f.id.as_str()).copied(),
                 rrf_score: f.score,
                 weight_recency: bw.recency,
                 weight_importance: bw.importance,
@@ -100,35 +122,17 @@ pub async fn hybrid_recall(
             bm25_rank: bm25_rank_by_id.get(f.id.as_str()).copied(),
             dense_rank: dense_rank_by_id.get(f.id.as_str()).copied(),
             dense_distance: dense_dist_by_id.get(f.id.as_str()).copied(),
+            ppr_rank: ppr_rank_by_id.get(f.id.as_str()).copied(),
             explain,
         });
     }
 
-    // Sort by reweighted score (higher = better).
     hits.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     hits.truncate(opts.k);
-
-    Ok(hits)
-}
-
-/// Like [`hybrid_recall`], but accepts an optional [`Reranker`] that re-scores
-/// results when `opts.rerank` is `true`.
-///
-/// The reranker is called with `(query, [title\n\nbody, ...])` for every hit
-/// returned by the base retriever, then scores are applied in-place and results
-/// are re-sorted highest-first.
-pub async fn hybrid_recall_with_rerank(
-    storage: &Storage,
-    embedder: Option<&dyn Embedder>,
-    reranker: Option<&dyn Reranker>,
-    query: &str,
-    opts: RecallOpts,
-) -> Result<Vec<RecallHit>> {
-    let mut hits = hybrid_recall(storage, embedder, query, opts.clone()).await?;
 
     if opts.rerank {
         if let Some(rr) = reranker {
@@ -161,4 +165,25 @@ pub async fn hybrid_recall_with_rerank(
     }
 
     Ok(hits)
+}
+
+/// BM25 + Dense fusion (no graph, no rerank). Back-compatible wrapper.
+pub async fn hybrid_recall(
+    storage: &Storage,
+    embedder: Option<&dyn Embedder>,
+    query: &str,
+    opts: RecallOpts,
+) -> Result<Vec<RecallHit>> {
+    hybrid_recall_full(storage, embedder, None, None, query, opts).await
+}
+
+/// Hybrid recall with an optional cross-encoder reranker (no graph).
+pub async fn hybrid_recall_with_rerank(
+    storage: &Storage,
+    embedder: Option<&dyn Embedder>,
+    reranker: Option<&dyn Reranker>,
+    query: &str,
+    opts: RecallOpts,
+) -> Result<Vec<RecallHit>> {
+    hybrid_recall_full(storage, embedder, reranker, None, query, opts).await
 }

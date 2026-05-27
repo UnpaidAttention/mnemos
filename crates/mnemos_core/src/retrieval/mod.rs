@@ -25,6 +25,12 @@ pub struct RecallOpts {
     pub explain: bool,
     /// Enable cross-encoder reranking (Task 12+ adds the actual reranker).
     pub rerank: bool,
+    /// Include the graph (PPR) retriever in fusion when a graph is supplied.
+    pub graph: bool,
+    /// PPR restart probability complement (`alpha`). Canonical 0.85.
+    pub ppr_alpha: f64,
+    /// PPR power-iteration count.
+    pub ppr_iterations: usize,
 }
 
 impl Default for RecallOpts {
@@ -38,6 +44,9 @@ impl Default for RecallOpts {
             reweight: reweight::ReweightConfig::default(),
             explain: false,
             rerank: false,
+            graph: true,
+            ppr_alpha: 0.85,
+            ppr_iterations: 30,
         }
     }
 }
@@ -53,6 +62,8 @@ pub struct RecallHit {
     pub dense_rank: Option<usize>,
     /// Raw distance from sqlite-vec for the dense retriever, if matched.
     pub dense_distance: Option<f32>,
+    /// Rank of this memory in the graph (PPR) retriever's results, if matched.
+    pub ppr_rank: Option<usize>,
     /// Full per-stage trace, populated only when explainability is requested.
     pub explain: Option<Explain>,
 }
@@ -62,6 +73,7 @@ pub struct Explain {
     pub bm25_rank: Option<usize>,
     pub dense_rank: Option<usize>,
     pub dense_distance: Option<f32>,
+    pub ppr_rank: Option<usize>,
     pub rrf_score: f64,
     pub weight_recency: f64,
     pub weight_importance: f64,
