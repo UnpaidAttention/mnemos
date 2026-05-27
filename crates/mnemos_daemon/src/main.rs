@@ -82,7 +82,36 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
         .with_context(|| format!("acquire PID file {}", pid_path.display()))?;
     tracing::info!(pid_file = %pid_path.display(), pid = std::process::id(), "PID file acquired");
 
+    let decay_vault = vault.clone();
     let (app, _state, pipeline) = build_app_full(cfg, vault, reranker, llm).await?;
+
+    // Hourly decay worker.
+    let (decay_tx, mut decay_rx) = tokio::sync::watch::channel(false);
+    let decay_handle = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+        tick.tick().await; // consume the immediate first tick
+        loop {
+            tokio::select! {
+                _ = decay_rx.changed() => {
+                    if *decay_rx.borrow() { break; }
+                }
+                _ = tick.tick() => {
+                    match decay_vault
+                        .run_decay(&mnemos_core::pipeline::decay::DecayConfig::default())
+                        .await
+                    {
+                        Ok(s) => tracing::info!(
+                            scanned = s.scanned,
+                            decayed = s.decayed,
+                            invalidated = s.to_invalidate.len(),
+                            "decay pass complete"
+                        ),
+                        Err(e) => tracing::warn!(error = %e, "decay pass failed"),
+                    }
+                }
+            }
+        }
+    });
 
     let shutdown = async {
         #[cfg(unix)]
@@ -105,8 +134,10 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
         .with_graceful_shutdown(shutdown)
         .await?;
 
-    // Graceful shutdown: stop the background pipeline runner and join it before
+    // Graceful shutdown: stop the decay worker, then the pipeline runner, before
     // the PID file (`_pid`) is dropped.
+    let _ = decay_tx.send(true);
+    let _ = decay_handle.await;
     if let Some(handle) = pipeline {
         tracing::info!("stopping pipeline runner");
         handle.shutdown().await;

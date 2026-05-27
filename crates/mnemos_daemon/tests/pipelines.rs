@@ -27,6 +27,26 @@ async fn pipelines_status_requires_auth() {
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 }
 
+#[tokio::test]
+async fn manual_decay_endpoint_returns_stats() {
+    let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
+    let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
+    let (app, state) = build_app(Config::default(), vault).await.unwrap();
+
+    let (s, b) = call(
+        app,
+        "POST",
+        "/v1/maintenance/decay",
+        Some(&state.token),
+        "{}",
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["scanned"], 0);
+    assert_eq!(v["invalidated"], 0);
+}
+
 async fn call(
     app: axum::Router,
     method: &str,
