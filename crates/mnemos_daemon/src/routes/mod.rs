@@ -6,6 +6,7 @@
 //! * All other `/v1/*` routes — bearer token middleware.
 
 pub mod entities;
+pub mod graph;
 pub mod health;
 pub mod memories;
 pub mod pipelines;
@@ -33,6 +34,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(memories::router())
         .merge(sessions::router())
         .merge(entities::router())
+        .merge(graph::router())
         .merge(working::router())
         .merge(pipelines::router())
         .merge(reflections::router())
