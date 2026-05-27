@@ -51,16 +51,18 @@ async fn remember_reflection_links_sources() {
     assert_eq!(mem.tier, Tier::Reflection);
     assert_eq!(mem.kind, MemoryType::Reflection);
 
-    // reflects_on link exists
-    let conn = v.storage().conn().unwrap();
-    let mut rows = conn
-        .query(
-            "SELECT COUNT(*) FROM memory_links WHERE source_id = ? AND target_id = ? AND kind = 'reflects_on'",
-            libsql::params![refl.clone(), src.clone()],
-        )
-        .await
-        .unwrap();
-    let n: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+    // reflects_on link exists (scope the read so its lock releases before the next write)
+    let n: i64 = {
+        let conn = v.storage().conn().unwrap();
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM memory_links WHERE source_id = ? AND target_id = ? AND kind = 'reflects_on'",
+                libsql::params![refl.clone(), src.clone()],
+            )
+            .await
+            .unwrap();
+        rows.next().await.unwrap().unwrap().get(0).unwrap()
+    };
     assert_eq!(n, 1);
 
     // direct add_memory_link + list_by_kind smoke
