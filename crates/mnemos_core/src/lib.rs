@@ -9,6 +9,7 @@ pub mod doctor;
 pub mod error;
 pub mod file_io;
 pub mod frontmatter;
+pub mod graph;
 pub mod id;
 pub mod paths;
 pub mod pipeline;
