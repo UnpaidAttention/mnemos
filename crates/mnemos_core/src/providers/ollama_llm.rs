@@ -20,12 +20,12 @@ pub struct OllamaLlm {
 }
 
 impl OllamaLlm {
-    pub fn new(cfg: OllamaLlmConfig) -> Self {
+    pub fn new(cfg: OllamaLlmConfig) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(cfg.timeout_secs.max(1)))
             .build()
-            .expect("failed to build reqwest client");
-        Self { cfg, client }
+            .map_err(|e| MnemosError::Internal(format!("failed to build reqwest client: {e}")))?;
+        Ok(Self { cfg, client })
     }
 }
 
@@ -103,14 +103,14 @@ mod tests {
 
     #[test]
     fn reports_model_id() {
-        assert_eq!(OllamaLlm::new(cfg()).model_id(), "llama3.2");
+        assert_eq!(OllamaLlm::new(cfg()).unwrap().model_id(), "llama3.2");
     }
 
     #[tokio::test]
     #[ignore = "requires a running Ollama with the model pulled"]
     async fn completes_live() {
         use crate::providers::CompletionRequest;
-        let llm = OllamaLlm::new(cfg());
+        let llm = OllamaLlm::new(cfg()).unwrap();
         let req = CompletionRequest::new(
             "You reply with strict JSON only.",
             "Return the JSON object {\"ok\": true}",

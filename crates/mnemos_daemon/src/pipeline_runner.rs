@@ -115,7 +115,16 @@ async fn run_pipeline(
     };
     let mut added = 0usize;
     for fact in &facts {
-        let (op, new_id) = resolve_and_apply(&state.vault, fact, prov.clone(), llm).await?;
+        // A single fact's failure (transient LLM/parse error) must not discard
+        // the remaining facts or leave the session unprocessed. Log and continue,
+        // mirroring the entity/graph stages below.
+        let (op, new_id) = match resolve_and_apply(&state.vault, fact, prov.clone(), llm).await {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::warn!(error = %e, "resolve_and_apply failed for a fact; skipping");
+                continue;
+            }
+        };
         if let Some(mid) = new_id {
             if matches!(op, ResolveOp::Add | ResolveOp::Update { .. }) {
                 added += 1;

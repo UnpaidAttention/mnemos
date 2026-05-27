@@ -11,10 +11,19 @@ pub fn build_llm_for_daemon(cfg: &Config) -> Option<Arc<dyn LlmProvider>> {
     match cfg.llm.kind {
         LlmKind::None => None,
         LlmKind::Mock => Some(Arc::new(MockLlm::new())),
-        LlmKind::Ollama => Some(Arc::new(OllamaLlm::new(OllamaLlmConfig {
-            base_url: cfg.llm.url.clone(),
-            model: cfg.llm.model.clone(),
-            timeout_secs: cfg.llm.timeout_secs,
-        }))),
+        LlmKind::Ollama => {
+            let oc = OllamaLlmConfig {
+                base_url: cfg.llm.url.clone(),
+                model: cfg.llm.model.clone(),
+                timeout_secs: cfg.llm.timeout_secs,
+            };
+            match OllamaLlm::new(oc) {
+                Ok(llm) => Some(Arc::new(llm)),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to init Ollama LLM; learning pipeline disabled");
+                    None
+                }
+            }
+        }
     }
 }
