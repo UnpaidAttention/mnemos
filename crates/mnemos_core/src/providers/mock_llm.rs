@@ -21,6 +21,8 @@ use serde_json::json;
 ///   `{"entities":[{"name":"<Name>"}]}`
 /// * `TASK=relations` → one edge per `<A>~<REL>~<B>` token →
 ///   `{"relations":[{"source":"A","relation":"REL","target":"B"}]}`
+/// * `TASK=reflect`   → one reflection per `REFLECT:<kind>|<text>` occurrence →
+///   `{"reflections":[{"kind":"<kind>","text":"<text>"}]}`
 /// * no recognised marker → echoes the joined user content verbatim.
 #[derive(Debug, Clone, Default)]
 pub struct MockLlm;
@@ -65,6 +67,21 @@ impl LlmProvider for MockLlm {
                 .map(|name| json!({ "name": name }))
                 .collect();
             json!({ "entities": entities }).to_string()
+        } else if req.system.contains("TASK=reflect") {
+            // One reflection per `REFLECT:<kind>|<text>` occurrence (kind optional).
+            let reflections: Vec<_> = content
+                .lines()
+                .filter_map(|l| l.find("REFLECT:").map(|i| &l[i + "REFLECT:".len()..]))
+                .map(|rest| {
+                    let rest = rest.trim();
+                    match rest.split_once('|') {
+                        Some((kind, text)) => json!({ "kind": kind.trim(), "text": text.trim() }),
+                        None => json!({ "kind": "insight", "text": rest }),
+                    }
+                })
+                .filter(|v| !v["text"].as_str().unwrap_or("").is_empty())
+                .collect();
+            json!({ "reflections": reflections }).to_string()
         } else if req.system.contains("TASK=relations") {
             let relations: Vec<_> = content
                 .split_whitespace()
