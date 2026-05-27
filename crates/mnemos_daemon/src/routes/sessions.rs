@@ -80,6 +80,25 @@ async fn add_chunk(
     Path(session_id): Path<String>,
     Json(req): Json<AddChunkReq>,
 ) -> Result<(StatusCode, Json<AddChunkResp>), ApiError> {
+    // Reject orphan chunks: the parent session must exist.
+    {
+        let conn = state.vault.storage().conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM sessions WHERE id = ?",
+                params![session_id.clone()],
+            )
+            .await
+            .map_err(mnemos_core::error::MnemosError::from)?;
+        let exists = rows
+            .next()
+            .await
+            .map_err(mnemos_core::error::MnemosError::from)?
+            .is_some();
+        if !exists {
+            return Err(ApiError::not_found(format!("session {session_id}")));
+        }
+    }
     let chunk_id = new_chunk_id();
     let ordinal = req.ordinal.unwrap_or(0);
     let source_meta_str = req.source_meta.as_ref().map(|v| v.to_string());

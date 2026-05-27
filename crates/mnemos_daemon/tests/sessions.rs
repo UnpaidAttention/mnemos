@@ -58,6 +58,20 @@ async fn start_add_end_session_lifecycle() {
     assert_eq!(v["chunks"].as_array().unwrap().len(), 1);
 }
 
+#[tokio::test]
+async fn add_chunk_to_missing_session_is_404() {
+    let (app, token) = fixture().await;
+    let (s, b) = call(
+        app,
+        "POST",
+        "/v1/sessions/sess_does_not_exist/chunks",
+        Some(&token),
+        r#"{"speaker":"user","body":"orphan"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{b}");
+}
+
 async fn call(
     app: axum::Router,
     method: &str,
