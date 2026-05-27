@@ -13,6 +13,7 @@ pub struct Config {
     pub daemon: DaemonConfig,
     pub vault: VaultConfig,
     pub embedder: EmbedderConfig,
+    pub llm: LlmConfig,
     pub reranker: RerankerConfig,
     pub retrieval: RetrievalConfig,
     pub mcp: McpConfig,
@@ -121,6 +122,34 @@ impl Default for EmbedderConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LlmConfig {
+    pub kind: LlmKind,
+    pub url: String,
+    pub model: String,
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmKind {
+    Ollama,
+    Mock,
+    None,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            kind: LlmKind::Ollama,
+            url: "http://localhost:11434".into(),
+            model: "llama3.2".into(),
+            timeout_secs: 120,
+        }
+    }
+}
+
 impl Default for RerankerConfig {
     fn default() -> Self {
         Self {
@@ -219,6 +248,19 @@ fn apply_env_overrides(cfg: &mut Config) {
     }
     if let Ok(v) = std::env::var("MNEMOS_LOG") {
         cfg.logging.level = v;
+    }
+    if let Ok(v) = std::env::var("MNEMOS_LLM") {
+        cfg.llm.kind = match v.as_str() {
+            "mock" => LlmKind::Mock,
+            "none" => LlmKind::None,
+            _ => LlmKind::Ollama,
+        };
+    }
+    if let Ok(v) = std::env::var("MNEMOS_LLM_URL") {
+        cfg.llm.url = v;
+    }
+    if let Ok(v) = std::env::var("MNEMOS_LLM_MODEL") {
+        cfg.llm.model = v;
     }
 }
 

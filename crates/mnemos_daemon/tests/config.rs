@@ -71,3 +71,12 @@ fn reweight_defaults_match_recall_opts() {
     assert_eq!(cfg.retrieval.reweight.recency_decay, 0.02);
     assert_eq!(cfg.retrieval.reweight.tier_weight_working, 2.0);
 }
+
+#[test]
+fn llm_defaults_to_ollama_llama() {
+    use mnemos_daemon::config::{Config, LlmKind};
+    let cfg = Config::default();
+    assert_eq!(cfg.llm.kind, LlmKind::Ollama);
+    assert_eq!(cfg.llm.model, "llama3.2");
+    assert!(cfg.llm.url.contains("11434"));
+}
