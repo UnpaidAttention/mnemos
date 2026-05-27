@@ -201,6 +201,8 @@ struct SearchReq {
     rerank: bool,
     #[serde(default = "default_true")]
     graph: bool,
+    #[serde(default)]
+    global: bool,
 }
 
 fn default_k() -> usize {
@@ -220,6 +222,10 @@ async fn search(
             .filter_map(|t| Tier::from_str(t).ok())
             .collect::<Vec<_>>()
     });
+    if req.global {
+        let hits = crate::routes::recall_helper::global(&state, &req.query, req.k).await?;
+        return Ok(Json(serde_json::json!({ "hits": hits })));
+    }
     let opts = RecallOpts {
         k: req.k,
         tiers,

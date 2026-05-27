@@ -39,3 +39,16 @@ pub async fn recall(state: &AppState, query: &str, opts: RecallOpts) -> Result<V
     )
     .await
 }
+
+/// Global-mode recall over community summaries.
+pub async fn global(state: &AppState, query: &str, k: usize) -> Result<Vec<RecallHit>> {
+    let embedder = state.vault.embedder().cloned();
+    let embedder_ref = embedder.as_ref().map(|a| a.as_ref());
+    mnemos_core::retrieval::graph_recall::global_recall(
+        state.vault.storage(),
+        embedder_ref,
+        query,
+        k,
+    )
+    .await
+}

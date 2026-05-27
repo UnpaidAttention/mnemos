@@ -223,6 +223,50 @@ async fn patch_updates_tags_and_importance() {
 }
 
 #[tokio::test]
+async fn global_search_returns_only_community_summaries() {
+    let (app, token) = fixture().await;
+    // A community summary and a normal semantic memory, both mentioning "rust".
+    // MemoryType uses kebab-case serde, so the kind is "community-summary".
+    let (_, _) = call(
+        app.clone(),
+        "POST",
+        "/v1/memories",
+        Some(&token),
+        r#"{"body":"themes around rust tooling and editors","tier":"reflection","kind":"community-summary"}"#,
+    )
+    .await;
+    let (_, _) = call(
+        app.clone(),
+        "POST",
+        "/v1/memories",
+        Some(&token),
+        r#"{"body":"rust borrow checker note","tier":"semantic","kind":"fact"}"#,
+    )
+    .await;
+
+    let (s, b) = call(
+        app,
+        "POST",
+        "/v1/memories/search",
+        Some(&token),
+        r#"{"query":"rust","k":10,"global":true}"#,
+    )
+    .await;
+    assert_eq!(s, axum::http::StatusCode::OK, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    let hits = v["hits"].as_array().unwrap();
+    assert!(hits
+        .iter()
+        .any(|h| h["memory"]["body"] == "themes around rust tooling and editors"));
+    // Memory.kind is serialized as "type" (serde rename).
+    assert!(
+        hits.iter()
+            .all(|h| h["memory"]["type"] == "community-summary"),
+        "global mode returns only community summaries"
+    );
+}
+
+#[tokio::test]
 async fn search_accepts_graph_flag() {
     let (app, token) = fixture().await;
     let (_, _) = call(

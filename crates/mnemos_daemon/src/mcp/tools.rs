@@ -44,7 +44,8 @@ pub fn descriptors() -> Vec<Value> {
                     "include_invalid": { "type": "boolean", "default": false },
                     "explain": { "type": "boolean", "default": false },
                     "rerank": { "type": "boolean", "default": false },
-                    "graph": { "type": "boolean", "default": true }
+                    "graph": { "type": "boolean", "default": true },
+                    "global": { "type": "boolean", "default": false }
                 },
                 "required": ["query"]
             }
@@ -138,6 +139,11 @@ async fn recall(state: &AppState, args: &Value) -> anyhow::Result<Value> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("query required"))?;
     let k = args["k"].as_u64().unwrap_or(10) as usize;
+
+    if args["global"].as_bool().unwrap_or(false) {
+        let hits = crate::routes::recall_helper::global(state, query, k).await?;
+        return Ok(tool_content_json(json!({ "hits": hits })));
+    }
 
     let tiers = args["tier"].as_array().map(|a| {
         a.iter()
