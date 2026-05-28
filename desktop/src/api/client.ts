@@ -79,6 +79,9 @@ export class MnemosClient {
   getEntity(id: string) { return this.req<EntityDetail>("GET", `/v1/entities/${id}`); }
   entityGraph(id: string) { return this.req<Graph>("GET", `/v1/entities/${id}/graph`); }
   graph() { return this.req<Graph>("GET", "/v1/graph"); }
+  async graphPpr(query: string): Promise<Record<string, number>> {
+    return (await this.req<{ scores: Record<string, number> }>("POST", "/v1/graph/ppr", { query })).scores;
+  }
   communities() { return this.req<{ communities: { community_id: number; members: Entity[] }[]; summaries: Memory[] }>("GET", "/v1/communities"); }
   async auditAll(limit = 200): Promise<AuditEntry[]> {
     return (await this.req<{ entries: AuditEntry[] }>("GET", `/v1/audit?limit=${limit}`)).entries;
