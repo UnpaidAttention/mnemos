@@ -123,6 +123,13 @@ export class MnemosClient {
     }>("GET", "/v1/doctor");
   }
 
+  async getFirstRun() {
+    return this.req<{ completed_at: string | null }>("GET", "/v1/first-run");
+  }
+  async completeFirstRun() {
+    return this.req<{ completed: true }>("POST", "/v1/first-run/complete");
+  }
+
   async vaultExport(): Promise<Blob> {
     const token = await this.tokenFn();
     const res = await fetch(`${this.baseUrl}/v1/vault/export`, {

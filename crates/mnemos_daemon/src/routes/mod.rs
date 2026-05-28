@@ -9,6 +9,7 @@ pub mod communities;
 pub mod config;
 pub mod doctor;
 pub mod entities;
+pub mod firstrun;
 pub mod graph;
 pub mod health;
 pub mod memories;
@@ -47,6 +48,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(sync::router())
         .merge(config::router())
         .merge(doctor::router())
+        .merge(firstrun::router())
         .merge(vault::router())
         .merge(crate::mcp::router())
         .route_layer(from_fn_with_state(state.clone(), bearer_auth));

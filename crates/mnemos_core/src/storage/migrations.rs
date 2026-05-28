@@ -85,6 +85,14 @@ impl Storage {
             )
             .await?;
         }
+        if current < 8 {
+            migration_v8(&conn).await?;
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (8)",
+                (),
+            )
+            .await?;
+        }
         Ok(())
     }
 }
@@ -163,6 +171,19 @@ const V7_STATEMENTS: &[&str] = &[
         details      TEXT
     )",
     "CREATE INDEX IF NOT EXISTS idx_sync_conflicts_unresolved ON sync_conflicts(resolved_at) WHERE resolved_at IS NULL",
+];
+
+async fn migration_v8(conn: &libsql::Connection) -> Result<()> {
+    for stmt in V8_STATEMENTS {
+        conn.execute(stmt, ()).await?;
+    }
+    Ok(())
+}
+
+const V8_STATEMENTS: &[&str] = &[
+    // First-run wizard completion timestamp (RFC3339). NULL until the user
+    // finishes the welcome flow; subsequent launches skip the wizard.
+    "ALTER TABLE vault_meta ADD COLUMN first_run_completed_at TEXT",
 ];
 
 async fn migration_v2(conn: &libsql::Connection) -> Result<()> {
