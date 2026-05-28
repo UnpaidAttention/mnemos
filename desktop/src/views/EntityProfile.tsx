@@ -1,14 +1,17 @@
+import { useState } from "react";
 import { useParams } from "@tanstack/react-router";
 import { useUiStore } from "../store/ui";
 import { useEntity } from "../api/queries";
 import { EntityNeighborhood } from "../components/EntityNeighborhood";
-import { Card, Skeleton } from "../design/primitives";
+import { MergeDialog } from "../components/MergeDialog";
+import { Button, Card, Skeleton } from "../design/primitives";
 
 export function EntityProfile({ id: idProp }: { id?: string }) {
   const params = useParams({ strict: false }) as { id?: string };
   const id = idProp ?? params.id ?? null;
   const { data, isLoading, isError } = useEntity(id);
   const select = useUiStore((s) => s.select);
+  const [mergeOpen, setMergeOpen] = useState(false);
 
   if (!id || isLoading) {
     return (
@@ -42,6 +45,17 @@ export function EntityProfile({ id: idProp }: { id?: string }) {
         <p className="label">aka {data.aliases.join(", ")}</p>
       )}
       <p className="label">{data.mention_count} mentions</p>
+
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" onClick={() => setMergeOpen(true)}>
+          Merge into…
+        </Button>
+      </div>
+      <MergeDialog
+        open={mergeOpen}
+        source={{ id, name: data.name }}
+        onClose={() => setMergeOpen(false)}
+      />
 
       <EntityNeighborhood id={id} />
 

@@ -12,6 +12,8 @@ export const useGraph = () => useQuery({ queryKey: ["graph"], queryFn: () => cli
 export const useCommunities = () => useQuery({ queryKey: ["communities"], queryFn: () => client.communities() });
 export const usePipelines = () => useQuery({ queryKey: ["pipelines"], queryFn: () => client.pipelines(), refetchInterval: 5000 });
 export const useReflections = () => useQuery({ queryKey: ["reflections"], queryFn: () => client.listReflections() });
+export const useEntities = () =>
+  useQuery({ queryKey: ["entities"], queryFn: () => client.listEntities() });
 export const useEntity = (id: string | null) =>
   useQuery({ queryKey: ["entity", id], queryFn: () => client.getEntity(id!), enabled: !!id });
 export const useAudit = (id: string | null) =>

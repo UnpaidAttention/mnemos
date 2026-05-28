@@ -52,6 +52,9 @@ export class MnemosClient {
   patchMemory(id: string, patch: { tags?: string[]; importance?: number }) {
     return this.req<Memory>("PATCH", `/v1/memories/${id}`, patch);
   }
+  promoteMemory(id: string, tier: Tier) {
+    return this.req<Memory>("POST", `/v1/memories/${id}/promote`, { tier });
+  }
   forgetMemory(id: string, reason?: string) {
     return this.req<{ id: string; status: string }>("DELETE", `/v1/memories/${id}${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`);
   }
@@ -77,6 +80,9 @@ export class MnemosClient {
     return (await this.req<{ entities: Entity[] }>("GET", `/v1/entities?limit=${limit}`)).entities;
   }
   getEntity(id: string) { return this.req<EntityDetail>("GET", `/v1/entities/${id}`); }
+  mergeEntities(source: string, target: string) {
+    return this.req<{ source: string; target: string; status: string }>("POST", "/v1/entities/merge", { source, target });
+  }
   entityGraph(id: string) { return this.req<Graph>("GET", `/v1/entities/${id}/graph`); }
   graph() { return this.req<Graph>("GET", "/v1/graph"); }
   async graphPpr(query: string): Promise<Record<string, number>> {

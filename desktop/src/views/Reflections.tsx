@@ -21,6 +21,12 @@ export function Reflections() {
     }
   };
 
+  const promote = async (id: string) => {
+    await client.promoteMemory(id, "procedural");
+    await qc.invalidateQueries({ queryKey: ["reflections"] });
+    await qc.invalidateQueries({ queryKey: ["memories"] });
+  };
+
   if (isLoading) {
     return (
       <div className="p-6 space-y-2">
@@ -67,9 +73,8 @@ export function Reflections() {
             <div className="flex items-center justify-between">
               <span className="label">{r.tags.join(" · ") || r.title}</span>
               <button
-                className="label text-text-muted cursor-not-allowed"
-                title="Re-tiering lands in Plan 7"
-                disabled
+                onClick={() => void promote(r.id)}
+                className="label text-accent"
               >
                 Promote to procedural
               </button>
