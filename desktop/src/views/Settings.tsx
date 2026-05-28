@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { client } from "../api/client";
+import { VaultIO } from "../components/VaultIO";
 import { Button, Card, Skeleton } from "../design/primitives";
 
 type Field =
@@ -242,6 +243,7 @@ export function Settings() {
           </details>
         </Card>
       ))}
+      <VaultIO />
     </div>
   );
 }

@@ -46,6 +46,26 @@ pub enum Cmd {
     Decay,
     /// Sync the vault with the configured backend.
     Sync(SyncArgs),
+    /// Export the local vault as a zip.
+    Export {
+        /// Optional vault root (defaults to the XDG vault).
+        #[arg(long)]
+        vault: Option<PathBuf>,
+        /// Output zip path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import a vault zip into the local vault.
+    Import {
+        #[arg(long)]
+        vault: Option<PathBuf>,
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(clap::Args, Debug)]

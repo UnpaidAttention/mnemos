@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
 import { TIER_COLOR_VAR, type Tier } from "./theme";
 
 export function TierChip({ tier }: { tier: Tier }) {
@@ -29,8 +29,13 @@ export function Button({ variant = "primary", className = "", children, ...rest 
   );
 }
 
-export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`bg-surface border border-border rounded-lg shadow-subtle ${className}`}>{children}</div>;
+type CardProps = HTMLAttributes<HTMLDivElement> & { children: ReactNode; className?: string };
+export function Card({ children, className = "", ...rest }: CardProps) {
+  return (
+    <div className={`bg-surface border border-border rounded-lg shadow-subtle ${className}`} {...rest}>
+      {children}
+    </div>
+  );
 }
 
 export function Skeleton({ className = "" }: { className?: string }) {

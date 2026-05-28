@@ -25,6 +25,12 @@ async fn main() -> Result<()> {
         Cmd::Daemon(a) => commands::daemon::run(args.vault, args.json, a).await,
         Cmd::Decay => commands::decay::run(args.vault, args.json).await,
         Cmd::Sync(a) => commands::sync::run(args.vault, args.json, a.action).await,
+        Cmd::Export {
+            vault,
+            output,
+            json,
+        } => commands::export::run(vault, output, json).await,
+        Cmd::Import { vault, input, json } => commands::import::run(vault, input, json).await,
     }
 }
 

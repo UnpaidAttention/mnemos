@@ -27,3 +27,6 @@ export const useSyncStatus = () =>
     refetchInterval: 10_000,
     refetchIntervalInBackground: false,
   });
+export function useDoctor() {
+  return useQuery({ queryKey: ["doctor"], queryFn: () => client.getDoctor() });
+}

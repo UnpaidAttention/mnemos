@@ -116,6 +116,33 @@ export class MnemosClient {
       "POST", "/v1/sync/pull",
     );
   }
+  async getDoctor() {
+    return this.req<{
+      checks: { name: string; status: "ok" | "warn" | "fail"; detail: string }[];
+      report: { files_scanned: number; db_rows: number; issues: unknown[] };
+    }>("GET", "/v1/doctor");
+  }
+
+  async vaultExport(): Promise<Blob> {
+    const token = await this.tokenFn();
+    const res = await fetch(`${this.baseUrl}/v1/vault/export`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    return res.blob();
+  }
+
+  async vaultImport(zip: Blob): Promise<{ files_imported: number }> {
+    const token = await this.tokenFn();
+    const res = await fetch(`${this.baseUrl}/v1/vault/import`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/zip" },
+      body: zip,
+    });
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    return (await res.json()) as { files_imported: number };
+  }
 }
 
 export const client = new MnemosClient(import.meta.env.VITE_MNEMOS_URL ?? "http://localhost:7423", getToken);
