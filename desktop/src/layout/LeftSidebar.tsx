@@ -5,6 +5,7 @@ import { TierChip } from "../design/primitives";
 const NAV: [string, string][] = [
   ["/", "Browser"], ["/search", "Search"], ["/graph", "Graph"], ["/timeline", "Timeline"],
   ["/pipelines", "Pipelines"], ["/reflections", "Reflections"], ["/audit", "Audit"],
+  ["/settings", "Settings"],
 ];
 
 export function LeftSidebar() {

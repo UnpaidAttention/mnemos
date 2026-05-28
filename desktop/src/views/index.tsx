@@ -8,3 +8,4 @@ export { Reflections } from "./Reflections";
 export { Audit } from "./Audit";
 export { EntityProfile } from "./EntityProfile";
 export { Editor } from "./Editor";
+export { Settings } from "./Settings";

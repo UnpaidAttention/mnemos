@@ -95,6 +95,27 @@ export class MnemosClient {
   async working(): Promise<Memory[]> {
     return (await this.req<{ memories: Memory[] }>("GET", "/v1/working")).memories;
   }
+  getConfig() { return this.req<Record<string, unknown>>("GET", "/v1/config"); }
+  putConfig(patch: Record<string, unknown>) {
+    return this.req<{ saved: boolean; path: string; restart_required_for: string[] }>(
+      "PUT", "/v1/config", patch,
+    );
+  }
+  getSyncStatus() {
+    return this.req<{
+      backend: string;
+      ready: boolean;
+      detail: string;
+      last_pushed_at: string | null;
+      last_pulled_at: string | null;
+      last_error: string | null;
+    }>("GET", "/v1/sync/status");
+  }
+  runSyncPull() {
+    return this.req<{ files_changed: number; message: string; conflicts: string[] }>(
+      "POST", "/v1/sync/pull",
+    );
+  }
 }
 
 export const client = new MnemosClient(import.meta.env.VITE_MNEMOS_URL ?? "http://localhost:7423", getToken);
