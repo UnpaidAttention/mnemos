@@ -1,3 +1,4 @@
+import { FileSearch } from "lucide-react";
 import { useUiStore } from "../store/ui";
 import { useMemory, useAudit } from "../api/queries";
 import { TierChip } from "../design/primitives";
@@ -10,7 +11,21 @@ export function Inspector() {
   return (
     <aside role="complementary" className="w-80 shrink-0 border-l border-border bg-surface p-4 overflow-y-auto">
       <div className="label mb-2">Inspector</div>
-      {!selectedMemoryId && <p className="text-sm text-text-muted">Select a memory to inspect.</p>}
+      {!selectedMemoryId && (
+        <div className="flex flex-col items-center text-center px-2 py-10">
+          <FileSearch
+            aria-hidden
+            size={28}
+            strokeWidth={1.5}
+            className="mb-3 text-text-muted"
+          />
+          <p className="display text-base mb-1.5">No memory selected</p>
+          <p className="font-body text-sm text-text-muted leading-snug max-w-[14rem]">
+            Click any memory in the browser, search results, timeline, or graph
+            to see its provenance, audit trail, and strength forecast.
+          </p>
+        </div>
+      )}
       {mem && (
         <div className="space-y-3">
           <h2 className={`display text-base ${mem.invalid_at ? "line-through opacity-60" : ""}`}>{mem.title}</h2>
