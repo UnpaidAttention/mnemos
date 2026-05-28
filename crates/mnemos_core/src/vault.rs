@@ -297,6 +297,57 @@ impl Vault {
         get_memory(&self.storage, id).await
     }
 
+    /// Re-tier a memory: update DB row, rewrite/move the file to the new
+    /// tier directory, write a `promote` audit entry, and return the refreshed
+    /// memory. Idempotent when `new_tier` matches the current tier.
+    pub async fn promote(&self, id: &str, new_tier: Tier) -> Result<Memory> {
+        let mut mem = get_memory(&self.storage, id).await?;
+        if mem.tier == new_tier {
+            return Ok(mem);
+        }
+        // Capture the old on-disk location before we rewrite the row.
+        let old_file_path: Option<String> = {
+            let conn = self.storage.conn()?;
+            let mut r = conn
+                .query(
+                    "SELECT file_path FROM memories WHERE id = ?",
+                    libsql::params![id.to_string()],
+                )
+                .await?;
+            r.next().await?.and_then(|row| row.get::<String>(0).ok())
+        };
+        mem.tier = new_tier;
+        let new_path = write_memory_file(&self.paths, &mem).await?;
+        if let Some(old) = old_file_path.as_deref() {
+            if old != new_path.to_string_lossy() {
+                let _ = tokio::fs::remove_file(old).await;
+            }
+        }
+        let new_hash = content_hash(&mem.body);
+        {
+            let (conn, _g) = self.storage.write_conn().await?;
+            conn.execute(
+                "UPDATE memories SET tier = ?, file_path = ?, content_hash = ? WHERE id = ?",
+                libsql::params![
+                    mem.tier.as_str().to_string(),
+                    new_path.to_string_lossy().to_string(),
+                    new_hash,
+                    id.to_string()
+                ],
+            )
+            .await?;
+        }
+        write_audit(
+            &self.storage,
+            opts_actor(),
+            "promote",
+            Some(id),
+            Some(json!({ "tier": mem.tier.as_str() })),
+        )
+        .await?;
+        get_memory(&self.storage, id).await
+    }
+
     /// Write a reflection-tier memory and link it back to its source memories
     /// with `reflects_on` edges.
     pub async fn remember_reflection(

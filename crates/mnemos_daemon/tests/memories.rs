@@ -295,6 +295,36 @@ async fn search_accepts_graph_flag() {
 }
 
 #[tokio::test]
+async fn promote_moves_memory_to_target_tier() {
+    let (app, token) = fixture().await;
+    let (s, b) = call(
+        app.clone(),
+        "POST",
+        "/v1/memories",
+        Some(&token),
+        r#"{"body":"promote target","tier":"semantic"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let id = serde_json::from_str::<serde_json::Value>(&b).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (s2, b2) = call(
+        app.clone(),
+        "POST",
+        &format!("/v1/memories/{id}/promote"),
+        Some(&token),
+        r#"{"tier":"procedural"}"#,
+    )
+    .await;
+    assert_eq!(s2, StatusCode::OK, "{b2}");
+    let (_, b3) = call(app, "GET", &format!("/v1/memories/{id}"), Some(&token), "").await;
+    let v: serde_json::Value = serde_json::from_str(&b3).unwrap();
+    assert_eq!(v["tier"], "procedural");
+}
+
+#[tokio::test]
 async fn global_audit_lists_recent_entries() {
     let (app, token) = fixture().await;
     // create a memory → produces a "create" audit entry

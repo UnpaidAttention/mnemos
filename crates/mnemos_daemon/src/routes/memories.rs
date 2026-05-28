@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
             "/v1/memories/{id}",
             get(get_memory).patch(patch_memory).delete(delete_memory),
         )
+        .route("/v1/memories/{id}/promote", post(promote_memory))
         .route("/v1/memories/{id}/audit", get(audit))
         .route("/v1/audit", get(audit_all))
 }
@@ -119,6 +120,25 @@ async fn patch_memory(
     Json(req): Json<PatchMemoryReq>,
 ) -> Result<Json<mnemos_core::types::Memory>, ApiError> {
     let mem = state.vault.patch(&id, req.tags, req.importance).await?;
+    state
+        .events
+        .publish(crate::events::Event::MemoryUpdated { id: id.clone() });
+    Ok(Json(mem))
+}
+
+#[derive(Debug, Deserialize)]
+struct PromoteReq {
+    tier: String,
+}
+
+async fn promote_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<PromoteReq>,
+) -> Result<Json<mnemos_core::types::Memory>, ApiError> {
+    let tier = Tier::from_str(&req.tier)
+        .map_err(|e| ApiError::bad_request(format!("invalid tier: {e}")))?;
+    let mem = state.vault.promote(&id, tier).await?;
     state
         .events
         .publish(crate::events::Event::MemoryUpdated { id: id.clone() });
