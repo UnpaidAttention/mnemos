@@ -5,6 +5,7 @@ members = [
     "crates/mnemos_cli",
     "crates/mnemos_daemon",
     "crates/mnemos_client",
+    "crates/mnemos_merge_driver",
 ]
 
 [workspace.package]
