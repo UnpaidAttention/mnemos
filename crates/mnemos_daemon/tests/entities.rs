@@ -45,6 +45,74 @@ async fn entity_detail_is_enriched() {
 }
 
 #[tokio::test]
+async fn merge_entities_missing_target_returns_404() {
+    let (app, token, a, _mem) = fixture().await;
+    let (s, body) = call(
+        app,
+        "POST",
+        "/v1/entities/merge",
+        Some(&token),
+        &format!(r#"{{"source":"{a}","target":"ent_does_not_exist"}}"#),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn merge_entities_endpoint_moves_mentions() {
+    let (app, token, a, mem) = fixture().await;
+    let b = {
+        // Create a fresh target entity directly via an upsert through the API
+        // is not available, so introspect via list endpoint to fetch "Tauri".
+        let (_, body) = call(
+            app.clone(),
+            "GET",
+            "/v1/entities?limit=50",
+            Some(&token),
+            "",
+        )
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        v["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["name"] == "Tauri")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (s, body) = call(
+        app.clone(),
+        "POST",
+        "/v1/entities/merge",
+        Some(&token),
+        &format!(r#"{{"source":"{a}","target":"{b}"}}"#),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    // Source is gone (404 on GET).
+    let (s2, _) = call(
+        app.clone(),
+        "GET",
+        &format!("/v1/entities/{a}"),
+        Some(&token),
+        "",
+    )
+    .await;
+    assert_eq!(s2, StatusCode::NOT_FOUND);
+    // Target now owns the mention.
+    let (_, b3) = call(app, "GET", &format!("/v1/entities/{b}"), Some(&token), "").await;
+    let v: serde_json::Value = serde_json::from_str(&b3).unwrap();
+    assert!(v["memory_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m == &mem));
+}
+
+#[tokio::test]
 async fn entity_neighborhood_graph() {
     let (app, token, a, _mem) = fixture().await;
     let (s, b) = call(

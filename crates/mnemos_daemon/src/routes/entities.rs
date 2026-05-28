@@ -4,10 +4,11 @@
 
 use axum::{
     extract::{Path, Query, State},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use libsql::params;
+use mnemos_core::storage::entity_ops::merge_entities;
 use mnemos_core::types::Entity;
 use serde::Deserialize;
 
@@ -17,8 +18,35 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/v1/entities", get(list_entities))
+        .route("/v1/entities/merge", post(merge_route))
         .route("/v1/entities/{id}", get(get_entity))
         .route("/v1/entities/{id}/graph", get(entity_graph))
+}
+
+#[derive(Debug, Deserialize)]
+struct MergeReq {
+    source: String,
+    target: String,
+}
+
+async fn merge_route(
+    State(state): State<AppState>,
+    Json(req): Json<MergeReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    merge_entities(state.vault.storage(), &req.source, &req.target).await?;
+    mnemos_core::storage::audit::write_audit(
+        state.vault.storage(),
+        "mnemos-cli",
+        "entity_merge",
+        None,
+        Some(serde_json::json!({ "source": req.source, "target": req.target })),
+    )
+    .await?;
+    Ok(Json(serde_json::json!({
+        "source": req.source,
+        "target": req.target,
+        "status": "merged",
+    })))
 }
 
 #[derive(Debug, Deserialize)]
