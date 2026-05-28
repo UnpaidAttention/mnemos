@@ -2,6 +2,25 @@
 
 All notable changes to this project are recorded here.
 
+## [0.5.0] - 2026-05-27
+
+### Added
+- **Desktop UI** (`desktop/`): Tauri 2 + React 18 + TypeScript app over the
+  daemon. Ten views (browser, editor, search w/ explainability, Sigma.js graph
+  with community + PPR overlays, bi-temporal timeline, pipelines, reflections,
+  entity profile, audit), ⌘K command palette, quick-add, live WS updates,
+  tier-coded anti-slop design system, light/dark themes.
+- Daemon endpoints for the UI: `GET /v1/graph`, `POST /v1/graph/ppr`,
+  `GET /v1/communities`, `GET /v1/audit`; enriched `GET /v1/entities/{id}` and a
+  real `GET /v1/entities/{id}/graph` neighborhood.
+- Frontend test stack: Vitest + Testing Library + MSW (unit/component) and
+  Playwright (golden-path E2E); a `desktop` CI workflow.
+
+### Notes
+- The Tauri app lives outside the Cargo workspace; daemon CI is unaffected.
+- Full memory/mixed graph modes, the graph time-slider, settings, first-run
+  wizard, and entity merge are deferred to Plan 7.
+
 ## [0.4.0] - 2026-05-27
 
 ### Added

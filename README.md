@@ -4,6 +4,32 @@ Local-first, file-as-source-of-truth memory provider for AI tools. Plan 1
 ships the CLI foundation — vectors, daemon, MCP, and UI come in later
 plans.
 
+## Desktop UI (v0.5.0)
+
+A Tauri 2 + React desktop app (`desktop/`) over the daemon. Three-column
+Obsidian-style shell with ten views — tier browser, markdown editor, hybrid
+search (with per-retriever explainability bars), **Sigma.js graph** (community
+coloring + query-driven PPR overlay), **bi-temporal timeline** (time-travel
+cursor), pipeline status, reflection viewer, entity profile, audit log — a ⌘K
+command palette, quick-add, and live WebSocket updates. Distinctive tier-coded
+design (Fraunces/Source Serif 4/JetBrains Mono, warm off-white / deep blue-black,
+no purple).
+
+```bash
+# run the daemon, then:
+cd desktop && pnpm install
+pnpm tauri dev          # desktop window
+# or browser dev with mocked daemon:
+VITE_MSW=1 pnpm dev
+```
+
+The app reads the daemon bearer token from `~/.config/mnemos/token` via a Tauri
+command (the secret never enters renderer code).
+
+New daemon endpoints in this release: `GET /v1/graph`, `POST /v1/graph/ppr`,
+`GET /v1/communities`, `GET /v1/audit`, enriched `GET /v1/entities/{id}` +
+`/{id}/graph`.
+
 ## What works today (v0.4.0)
 
 - **Long-running daemon** (`mnemosd`) — REST + WebSocket + MCP over Streamable HTTP at `127.0.0.1:7423`.
