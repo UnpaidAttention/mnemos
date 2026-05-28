@@ -49,7 +49,14 @@ export function Browser() {
         return (
           <Card
             key={m.id}
-            className={`p-3 hover:shadow-raised transition-shadow duration-[120ms] ease-brand ${invalid ? "opacity-60 border-dashed" : ""}`}
+            className={[
+              "p-3 hover:shadow-raised transition-shadow duration-[120ms] ease-brand",
+              invalid ? "opacity-60 border-dashed" : "",
+              // Near-invalidation ambient pulse: strength < 0.2 and memory is still valid
+              !invalid && m.strength < 0.2 ? "pulse-weak" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
             <button
               onClick={() => select(m.id)}

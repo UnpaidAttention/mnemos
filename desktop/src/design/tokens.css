@@ -55,6 +55,11 @@ h1, h2, h3, .display { font-family: "Fraunces Variable", Georgia, serif; font-we
 .label { letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.72rem; color: var(--text-muted); }
 code, pre, .mono { font-family: "JetBrains Mono Variable", ui-monospace, monospace; }
 
+/* Strength-near-invalidation pulse — opacity only (accessible, low motion) */
+@keyframes mnemos-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.pulse-weak { animation: mnemos-pulse 2.4s var(--ease) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+  .pulse-weak { animation: none; }
 }
