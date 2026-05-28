@@ -2,7 +2,7 @@
 export { Browser } from "./Browser";
 export { Search } from "./Search";
 export { Graph } from "./Graph";
-export const Timeline = () => <div className="p-6">Timeline</div>;
+export { Timeline } from "./Timeline";
 export { Pipelines } from "./Pipelines";
 export { Reflections } from "./Reflections";
 export { Audit } from "./Audit";
