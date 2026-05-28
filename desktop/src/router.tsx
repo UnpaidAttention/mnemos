@@ -1,8 +1,17 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
 import { Shell } from "./layout/Shell";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import * as V from "./views";
 
-const rootRoute = createRootRoute({ component: () => (<Shell><Outlet /></Shell>) });
+const rootRoute = createRootRoute({
+  component: () => (
+    <Shell>
+      <ErrorBoundary>
+        <Outlet />
+      </ErrorBoundary>
+    </Shell>
+  ),
+});
 const r = (path: string, component: () => JSX.Element) => createRoute({ getParentRoute: () => rootRoute, path, component });
 
 const routes = [
