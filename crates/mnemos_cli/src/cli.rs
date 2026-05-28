@@ -44,6 +44,21 @@ pub enum Cmd {
     Daemon(DaemonArgs),
     /// Run a memory decay pass now (Ebbinghaus strength decay).
     Decay,
+    /// Sync the vault with the configured backend.
+    Sync(SyncArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct SyncArgs {
+    #[command(subcommand)]
+    pub action: SyncAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SyncAction {
+    Push,
+    Pull,
+    Status,
 }
 
 #[derive(clap::Args, Debug)]

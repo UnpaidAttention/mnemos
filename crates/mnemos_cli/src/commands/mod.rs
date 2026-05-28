@@ -9,6 +9,7 @@ pub mod rebuild;
 pub mod recall;
 pub mod remember;
 pub mod status;
+pub mod sync;
 
 use anyhow::Result;
 use mnemos_core::providers::{
