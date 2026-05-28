@@ -1,14 +1,24 @@
 //! `GET /v1/graph` — the whole entity graph (nodes + active edges) for the UI
 //! graph view. Node `community_id` is -1 when community detection hasn't run.
+//!
+//! `POST /v1/graph/ppr` — per-entity PPR scores for a query, used by the graph
+//! view's PPR mass overlay.
 
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{
+    extract::State,
+    routing::{get, post},
+    Json, Router,
+};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::error::ApiError;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/v1/graph", get(get_graph))
+    Router::new()
+        .route("/v1/graph", get(get_graph))
+        .route("/v1/graph/ppr", post(graph_ppr))
 }
 
 async fn get_graph(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
@@ -59,4 +69,37 @@ async fn get_graph(State(state): State<AppState>) -> Result<Json<Value>, ApiErro
     }
 
     Ok(Json(json!({ "nodes": nodes, "edges": edges })))
+}
+
+#[derive(Deserialize)]
+struct PprReq {
+    query: String,
+}
+
+async fn graph_ppr(
+    State(state): State<AppState>,
+    Json(req): Json<PprReq>,
+) -> Result<Json<Value>, ApiError> {
+    use mnemos_core::graph::ppr::personalized_pagerank;
+    use mnemos_core::graph::MemoryGraph;
+    use mnemos_core::retrieval::graph_recall::select_seeds;
+
+    let g = MemoryGraph::load(state.vault.storage()).await?;
+    if g.is_empty() {
+        return Ok(Json(json!({ "scores": {} })));
+    }
+    let seeds = select_seeds(state.vault.storage(), &g, &req.query, 5).await?;
+    let scores = personalized_pagerank(
+        &g,
+        &seeds,
+        state.config.retrieval.ppr_alpha,
+        state.config.retrieval.ppr_iterations,
+    );
+    let mut map = serde_json::Map::new();
+    for (i, s) in scores.iter().enumerate() {
+        if *s > 0.0 {
+            map.insert(g.entity_id(i).to_string(), json!(s));
+        }
+    }
+    Ok(Json(json!({ "scores": Value::Object(map) })))
 }

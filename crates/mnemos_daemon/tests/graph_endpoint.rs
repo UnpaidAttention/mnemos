@@ -6,6 +6,47 @@ use mnemos_daemon::{build_app, config::Config};
 use tempfile::TempDir;
 
 #[tokio::test]
+async fn graph_ppr_returns_entity_scores() {
+    use mnemos_core::storage::entity_ops::link_entity_mention;
+    use mnemos_core::vault::RememberOpts;
+    let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
+    let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
+    let mem = vault
+        .remember("rust topic", RememberOpts::default())
+        .await
+        .unwrap();
+    let a = upsert_entity(vault.storage(), "Rust", "tool")
+        .await
+        .unwrap();
+    let b = upsert_entity(vault.storage(), "Tauri", "tool")
+        .await
+        .unwrap();
+    upsert_edge(vault.storage(), &a, &b, "uses", &mem, chrono::Utc::now())
+        .await
+        .unwrap();
+    link_entity_mention(vault.storage(), &mem, &a)
+        .await
+        .unwrap();
+    let (app, state) = build_app(Config::default(), vault).await.unwrap();
+
+    let (s, body) = call(
+        app,
+        "POST",
+        "/v1/graph/ppr",
+        Some(&state.token),
+        r#"{"query":"rust"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    // seed entity Rust gets mass; reachable Tauri too
+    assert!(
+        v["scores"].as_object().unwrap().contains_key(&a),
+        "seed entity should have a score"
+    );
+}
+
+#[tokio::test]
 async fn graph_endpoint_returns_nodes_and_edges() {
     let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
     let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
