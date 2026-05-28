@@ -7,10 +7,17 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ThemeProvider } from "./design/ThemeProvider";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <ThemeProvider>
-      <App />
-    </ThemeProvider>
-  </React.StrictMode>,
-);
+(async () => {
+  if (import.meta.env.VITE_MSW === "1") {
+    const { worker } = await import("./test/browser");
+    await worker.start({ onUnhandledRequest: "bypass" });
+  }
+
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>
+    </React.StrictMode>,
+  );
+})();
