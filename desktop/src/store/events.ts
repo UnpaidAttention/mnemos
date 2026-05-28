@@ -9,7 +9,11 @@ export type DaemonEvent =
   | { type: "pipeline_completed"; session_id: string; facts_added: number }
   | { type: "pipeline_failed"; session_id: string; error: string }
   | { type: "reflection_completed"; reflections_created: number }
-  | { type: "community_detected"; communities: number };
+  | { type: "community_detected"; communities: number }
+  | { type: "sync_started"; backend: string; direction: string }
+  | { type: "sync_completed"; backend: string; direction: string; files_changed: number }
+  | { type: "sync_failed"; backend: string; direction: string; error: string }
+  | { type: "sync_conflict"; path: string; detected_by: string };
 
 type Status = "connecting" | "open" | "closed";
 

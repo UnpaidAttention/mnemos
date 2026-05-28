@@ -1,18 +1,11 @@
 import { Moon, Plus, Sun } from "lucide-react";
 import { useTheme } from "../design/ThemeProvider";
-import { useEventStore } from "../store/events";
 import { useUiStore } from "../store/ui";
+import { SyncStatusPill } from "../components/SyncStatusPill";
 
 export function TopBar({ onCommand, onAdd }: { onCommand: () => void; onAdd?: () => void }) {
-  const status = useEventStore((s) => s.status);
   const asOf = useUiStore((s) => s.asOf);
   const { mode, toggle } = useTheme();
-  const dot =
-    status === "open"
-      ? "var(--accent)"
-      : status === "connecting"
-        ? "var(--tier-working)"
-        : "var(--tier-procedural)";
 
   return (
     <header
@@ -83,20 +76,8 @@ export function TopBar({ onCommand, onAdd }: { onCommand: () => void; onAdd?: ()
         )}
       </button>
 
-      {/* Daemon status. The dot carries a colored glow that matches its state
-          so it reads as a status light rather than a flat decal. */}
-      <span
-        className="flex items-center gap-1.5 label"
-        title={`daemon ${status}`}
-        aria-label={`Daemon status: ${status}`}
-      >
-        <span
-          className="h-2 w-2 rounded-full"
-          style={{ background: dot, boxShadow: `0 0 6px ${dot}` }}
-          aria-hidden
-        />
-        {status}
-      </span>
+      {/* Sync status pill — live backend + last activity, click-to-pull. */}
+      <SyncStatusPill />
     </header>
   );
 }

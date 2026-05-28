@@ -10,6 +10,10 @@ const INVALIDATE: Record<string, string[][]> = {
   pipeline_failed: [["pipelines"]],
   reflection_completed: [["reflections"], ["memories"]],
   community_detected: [["communities"], ["graph"]],
+  sync_started: [["sync", "status"]],
+  sync_completed: [["sync", "status"]],
+  sync_failed: [["sync", "status"]],
+  sync_conflict: [["sync", "status"]],
   session_started: [], session_ended: [],
 };
 

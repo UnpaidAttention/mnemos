@@ -20,3 +20,10 @@ export const useAudit = (id: string | null) =>
   useQuery({ queryKey: ["audit", id], queryFn: () => client.audit(id!), enabled: !!id });
 export const useAuditAll = () =>
   useQuery({ queryKey: ["audit-all"], queryFn: () => client.auditAll() });
+export const useSyncStatus = () =>
+  useQuery({
+    queryKey: ["sync", "status"],
+    queryFn: () => client.getSyncStatus(),
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
+  });

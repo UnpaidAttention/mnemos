@@ -1,13 +1,16 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { TopBar } from "./TopBar";
 import { LeftSidebar } from "./LeftSidebar";
 import { Inspector } from "./Inspector";
 import { CommandPalette } from "../components/CommandPalette";
 import { QuickAdd } from "../components/QuickAdd";
+import { client } from "../api/client";
 
 export function Shell({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const queryClient = useQueryClient();
 
   // ⌘K / Ctrl+K global shortcut
   useEffect(() => {
@@ -27,6 +30,24 @@ export function Shell({ children }: { children: ReactNode }) {
     document.addEventListener("mnemos:quick-add", h);
     return () => document.removeEventListener("mnemos:quick-add", h);
   }, []);
+
+  // mnemos:sync-pull custom event (fired by the top-bar SyncStatusPill).
+  // Invokes a manual pull, then invalidates the sync status query whether the
+  // pull succeeded or failed so the pill reflects the new state immediately.
+  useEffect(() => {
+    const h = () => {
+      void client
+        .runSyncPull()
+        .catch(() => {
+          /* swallow — pill will show the daemon-side error on next refetch */
+        })
+        .finally(() => {
+          queryClient.invalidateQueries({ queryKey: ["sync", "status"] });
+        });
+    };
+    window.addEventListener("mnemos:sync-pull", h);
+    return () => window.removeEventListener("mnemos:sync-pull", h);
+  }, [queryClient]);
 
   return (
     <div className="flex h-full flex-col">
