@@ -52,3 +52,23 @@ hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 tokio-tungstenite = "0.24"
 futures = { workspace = true }
+
+[package.metadata.deb]
+name = "mnemos-daemon"
+maintainer = "Mnemos contributors"
+copyright = "2026, Mnemos contributors"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+Mnemos daemon — the local HTTP + MCP server for the Mnemos memory
+provider. Listens on 127.0.0.1:7423 by default and exposes the REST + WS
+API plus the MCP streamable HTTP endpoint used by Claude Code, Codex,
+and other AI clients.
+"""
+section = "utils"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/mnemosd", "usr/bin/mnemos-daemon", "755"],
+    ["../../README.md", "usr/share/doc/mnemos-daemon/README", "644"],
+    ["../../CHANGELOG.md", "usr/share/doc/mnemos-daemon/CHANGELOG", "644"],
+]

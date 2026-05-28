@@ -35,3 +35,21 @@ libc = { workspace = true }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
 tempfile = { workspace = true }
+
+[package.metadata.deb]
+maintainer = "Mnemos contributors"
+copyright = "2026, Mnemos contributors"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+Mnemos CLI — local-first AI memory provider. The `mnemos` binary lets you
+remember, recall, list, forget, rebuild, sync, and diagnose without the
+desktop app or daemon. For the full GUI, install mnemos-desktop instead.
+"""
+section = "utils"
+priority = "optional"
+depends = ""
+assets = [
+    ["target/release/mnemos", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/mnemos/README", "644"],
+    ["../../CHANGELOG.md", "usr/share/doc/mnemos/CHANGELOG", "644"],
+]
