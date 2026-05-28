@@ -17,6 +17,7 @@ pub mod providers;
 pub mod rebuild;
 pub mod retrieval;
 pub mod storage;
+pub mod sync;
 pub mod tier;
 pub mod types;
 pub mod vault;
