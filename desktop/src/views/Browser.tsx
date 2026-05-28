@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useMemories } from "../api/queries";
 import { useUiStore } from "../store/ui";
 import { TierChip, Skeleton, Card } from "../design/primitives";
@@ -44,6 +45,7 @@ export function Browser() {
       <h1 className="display text-xl mb-3">Memories</h1>
       {data.map((m) => {
         const invalid = !!m.invalid_at;
+        const editPath: string = `/editor/${m.id}`;
         return (
           <Card
             key={m.id}
@@ -73,12 +75,12 @@ export function Browser() {
               )}
             </button>
             <div className="mt-1 flex items-center gap-3">
-              <a
-                href={`/editor/${m.id}`}
+              <Link
+                to={editPath}
                 className="label text-accent hover:underline"
               >
                 edit
-              </a>
+              </Link>
               <span className="label mono text-[0.65rem] text-text-muted">
                 {m.valid_at.slice(0, 10)}
               </span>
