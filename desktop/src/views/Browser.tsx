@@ -69,11 +69,11 @@ export function Browser() {
                 <TierChip tier={m.tier} />
               </div>
               {m.tags.length > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1">
+                <div className="mt-2 flex flex-wrap gap-1">
                   {m.tags.map((tag) => (
                     <span
                       key={tag}
-                      className="label mono text-[0.65rem] border border-border rounded-sm px-1"
+                      className="label mono text-[0.65rem] text-text-muted border border-border rounded-sm px-1.5 py-0.5"
                     >
                       {tag}
                     </span>
@@ -81,14 +81,16 @@ export function Browser() {
                 </div>
               )}
             </button>
-            <div className="mt-1 flex items-center gap-3">
+            {/* Hairline divider separates the title row from the meta row,
+                giving the card a faint inner structure without a louder rule. */}
+            <div className="mt-2 pt-2 border-t border-border/60 flex items-center gap-3">
               <Link
                 to={editPath}
                 className="label text-accent hover:underline"
               >
                 edit
               </Link>
-              <span className="label mono text-[0.65rem] text-text-muted">
+              <span className="label mono text-[0.65rem] text-text-muted opacity-70">
                 {m.valid_at.slice(0, 10)}
               </span>
             </div>
