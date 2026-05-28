@@ -2,6 +2,34 @@
 
 All notable changes to this project are recorded here.
 
+## [0.6.0] - 2026-05-28
+
+### Added
+- Cloud sync with three backends: filesystem-sync (Syncthing/Dropbox/iCloud/OneDrive
+  conflict-file detection), Git remote (periodic push/pull + the new
+  `mnemos-merge-driver` binary for YAML-aware memory frontmatter merges), and
+  S3-compatible (shells out to `rclone`). `[sync]` config block + periodic
+  `sync_worker` + `GET /v1/sync/status`, `POST /v1/sync/push|pull`,
+  `GET /v1/sync/conflicts` + WS events + `mnemos sync push|pull|status` CLI.
+- Schema v7 (`sync_state`, `sync_conflicts`) and v8 (first-run timestamp).
+- Entity merge (`POST /v1/entities/merge`, in-place `merge_entities` core,
+  Entity-profile "Merge into…" dialog).
+- Tier promotion (`Vault::promote`, `POST /v1/memories/{id}/promote`); Reflections'
+  "Promote to procedural" action wired up.
+- Settings view + `GET/PUT /v1/config` (sectioned form over every config block).
+- First-run wizard (Ollama probe + `nomic-embed-text` pull + integration snippets).
+- Doctor view + `GET /v1/doctor` (schema/file-DB drift/dep reachability/sync state).
+- Vault export/import (`POST /v1/vault/export|import` + UI + `mnemos export|import` CLI).
+- Reference adapters under `adapters/` for gemini-cli, codex, hermes-agent,
+  openclaw, generic-mcp, openai-functions.
+- Real sync-status pill in the top bar; live `sync_*` events.
+
+### Deferred
+- Turso libSQL embedded replicas (DB-layer fast-path) — config knob exists,
+  wire-up TBD when a test target is available.
+- Encrypt-at-rest, secret-detection-at-ingest, AI-tool auto-detection in first-run.
+- Native packaging / installers / signing / auto-update — Plan 8.
+
 ## [0.5.0] - 2026-05-27
 
 ### Added

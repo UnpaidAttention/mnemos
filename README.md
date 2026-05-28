@@ -4,6 +4,22 @@ Local-first, file-as-source-of-truth memory provider for AI tools. Plan 1
 ships the CLI foundation — vectors, daemon, MCP, and UI come in later
 plans.
 
+## Sync, settings, doctor, adapters (v0.6.0)
+
+mnemos is now multi-machine. Pick a backend:
+
+| Backend | When | How |
+|---|---|---|
+| **Filesystem** | Vault sits in Syncthing/Dropbox/iCloud/OneDrive | nothing to configure; mnemos detects conflict files |
+| **Git remote** | You want audit history + branches | `mnemos sync` shells out to `git`; ships with `mnemos-merge-driver` for YAML-aware frontmatter merges |
+| **S3-compatible** | NAS or B2/MinIO | shells out to `rclone` (configure a remote first via `rclone config`) |
+
+Plus: a **Settings view** that edits every knob over `PUT /v1/config`; a **First-run wizard** (Ollama probe + integration snippets); a **Doctor view** at `/doctor` and `GET /v1/doctor` reporting schema/file-DB drift/dep reachability/sync health; **vault export/import** as zip; **entity merge** (`POST /v1/entities/merge` + UI dialog) and a working **Promote to procedural** action on reflections; six new **reference adapters** under `adapters/`.
+
+CLI additions: `mnemos sync push|pull|status`, `mnemos doctor`, `mnemos export <zip>`, `mnemos import <zip>`.
+
+Turso libSQL embedded replicas (the DB-layer fast path) — config knob ships, wire-up deferred to a future increment.
+
 ## Desktop UI (v0.5.0)
 
 A Tauri 2 + React desktop app (`desktop/`) over the daemon. Three-column
