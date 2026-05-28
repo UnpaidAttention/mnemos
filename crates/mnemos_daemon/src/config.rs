@@ -317,7 +317,17 @@ impl Config {
     }
 }
 
-fn default_config_path() -> Result<PathBuf> {
+/// Resolve the path to the daemon's `config.toml`.
+///
+/// Honors `MNEMOS_CONFIG_PATH` when set (used by tests and operators who want
+/// to point the daemon at a non-default location). Otherwise falls back to the
+/// XDG-managed `~/.config/mnemos/config.toml`.
+pub fn default_config_path() -> Result<PathBuf> {
+    if let Ok(p) = std::env::var("MNEMOS_CONFIG_PATH") {
+        if !p.is_empty() {
+            return Ok(PathBuf::from(p));
+        }
+    }
     let dirs = directories::ProjectDirs::from("dev", "mnemos", "mnemos")
         .context("could not resolve XDG config dir")?;
     Ok(dirs.config_dir().join("config.toml"))

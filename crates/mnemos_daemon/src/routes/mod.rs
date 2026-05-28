@@ -6,6 +6,7 @@
 //! * All other `/v1/*` routes — bearer token middleware.
 
 pub mod communities;
+pub mod config;
 pub mod entities;
 pub mod graph;
 pub mod health;
@@ -42,6 +43,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(pipelines::router())
         .merge(reflections::router())
         .merge(sync::router())
+        .merge(config::router())
         .merge(crate::mcp::router())
         .route_layer(from_fn_with_state(state.clone(), bearer_auth));
 
