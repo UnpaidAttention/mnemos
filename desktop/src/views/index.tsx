@@ -6,5 +6,5 @@ export const Timeline = () => <div className="p-6">Timeline</div>;
 export { Pipelines } from "./Pipelines";
 export { Reflections } from "./Reflections";
 export const Audit = () => <div className="p-6">Audit</div>;
-export const EntityProfile = () => <div className="p-6">Entity</div>;
+export { EntityProfile } from "./EntityProfile";
 export { Editor } from "./Editor";
