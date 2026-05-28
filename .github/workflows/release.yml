@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.7.0). Must already exist."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin-aarch64
+            bundles: "dmg,app"
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            bundles: "deb,rpm,appimage"
+          - os: windows-latest
+            platform: windows-x86_64
+            bundles: "msi"
+
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            librsvg2-dev libappindicator3-dev patchelf libssl-dev
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop bundle
+        working-directory: desktop
+        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          mkdir -p staged
+          shopt -s globstar nullglob
+          for f in desktop/src-tauri/target/release/bundle/**/*.{dmg,app.tar.gz,deb,rpm,AppImage,msi,nsis}; do
+            cp "$f" staged/
+          done
+          for f in desktop/src-tauri/target/release/bundle/**/*.sig; do
+            cp "$f" staged/
+          done
+          ls -la staged/
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.platform }}
+          path: staged/
+          retention-days: 7
+
+  linux-packages:
+    name: Linux server-side packages
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-deb + cargo-generate-rpm
+        run: |
+          cargo install cargo-deb --locked
+          cargo install cargo-generate-rpm --locked
+      - name: Build server packages
+        run: bash scripts/prepare-linux-packages.sh
+      - name: Upload server-side artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-server-packages
+          path: |
+            target/debian/*.deb
+            target/generate-rpm/*.rpm
+          retention-days: 7
+
+  release:
+    name: Publish release
+    needs: [build, linux-packages]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Flatten + list
+        run: |
+          mkdir -p release/
+          find artifacts/ -type f \( -name "*.dmg" -o -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.sig" \) -exec cp -v {} release/ \;
+          ls -la release/
+
+      - name: Build release-manifest tool
+        run: cargo build --release --bin mnemos-release-manifest
+
+      - name: Generate latest.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          first_match() {
+            ls release/$1 2>/dev/null | head -1
+          }
+
+          MAC_FILE=$(first_match "*.app.tar.gz")
+          LIN_FILE=$(first_match "*.AppImage.tar.gz")
+          WIN_FILE=$(first_match "*.msi.zip")
+
+          MAC_SIG=$(cat "${MAC_FILE}.sig" 2>/dev/null || echo "")
+          LIN_SIG=$(cat "${LIN_FILE}.sig" 2>/dev/null || echo "")
+          WIN_SIG=$(cat "${WIN_FILE}.sig" 2>/dev/null || echo "")
+
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+
+          ./target/release/mnemos-release-manifest \
+            --version "$VERSION" \
+            --notes "$(awk "/^## \[$VERSION\]/{f=1;next} /^## \[/{f=0} f" CHANGELOG.md | head -100)" \
+            --platform darwin-aarch64 \
+            --platform linux-x86_64 \
+            --platform windows-x86_64 \
+            --url  "${base_url}/$(basename "$MAC_FILE")" \
+            --url  "${base_url}/$(basename "$LIN_FILE")" \
+            --url  "${base_url}/$(basename "$WIN_FILE")" \
+            --signature "$MAC_SIG" \
+            --signature "$LIN_SIG" \
+            --signature "$WIN_SIG" \
+            --output release/latest.json
+
+          cat release/latest.json
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: false
+          body_path: CHANGELOG.md
+          files: release/*
+          make_latest: true
+          fail_on_unmatched_files: false

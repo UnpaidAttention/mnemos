@@ -36,7 +36,7 @@
     "copyright": "© 2026 Mnemos contributors",
     "shortDescription": "Local-first AI memory provider",
     "longDescription": "Mnemos is a local-first AI memory provider for Claude Code and other AI tools. It stores memories as markdown files in your vault and indexes them with hybrid BM25 + dense + graph PPR search.",
-    "homepage": "https://github.com/mnemos/mnemos",
+    "homepage": "https://github.com/UnpaidAttention/mnemos",
     "externalBin": ["binaries/mnemos-daemon", "binaries/mnemos"],
     "resources": [],
     "linux": {
@@ -77,7 +77,7 @@
     "updater": {
       "pubkey": "PLACEHOLDER_PUBLIC_KEY_REPLACE_BEFORE_RELEASE",
       "endpoints": [
-        "https://github.com/mnemos/mnemos/releases/latest/download/latest.json"
+        "https://github.com/UnpaidAttention/mnemos/releases/latest/download/latest.json"
       ]
     }
   }
