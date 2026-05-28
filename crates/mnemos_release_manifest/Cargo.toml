@@ -1,7 +1,11 @@
 [package]
 name = "mnemos_release_manifest"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "mnemos-release-manifest"
