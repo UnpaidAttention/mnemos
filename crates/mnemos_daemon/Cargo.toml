@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Mnemos daemon — local HTTP and MCP server for the Mnemos memory provider"
 
 [[bin]]
 name = "mnemosd"
@@ -71,4 +72,12 @@ assets = [
     ["target/release/mnemosd", "usr/bin/mnemos-daemon", "755"],
     ["../../README.md", "usr/share/doc/mnemos-daemon/README", "644"],
     ["../../CHANGELOG.md", "usr/share/doc/mnemos-daemon/CHANGELOG", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "mnemos-daemon"
+assets = [
+    { source = "target/release/mnemosd", dest = "/usr/bin/mnemos-daemon", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/mnemos-daemon/README", mode = "644", doc = true },
+    { source = "CHANGELOG.md", dest = "/usr/share/doc/mnemos-daemon/CHANGELOG", mode = "644", doc = true },
 ]

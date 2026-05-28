@@ -12,3 +12,7 @@ Cargo.lock
 /ui/src-tauri/target/
 desktop/src-tauri/binaries/
 desktop/src-tauri/gen/
+crates/mnemos_cli/README.md
+crates/mnemos_cli/CHANGELOG.md
+crates/mnemos_daemon/README.md
+crates/mnemos_daemon/CHANGELOG.md

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Mnemos CLI — local-first AI memory provider command-line interface"
 
 [[bin]]
 name = "mnemos"
@@ -52,4 +53,11 @@ assets = [
     ["target/release/mnemos", "usr/bin/", "755"],
     ["../../README.md", "usr/share/doc/mnemos/README", "644"],
     ["../../CHANGELOG.md", "usr/share/doc/mnemos/CHANGELOG", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/mnemos", dest = "/usr/bin/mnemos", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/mnemos/README", mode = "644", doc = true },
+    { source = "CHANGELOG.md", dest = "/usr/share/doc/mnemos/CHANGELOG", mode = "644", doc = true },
 ]
