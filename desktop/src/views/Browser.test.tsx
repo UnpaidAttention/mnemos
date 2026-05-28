@@ -12,5 +12,7 @@ afterAll(() => server.close());
 test("lists memories with their tier", async () => {
   renderWithQuery(<Browser />);
   expect(await screen.findByText("Rust note")).toBeInTheDocument();
-  expect(screen.getByText(/semantic/i)).toBeInTheDocument();
+  // The richer fixture set contains multiple semantic-tier memories — at
+  // least one tier chip labeled "semantic" must render alongside the row.
+  expect(screen.getAllByText(/semantic/i).length).toBeGreaterThan(0);
 });

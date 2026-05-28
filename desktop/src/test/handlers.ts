@@ -1,16 +1,82 @@
 import { http, HttpResponse } from "msw";
-import { hitFixture, memFixture } from "./fixtures";
+import { memFixture } from "./fixtures";
+import {
+  RICH_AUDIT,
+  RICH_COMMUNITIES,
+  RICH_EDGES,
+  RICH_ENTITIES,
+  RICH_ENTITY_DETAIL,
+  RICH_ENTITY_NEIGHBORHOOD,
+  RICH_GRAPH_NODES,
+  RICH_MEMORIES,
+  RICH_MEMORIES_BY_ID,
+  RICH_PIPELINE,
+  RICH_PPR_SCORES,
+  RICH_REFLECTIONS,
+  RICH_SEARCH_HITS,
+} from "./data";
+
 const base = "http://localhost:7423";
+
+// Community summary memories (community-summary tier) — returned by /v1/communities.
+const COMMUNITY_SUMMARIES = RICH_MEMORIES.filter(
+  (m) => m.type === "community-summary",
+);
+
 export const handlers = [
-  http.get(`${base}/v1/memories`, () => HttpResponse.json({ memories: [memFixture()] })),
-  http.get(`${base}/v1/memories/missing`, () => HttpResponse.json({ error: "memory not found" }, { status: 404 })),
-  http.get(`${base}/v1/memories/:id`, ({ params }) => HttpResponse.json(memFixture({ id: String(params.id) }))),
-  http.post(`${base}/v1/memories/search`, () => HttpResponse.json({ hits: [hitFixture()] })),
-  http.get(`${base}/v1/pipelines`, () => HttpResponse.json({ enabled: true, llm_model: "mock-llm", counters: { completed: 1, failed: 0, facts_added: 3 }, recent: [] })),
-  http.get(`${base}/v1/reflections`, () => HttpResponse.json({ reflections: [memFixture({ id: "mem_r", tier: "reflection", type: "reflection", title: "Reflection (insight)" })] })),
-  http.get(`${base}/v1/graph`, () => HttpResponse.json({ nodes: [{ id: "ent_a", name: "Rust", kind: "tool", community_id: 0, mentions: 2 }, { id: "ent_b", name: "Tauri", kind: "tool", community_id: 0, mentions: 1 }], edges: [{ id: "edge_1", source: "ent_a", target: "ent_b", relation: "uses", weight: 2 }] })),
-  http.post(`${base}/v1/graph/ppr`, () => HttpResponse.json({ scores: { ent_a: 0.4, ent_b: 0.1 } })),
-  http.get(`${base}/v1/communities`, () => HttpResponse.json({ communities: [{ community_id: 0, members: [{ id: "ent_a", name: "Rust" }] }], summaries: [] })),
-  http.get(`${base}/v1/entities`, () => HttpResponse.json({ entities: [{ id: "ent_a", name: "Rust", kind: "tool" }] })),
-  http.get(`${base}/v1/audit`, () => HttpResponse.json({ entries: [{ id: 1, ts: "2026-05-01T00:00:00+00:00", actor: "mnemos-cli", action: "create", memory_id: "mem_1", details: null }] })),
+  http.get(`${base}/v1/memories`, () =>
+    HttpResponse.json({ memories: RICH_MEMORIES }),
+  ),
+  http.get(`${base}/v1/memories/missing`, () =>
+    HttpResponse.json({ error: "memory not found" }, { status: 404 }),
+  ),
+  http.get(`${base}/v1/memories/:id`, ({ params }) => {
+    const id = String(params.id);
+    const hit = RICH_MEMORIES_BY_ID[id];
+    if (hit) return HttpResponse.json(hit);
+    // Unknown ids fall back to a synthesized memory keyed by the requested id
+    // so unrelated tests (e.g. quick-add round-trip) keep working.
+    return HttpResponse.json(memFixture({ id }));
+  }),
+  http.post(`${base}/v1/memories/search`, () =>
+    HttpResponse.json({ hits: RICH_SEARCH_HITS }),
+  ),
+  http.get(`${base}/v1/pipelines`, () => HttpResponse.json(RICH_PIPELINE)),
+  http.get(`${base}/v1/reflections`, () =>
+    HttpResponse.json({ reflections: RICH_REFLECTIONS }),
+  ),
+  http.get(`${base}/v1/graph`, () =>
+    HttpResponse.json({ nodes: RICH_GRAPH_NODES, edges: RICH_EDGES }),
+  ),
+  http.post(`${base}/v1/graph/ppr`, () =>
+    HttpResponse.json({ scores: RICH_PPR_SCORES }),
+  ),
+  http.get(`${base}/v1/communities`, () =>
+    HttpResponse.json({
+      communities: RICH_COMMUNITIES,
+      summaries: COMMUNITY_SUMMARIES,
+    }),
+  ),
+  http.get(`${base}/v1/entities`, () =>
+    HttpResponse.json({ entities: RICH_ENTITIES }),
+  ),
+  http.get(`${base}/v1/entities/:id`, ({ params }) => {
+    const detail = RICH_ENTITY_DETAIL(String(params.id));
+    if (!detail) {
+      return HttpResponse.json({ error: "entity not found" }, { status: 404 });
+    }
+    return HttpResponse.json(detail);
+  }),
+  http.get(`${base}/v1/entities/:id/graph`, ({ params }) =>
+    HttpResponse.json(RICH_ENTITY_NEIGHBORHOOD(String(params.id))),
+  ),
+  http.get(`${base}/v1/audit`, () =>
+    HttpResponse.json({ entries: RICH_AUDIT }),
+  ),
+  // Per-memory audit: filter the global list down to entries that touched this id.
+  http.get(`${base}/v1/memories/:id/audit`, ({ params }) => {
+    const id = String(params.id);
+    const entries = RICH_AUDIT.filter((e) => e.memory_id === id);
+    return HttpResponse.json({ entries });
+  }),
 ];
