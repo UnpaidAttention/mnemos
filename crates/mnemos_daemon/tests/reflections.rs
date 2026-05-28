@@ -17,7 +17,7 @@ async fn reflect_endpoint_creates_and_lists() {
         )
         .await
         .unwrap();
-    let (app, state, handle) = build_app_full(
+    let (app, state, handle, _sync) = build_app_full(
         Config::default(),
         vault,
         None,

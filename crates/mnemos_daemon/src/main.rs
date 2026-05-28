@@ -83,7 +83,7 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
     tracing::info!(pid_file = %pid_path.display(), pid = std::process::id(), "PID file acquired");
 
     let decay_vault = vault.clone();
-    let (app, _state, pipeline) = build_app_full(cfg, vault, reranker, llm).await?;
+    let (app, _state, pipeline, sync) = build_app_full(cfg, vault, reranker, llm).await?;
 
     // Hourly decay worker.
     let (decay_tx, mut decay_rx) = tokio::sync::watch::channel(false);
@@ -134,10 +134,14 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
         .with_graceful_shutdown(shutdown)
         .await?;
 
-    // Graceful shutdown: stop the decay worker, then the pipeline runner, before
-    // the PID file (`_pid`) is dropped.
+    // Graceful shutdown: stop the decay worker, then the sync worker, then the
+    // pipeline runner, before the PID file (`_pid`) is dropped.
     let _ = decay_tx.send(true);
     let _ = decay_handle.await;
+    if let Some(handle) = sync {
+        tracing::info!("stopping sync worker");
+        handle.shutdown().await;
+    }
     if let Some(handle) = pipeline {
         tracing::info!("stopping pipeline runner");
         handle.shutdown().await;

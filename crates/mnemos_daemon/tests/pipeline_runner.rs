@@ -14,7 +14,7 @@ use tempfile::TempDir;
 async fn runner_turns_session_end_into_semantic_memory() {
     let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
     let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
-    let (_app, state, handle) = build_app_full(
+    let (_app, state, handle, _sync) = build_app_full(
         Config::default(),
         vault,
         None,

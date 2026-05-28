@@ -37,6 +37,13 @@ impl Paths {
         self.files_dir.join(tier.dir_name())
     }
 
+    /// Vault root path passed to `SyncBackend::push/pull`. This is the directory
+    /// containing `files/` and `index.db`; sync backends decide what subset to
+    /// replicate (typically the `files/` subtree).
+    pub fn files_root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn ensure_dirs(&self) -> Result<()> {
         std::fs::create_dir_all(&self.root)?;
         std::fs::create_dir_all(&self.files_dir)?;

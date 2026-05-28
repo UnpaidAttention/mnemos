@@ -40,6 +40,24 @@ pub enum Event {
     CommunityDetected {
         communities: usize,
     },
+    SyncStarted {
+        backend: String,
+        direction: String,
+    },
+    SyncCompleted {
+        backend: String,
+        direction: String,
+        files_changed: usize,
+    },
+    SyncFailed {
+        backend: String,
+        direction: String,
+        error: String,
+    },
+    SyncConflict {
+        path: String,
+        detected_by: String,
+    },
 }
 
 /// Cloneable handle to the broadcast channel that backs all WebSocket subscriptions.

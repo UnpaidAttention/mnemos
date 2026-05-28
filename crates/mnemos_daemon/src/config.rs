@@ -20,6 +20,7 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub reflection: ReflectionConfig,
     pub community: CommunityConfig,
+    pub sync: SyncConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,6 +226,70 @@ impl Default for CommunityConfig {
     fn default() -> Self {
         Self {
             min_community_size: 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SyncConfig {
+    pub kind: SyncKind,
+    /// Periodic push/pull interval in seconds (0 = disabled, manual only).
+    pub interval_secs: u64,
+    pub git: GitSyncConfig,
+    pub s3: S3SyncConfig,
+    /// Reserved for Turso embedded replicas. Not wired in v0.6.0.
+    pub turso: TursoSyncConfig,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncKind {
+    #[default]
+    None,
+    Filesystem,
+    Git,
+    S3,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GitSyncConfig {
+    pub remote: String,
+    pub branch: String,
+}
+
+impl Default for GitSyncConfig {
+    fn default() -> Self {
+        Self {
+            remote: String::new(),
+            branch: "main".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct S3SyncConfig {
+    pub remote: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TursoSyncConfig {
+    pub enabled: bool,
+    pub url: String,
+    pub auth_token: String,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            kind: SyncKind::None,
+            interval_secs: 0,
+            git: GitSyncConfig::default(),
+            s3: S3SyncConfig::default(),
+            turso: TursoSyncConfig::default(),
         }
     }
 }

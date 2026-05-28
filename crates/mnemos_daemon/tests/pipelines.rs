@@ -64,7 +64,7 @@ async fn communities_endpoint_runs_detection() {
             .await
             .unwrap();
     }
-    let (app, state, handle) = build_app_full(
+    let (app, state, handle, _sync) = build_app_full(
         Config::default(),
         vault,
         None,

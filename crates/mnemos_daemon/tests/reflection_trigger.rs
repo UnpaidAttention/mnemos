@@ -17,9 +17,10 @@ async fn session_pipeline_triggers_reflection_at_threshold() {
     // Low threshold so a single fact triggers reflection.
     let mut cfg = Config::default();
     cfg.reflection.salience_threshold = 1.0;
-    let (_app, state, handle) = build_app_full(cfg, vault, None, Some(Arc::new(MockLlm::new())))
-        .await
-        .unwrap();
+    let (_app, state, handle, _sync) =
+        build_app_full(cfg, vault, None, Some(Arc::new(MockLlm::new())))
+            .await
+            .unwrap();
     let handle = handle.unwrap();
     let mut rx = state.events.subscribe();
 

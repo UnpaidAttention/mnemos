@@ -14,6 +14,7 @@ pub mod pipeline_runner;
 pub mod pipeline_status;
 pub mod routes;
 pub mod state;
+pub mod sync_worker;
 
 use anyhow::Result;
 use mnemos_core::vault::Vault;
@@ -37,13 +38,13 @@ pub async fn build_app_with_reranker(
     vault: Vault,
     reranker: Option<Arc<dyn mnemos_core::providers::Reranker>>,
 ) -> Result<(axum::Router, AppState)> {
-    let (app, state, _handle) = build_app_full(config, vault, reranker, None).await?;
+    let (app, state, _pipeline, _sync) = build_app_full(config, vault, reranker, None).await?;
     Ok((app, state))
 }
 
 /// Full constructor: also wires the LLM and spawns the pipeline runner when an
-/// LLM is configured. Returns the runner handle (for graceful shutdown) when a
-/// runner was spawned.
+/// LLM is configured, plus the periodic sync worker when sync is enabled.
+/// Returns the handles (for graceful shutdown) when each was spawned.
 pub async fn build_app_full(
     config: Config,
     vault: Vault,
@@ -53,6 +54,7 @@ pub async fn build_app_full(
     axum::Router,
     AppState,
     Option<crate::pipeline_runner::PipelineHandle>,
+    Option<crate::sync_worker::SyncHandle>,
 )> {
     let token_path = config_token_path()?;
     let token = auth::ensure_token(&token_path)?;
@@ -66,12 +68,13 @@ pub async fn build_app_full(
         pipeline_status: pipeline_status::PipelineStatus::new(),
     };
     let app = routes::build_router(state.clone());
-    let handle = if state.llm.is_some() {
+    let pipeline = if state.llm.is_some() {
         Some(pipeline_runner::spawn(state.clone()))
     } else {
         None
     };
-    Ok((app, state, handle))
+    let sync = sync_worker::spawn(state.clone());
+    Ok((app, state, pipeline, sync))
 }
 
 /// Resolve the canonical path to the daemon's auth token file.

@@ -14,6 +14,7 @@ pub mod pipelines;
 pub mod recall_helper;
 pub mod reflections;
 pub mod sessions;
+pub mod sync;
 pub mod working;
 pub mod ws;
 
@@ -40,6 +41,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(working::router())
         .merge(pipelines::router())
         .merge(reflections::router())
+        .merge(sync::router())
         .merge(crate::mcp::router())
         .route_layer(from_fn_with_state(state.clone(), bearer_auth));
 
