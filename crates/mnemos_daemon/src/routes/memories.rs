@@ -28,6 +28,7 @@ pub fn router() -> Router<AppState> {
             get(get_memory).patch(patch_memory).delete(delete_memory),
         )
         .route("/v1/memories/{id}/audit", get(audit))
+        .route("/v1/audit", get(audit_all))
 }
 
 #[derive(Debug, Deserialize)]
@@ -272,5 +273,22 @@ async fn audit(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let entries = list_audit(state.vault.storage(), Some(&id)).await?;
+    Ok(Json(serde_json::json!({ "entries": entries })))
+}
+
+#[derive(Debug, Deserialize)]
+struct AuditAllQuery {
+    #[serde(default = "default_limit")]
+    limit: usize,
+}
+
+async fn audit_all(
+    State(state): State<AppState>,
+    Query(q): Query<AuditAllQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut entries = list_audit(state.vault.storage(), None).await?;
+    // Return most-recent entries first, then truncate to the requested limit.
+    entries.reverse();
+    entries.truncate(q.limit);
     Ok(Json(serde_json::json!({ "entries": entries })))
 }

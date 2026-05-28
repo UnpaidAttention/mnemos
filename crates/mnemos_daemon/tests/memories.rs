@@ -294,6 +294,28 @@ async fn search_accepts_graph_flag() {
         .any(|h| h["memory"]["body"] == "alpha rust topic"));
 }
 
+#[tokio::test]
+async fn global_audit_lists_recent_entries() {
+    let (app, token) = fixture().await;
+    // create a memory → produces a "create" audit entry
+    call(
+        app.clone(),
+        "POST",
+        "/v1/memories",
+        Some(&token),
+        r#"{"body":"x","tier":"semantic"}"#,
+    )
+    .await;
+    let (s, b) = call(app, "GET", "/v1/audit?limit=10", Some(&token), "").await;
+    assert_eq!(s, axum::http::StatusCode::OK, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert!(v["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["action"] == "create"));
+}
+
 async fn call(
     app: axum::Router,
     method: &str,
