@@ -10,8 +10,66 @@
     "beforeBuildCommand": "pnpm build"
   },
   "app": {
-    "windows": [{ "title": "Mnemos", "width": 1440, "height": 900, "minWidth": 960, "minHeight": 600 }],
+    "windows": [
+      {
+        "title": "Mnemos",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 600
+      }
+    ],
     "security": { "csp": null }
   },
-  "bundle": { "active": true, "targets": "all" }
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "appimage", "dmg", "app", "msi"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "© 2026 Mnemos contributors",
+    "shortDescription": "Local-first AI memory provider",
+    "longDescription": "Mnemos is a local-first AI memory provider for Claude Code and other AI tools. It stores memories as markdown files in your vault and indexes them with hybrid BM25 + dense + graph PPR search.",
+    "homepage": "https://github.com/mnemos/mnemos",
+    "externalBin": ["binaries/mnemos-daemon", "binaries/mnemos"],
+    "resources": [],
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"],
+        "section": "utils",
+        "priority": "optional"
+      },
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "gtk3"],
+        "epoch": 0,
+        "release": "1"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "11.0",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "wix": {
+        "language": "en-US",
+        "template": null
+      },
+      "nsis": null
+    }
+  }
 }
