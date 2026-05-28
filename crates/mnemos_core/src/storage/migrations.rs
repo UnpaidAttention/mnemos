@@ -77,6 +77,14 @@ impl Storage {
             )
             .await?;
         }
+        if current < 7 {
+            migration_v7(&conn).await?;
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (7)",
+                (),
+            )
+            .await?;
+        }
         Ok(())
     }
 }
@@ -127,6 +135,34 @@ const V6_STATEMENTS: &[&str] = &[
         detected_at  TEXT NOT NULL
     )",
     "CREATE INDEX IF NOT EXISTS idx_entity_communities_cid ON entity_communities(community_id)",
+];
+
+async fn migration_v7(conn: &libsql::Connection) -> Result<()> {
+    for stmt in V7_STATEMENTS {
+        conn.execute(stmt, ()).await?;
+    }
+    Ok(())
+}
+
+const V7_STATEMENTS: &[&str] = &[
+    // Single-row sync bookkeeping.
+    "CREATE TABLE IF NOT EXISTS sync_state (
+        id                INTEGER PRIMARY KEY CHECK(id = 1),
+        last_pushed_at    TEXT,
+        last_pulled_at    TEXT,
+        last_error        TEXT
+    )",
+    "INSERT OR IGNORE INTO sync_state (id) VALUES (1)",
+    // Detected conflict files (Syncthing-style, etc.) and Git merge conflicts.
+    "CREATE TABLE IF NOT EXISTS sync_conflicts (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts           TEXT NOT NULL,
+        path         TEXT NOT NULL,
+        detected_by  TEXT NOT NULL,
+        resolved_at  TEXT,
+        details      TEXT
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_sync_conflicts_unresolved ON sync_conflicts(resolved_at) WHERE resolved_at IS NULL",
 ];
 
 async fn migration_v2(conn: &libsql::Connection) -> Result<()> {
