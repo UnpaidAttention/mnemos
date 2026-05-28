@@ -16,3 +16,5 @@ export const useEntity = (id: string | null) =>
   useQuery({ queryKey: ["entity", id], queryFn: () => client.getEntity(id!), enabled: !!id });
 export const useAudit = (id: string | null) =>
   useQuery({ queryKey: ["audit", id], queryFn: () => client.audit(id!), enabled: !!id });
+export const useAuditAll = () =>
+  useQuery({ queryKey: ["audit-all"], queryFn: () => client.auditAll() });
