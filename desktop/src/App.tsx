@@ -6,6 +6,7 @@ import { router } from "./router";
 import { connectEvents } from "./api/ws";
 import { client } from "./api/client";
 import { FirstRun } from "./views/FirstRun";
+import { UpdateBanner } from "./components/UpdateBanner";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, retry: 1 } } });
 
@@ -19,6 +20,7 @@ export default function App() {
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
+        <UpdateBanner />
         <RouterProvider router={router} />
         {firstRunShown === true && <FirstRun onClose={() => setFirstRunShown(false)} />}
       </QueryClientProvider>
