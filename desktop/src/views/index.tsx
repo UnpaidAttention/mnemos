@@ -7,4 +7,4 @@ export const Pipelines = () => <div className="p-6">Pipelines</div>;
 export const Reflections = () => <div className="p-6">Reflections</div>;
 export const Audit = () => <div className="p-6">Audit</div>;
 export const EntityProfile = () => <div className="p-6">Entity</div>;
-export const Editor = () => <div className="p-6">Editor</div>;
+export { Editor } from "./Editor";
