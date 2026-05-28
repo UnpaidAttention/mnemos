@@ -16,3 +16,5 @@ crates/mnemos_cli/README.md
 crates/mnemos_cli/CHANGELOG.md
 crates/mnemos_daemon/README.md
 crates/mnemos_daemon/CHANGELOG.md
+desktop/src-tauri/updater-private.pem
+desktop/src-tauri/updater-private.pem.pub

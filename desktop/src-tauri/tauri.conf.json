@@ -23,6 +23,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["deb", "rpm", "appimage", "dmg", "app", "msi"],
     "icon": [
       "icons/32x32.png",
@@ -70,6 +71,14 @@
         "template": null
       },
       "nsis": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "PLACEHOLDER_PUBLIC_KEY_REPLACE_BEFORE_RELEASE",
+      "endpoints": [
+        "https://github.com/mnemos/mnemos/releases/latest/download/latest.json"
+      ]
     }
   }
 }
