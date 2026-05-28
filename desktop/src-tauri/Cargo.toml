@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "mnemos-desktop"
 version = "0.6.0"

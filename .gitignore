@@ -10,3 +10,5 @@ Cargo.lock
 /node_modules/
 /ui/dist/
 /ui/src-tauri/target/
+desktop/src-tauri/binaries/
+desktop/src-tauri/gen/
