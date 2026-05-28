@@ -1948,37 +1948,785 @@ Replace the placeholder "closed/connecting/open" indicator with a `sync_status` 
 
 ## Task 14: `GET /v1/doctor`
 
-Runs a battery of checks: schema version current, file/DB drift count (memories whose `file_path` doesn't exist on disk vs files not in DB), embedder reachable + dim matches `vault_meta`, LLM reachable, sync backend `status().ready`, audit-log integrity (trigger present), disk space, vault writable. Returns `{ checks: [{ name, status: "ok"|"warn"|"fail", detail }] }`.
+Compose `mnemos_core::doctor::diagnose` (file/DB drift — shipped in Plan 1) with probes for schema currency, embedder/LLM reachability, sync backend readiness, audit-trigger presence, and vault writability. Returns `{ checks: [{ name, status, detail }], report: DoctorReport }`. Failures sort first.
 
-**Files:** `crates/mnemos_daemon/src/routes/doctor.rs` (new), mount, test.
+**Files:** `crates/mnemos_daemon/src/routes/doctor.rs` (new), `routes/mod.rs` (mount), `crates/mnemos_daemon/tests/doctor.rs` (new).
 
-- [ ] Implement each check as a small fn returning `{ name, status, detail }`. Use the existing `doctor.rs` in `mnemos_core` for file/DB drift if present (Plan 1 added one — re-use). The endpoint composes them.
+- [ ] **Step 1: Failing test** — create `crates/mnemos_daemon/tests/doctor.rs`:
 
-- [ ] Commit: `feat: GET /v1/doctor diagnostics endpoint (Plan 7 Task 14)`
+```rust
+use axum::http::StatusCode;
+use mnemos_core::paths::Paths;
+use mnemos_core::vault::Vault;
+use mnemos_daemon::{build_app, config::Config};
+use tempfile::TempDir;
+
+#[tokio::test]
+async fn doctor_returns_check_list() {
+    let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
+    let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
+    let (app, state) = build_app(Config::default(), vault).await.unwrap();
+    let (s, b) = call(app, "GET", "/v1/doctor", Some(&state.token), "").await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    let checks = v["checks"].as_array().unwrap();
+    assert!(checks.iter().any(|c| c["name"] == "schema_version"));
+    assert!(checks.iter().any(|c| c["name"] == "audit_triggers"));
+    assert!(checks.iter().any(|c| c["name"] == "vault_writable"));
+    assert!(v["report"]["files_scanned"].is_number());
+}
+
+async fn call(app: axum::Router, method: &str, uri: &str, auth: Option<&str>, body: &str) -> (StatusCode, String) {
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let mut req = axum::http::Request::builder().method(method).uri(uri).header("content-type", "application/json");
+    if let Some(t) = auth { req = req.header("authorization", format!("Bearer {t}")); }
+    let req = req.body(Body::from(body.to_string())).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    let s = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (s, String::from_utf8_lossy(&bytes).to_string())
+}
+```
+
+- [ ] **Step 2: Verify fail** (404).
+
+- [ ] **Step 3: Create `crates/mnemos_daemon/src/routes/doctor.rs`**
+
+```rust
+//! `GET /v1/doctor` — a battery of diagnostic checks.
+
+use axum::{extract::State, routing::get, Json, Router};
+use mnemos_core::doctor::diagnose;
+use serde::Serialize;
+use serde_json::{json, Value};
+
+use crate::error::ApiError;
+use crate::state::AppState;
+
+pub fn router() -> Router<AppState> { Router::new().route("/v1/doctor", get(run)) }
+
+#[derive(Serialize)]
+struct Check { name: &'static str, status: &'static str, detail: String }
+
+/// Latest schema version expected. Bump alongside the migration in Plan 7 Task 17 (v8).
+const LATEST_SCHEMA: u32 = 8;
+
+async fn schema_version(state: &AppState) -> Check {
+    match state.vault.storage().schema_version().await {
+        Ok(v) if v == LATEST_SCHEMA => Check { name: "schema_version", status: "ok", detail: format!("v{v}") },
+        Ok(v) => Check { name: "schema_version", status: "warn", detail: format!("v{v} (expected v{LATEST_SCHEMA})") },
+        Err(e) => Check { name: "schema_version", status: "fail", detail: e.to_string() },
+    }
+}
+
+async fn audit_triggers(state: &AppState) -> Check {
+    let conn = match state.vault.storage().conn() {
+        Ok(c) => c,
+        Err(e) => return Check { name: "audit_triggers", status: "fail", detail: e.to_string() },
+    };
+    let mut rows = match conn
+        .query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('audit_log_no_update','audit_log_no_delete')",
+            (),
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return Check { name: "audit_triggers", status: "fail", detail: e.to_string() },
+    };
+    let n: i64 = rows.next().await.ok().flatten().and_then(|r| r.get(0).ok()).unwrap_or(0);
+    if n == 2 {
+        Check { name: "audit_triggers", status: "ok", detail: "append-only triggers present".into() }
+    } else {
+        Check { name: "audit_triggers", status: "fail", detail: format!("expected 2 triggers, found {n}") }
+    }
+}
+
+async fn vault_writable(state: &AppState) -> Check {
+    let parent = state
+        .vault
+        .paths()
+        .db_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let probe = parent.join(".mnemos-doctor-probe");
+    match tokio::fs::write(&probe, b"ok").await {
+        Ok(()) => {
+            let _ = tokio::fs::remove_file(&probe).await;
+            Check { name: "vault_writable", status: "ok", detail: "vault root is writable".into() }
+        }
+        Err(e) => Check { name: "vault_writable", status: "fail", detail: e.to_string() },
+    }
+}
+
+async fn embedder_reachable(state: &AppState) -> Check {
+    use crate::config::EmbedderKind;
+    match state.config.embedder.kind {
+        EmbedderKind::None => Check { name: "embedder", status: "ok", detail: "disabled".into() },
+        EmbedderKind::Mock => Check { name: "embedder", status: "ok", detail: "mock".into() },
+        EmbedderKind::Ollama => {
+            let url = format!("{}/api/tags", state.config.embedder.url.trim_end_matches('/'));
+            let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(3)).build() {
+                Ok(c) => c,
+                Err(e) => return Check { name: "embedder", status: "fail", detail: e.to_string() },
+            };
+            match client.get(&url).send().await {
+                Ok(r) if r.status().is_success() => Check { name: "embedder", status: "ok", detail: format!("Ollama reachable at {}", state.config.embedder.url) },
+                Ok(r) => Check { name: "embedder", status: "fail", detail: format!("HTTP {}", r.status()) },
+                Err(e) => Check { name: "embedder", status: "fail", detail: e.to_string() },
+            }
+        }
+    }
+}
+
+async fn llm_reachable(state: &AppState) -> Check {
+    use crate::config::LlmKind;
+    match state.config.llm.kind {
+        LlmKind::None => Check { name: "llm", status: "ok", detail: "disabled".into() },
+        LlmKind::Mock => Check { name: "llm", status: "ok", detail: "mock".into() },
+        LlmKind::Ollama => {
+            let url = format!("{}/api/tags", state.config.llm.url.trim_end_matches('/'));
+            let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(3)).build() {
+                Ok(c) => c,
+                Err(e) => return Check { name: "llm", status: "fail", detail: e.to_string() },
+            };
+            match client.get(&url).send().await {
+                Ok(r) if r.status().is_success() => Check { name: "llm", status: "ok", detail: format!("Ollama reachable at {}", state.config.llm.url) },
+                Ok(r) => Check { name: "llm", status: "fail", detail: format!("HTTP {}", r.status()) },
+                Err(e) => Check { name: "llm", status: "fail", detail: e.to_string() },
+            }
+        }
+    }
+}
+
+async fn sync_check(state: &AppState) -> Check {
+    use crate::config::SyncKind;
+    use mnemos_core::sync::{filesystem::FilesystemSync, git::GitSync, s3::S3Sync, SyncBackend};
+    let storage = state.vault.storage().clone();
+    let backend: Option<Box<dyn SyncBackend>> = match state.config.sync.kind {
+        SyncKind::None => None,
+        SyncKind::Filesystem => Some(Box::new(FilesystemSync::new(storage))),
+        SyncKind::Git => Some(Box::new(GitSync::new(
+            storage,
+            state.config.sync.git.remote.clone(),
+            state.config.sync.git.branch.clone(),
+        ))),
+        SyncKind::S3 => Some(Box::new(S3Sync::new(storage, state.config.sync.s3.remote.clone()))),
+    };
+    match backend {
+        None => Check { name: "sync", status: "ok", detail: "disabled".into() },
+        Some(b) => match b.status().await {
+            Ok(s) if s.ready => Check { name: "sync", status: "ok", detail: format!("{}: {}", s.backend, s.detail) },
+            Ok(s) => Check { name: "sync", status: "warn", detail: format!("{}: {}", s.backend, s.detail) },
+            Err(e) => Check { name: "sync", status: "fail", detail: e.to_string() },
+        },
+    }
+}
+
+async fn run(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let report = diagnose(state.vault.storage(), state.vault.paths()).await?;
+    let drift_status = if report.issues.is_empty() { "ok" } else { "warn" };
+    let drift = Check {
+        name: "file_db_drift",
+        status: drift_status,
+        detail: format!(
+            "{} files / {} db rows / {} issues",
+            report.files_scanned, report.db_rows, report.issues.len()
+        ),
+    };
+    let mut checks = vec![
+        schema_version(&state).await,
+        drift,
+        audit_triggers(&state).await,
+        vault_writable(&state).await,
+        embedder_reachable(&state).await,
+        llm_reachable(&state).await,
+        sync_check(&state).await,
+    ];
+    checks.sort_by_key(|c| match c.status { "fail" => 0u8, "warn" => 1, _ => 2 });
+    Ok(Json(json!({ "checks": checks, "report": report })))
+}
+```
+
+- [ ] **Step 4: Mount + pass + commit.** Add `pub mod doctor;` + `.merge(doctor::router())` to `routes/mod.rs`.
+```bash
+cargo fmt --all && cargo clippy -p mnemos_daemon --all-targets -- -D warnings
+git add crates/mnemos_daemon/src/routes/doctor.rs crates/mnemos_daemon/src/routes/mod.rs crates/mnemos_daemon/tests/doctor.rs
+git commit -m "feat: GET /v1/doctor diagnostics endpoint (Plan 7 Task 14)"
+```
 
 ---
 
 ## Task 15: Vault export/import zip
 
-`POST /v1/vault/export` → returns a zip of the vault root (memories, reflections, entities files; NOT the DB — it rebuilds from files) with a `mnemos-vault.json` manifest at the root (workspace, version, exported_at). `POST /v1/vault/import` accepts a multipart zip, extracts to the vault root (or a sub-temp + atomic swap), then calls `rebuild`.
+`POST /v1/vault/export` streams a zip of the vault root (markdown files + a `mnemos-vault.json` manifest); the DB is **not** included — it rebuilds from files on import. `POST /v1/vault/import` accepts a binary zip body (≤ 500 MB), extracts into the vault root with path-traversal guards, then triggers `rebuild`.
 
-**Files:** `crates/mnemos_daemon/src/routes/vault.rs` (new), mount; add `zip = "2"` to workspace deps; test.
+**Files:** `crates/mnemos_daemon/src/routes/vault.rs` (new), `routes/mod.rs` (mount), workspace `Cargo.toml` (add `zip = "2"`), `crates/mnemos_daemon/Cargo.toml` (depend on `zip` + `walkdir`), `crates/mnemos_daemon/tests/vault_export.rs` (new).
 
-- [ ] Implement export by streaming a `ZipWriter` over the vault root via `walkdir`; skip `.mnemos.db` (the DB rebuilds from files on import) and hidden dirs. Import: receive the zip body (`axum::body::Body`), write to a tempfile, extract via `zip::ZipArchive`, then trigger `rebuild`. Cap zip size at 500 MB by default.
+- [ ] **Step 1: Failing test** — `crates/mnemos_daemon/tests/vault_export.rs`:
 
-- [ ] Commit: `feat: POST /v1/vault/export and /v1/vault/import (Plan 7 Task 15)`
+```rust
+use axum::http::StatusCode;
+use mnemos_core::paths::Paths;
+use mnemos_core::vault::{RememberOpts, Vault};
+use mnemos_daemon::{build_app, config::Config};
+use tempfile::TempDir;
+
+#[tokio::test]
+async fn export_then_import_roundtrip() {
+    let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
+    let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
+    let _id = vault
+        .remember("hello vault", RememberOpts::default())
+        .await
+        .unwrap();
+    let (app, state) = build_app(Config::default(), vault).await.unwrap();
+
+    let (s, zip_bytes) = call_bytes(app.clone(), "POST", "/v1/vault/export", Some(&state.token), &[]).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(zip_bytes.len() > 100, "zip should not be empty");
+
+    let (s2, _) = call_bytes(app, "POST", "/v1/vault/import", Some(&state.token), &zip_bytes).await;
+    assert_eq!(s2, StatusCode::OK);
+}
+
+async fn call_bytes(app: axum::Router, method: &str, uri: &str, auth: Option<&str>, body: &[u8]) -> (StatusCode, Vec<u8>) {
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let mut req = axum::http::Request::builder().method(method).uri(uri).header("content-type", "application/zip");
+    if let Some(t) = auth { req = req.header("authorization", format!("Bearer {t}")); }
+    let req = req.body(Body::from(body.to_vec())).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    let s = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (s, bytes)
+}
+```
+
+- [ ] **Step 2: Verify fail.**
+
+- [ ] **Step 3: Add deps.** Workspace `Cargo.toml [workspace.dependencies]`: `zip = "2"`, `walkdir = "2"`. In `crates/mnemos_daemon/Cargo.toml [dependencies]`: `zip = { workspace = true }`, `walkdir = { workspace = true }`, `tempfile = { workspace = true }`.
+
+- [ ] **Step 4: Create `crates/mnemos_daemon/src/routes/vault.rs`**
+
+```rust
+//! `POST /v1/vault/export` — streams a zip of the vault.
+//! `POST /v1/vault/import` — accepts a zip, extracts, triggers rebuild.
+
+use axum::{
+    body::Bytes,
+    extract::{DefaultBodyLimit, State},
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
+    routing::post,
+    Json, Router,
+};
+use serde_json::json;
+use std::io::{Cursor, Read, Write};
+use walkdir::WalkDir;
+use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
+
+use crate::error::ApiError;
+use crate::state::AppState;
+
+const IMPORT_CAP_BYTES: usize = 500 * 1024 * 1024;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/v1/vault/export", post(export))
+        .route(
+            "/v1/vault/import",
+            post(import).layer(DefaultBodyLimit::max(IMPORT_CAP_BYTES)),
+        )
+}
+
+async fn export(State(state): State<AppState>) -> Result<Response, ApiError> {
+    let root = state.vault.paths().root.clone();
+    let bytes = tokio::task::spawn_blocking(move || -> std::io::Result<Vec<u8>> {
+        let mut buf = Vec::new();
+        {
+            let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+            let opts: FileOptions<()> = FileOptions::default().compression_method(CompressionMethod::Deflated);
+
+            zip.start_file("mnemos-vault.json", opts)?;
+            let manifest = serde_json::json!({
+                "kind": "mnemos-vault",
+                "schema": "v1",
+                "exported_at": chrono::Utc::now().to_rfc3339(),
+            });
+            zip.write_all(manifest.to_string().as_bytes())?;
+
+            for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy();
+                if name.starts_with('.') || name.ends_with(".db") || name.ends_with(".db-journal") {
+                    continue;
+                }
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let rel = match path.strip_prefix(&root) {
+                    Ok(p) => p.to_string_lossy().to_string(),
+                    Err(_) => continue,
+                };
+                if rel.is_empty() { continue; }
+                zip.start_file(&rel, opts)?;
+                let mut f = std::fs::File::open(path)?;
+                std::io::copy(&mut f, &mut zip)?;
+            }
+            zip.finish()?;
+        }
+        Ok(buf)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("export join: {e}")))?
+    .map_err(|e| ApiError::internal(format!("export io: {e}")))?;
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/zip"),
+            (header::CONTENT_DISPOSITION, "attachment; filename=\"mnemos-vault.zip\""),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+async fn import(State(state): State<AppState>, body: Bytes) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.len() > IMPORT_CAP_BYTES {
+        return Err(ApiError::bad_request(format!(
+            "zip too large: {} bytes (max {})",
+            body.len(),
+            IMPORT_CAP_BYTES
+        )));
+    }
+    let root = state.vault.paths().root.clone();
+    let bytes = body.to_vec();
+    let files = tokio::task::spawn_blocking(move || -> Result<usize, std::io::Error> {
+        let mut archive = ZipArchive::new(Cursor::new(bytes))
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let mut count = 0;
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            // Skip entries with absolute paths or `..` (path-traversal guard).
+            let safe = match entry.enclosed_name() {
+                Some(p) => p.to_path_buf(),
+                None => continue,
+            };
+            if safe.as_os_str().is_empty() { continue; }
+            let dst = root.join(&safe);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&dst)?;
+                continue;
+            }
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut out = std::fs::File::create(&dst)?;
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf)?;
+            out.write_all(&buf)?;
+            count += 1;
+        }
+        Ok(count)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("import join: {e}")))?
+    .map_err(|e| ApiError::internal(format!("import io: {e}")))?;
+
+    mnemos_core::rebuild::rebuild(state.vault.storage(), state.vault.paths())
+        .await
+        .map_err(|e| ApiError::internal(format!("rebuild: {e}")))?;
+
+    Ok(Json(json!({ "files_imported": files, "status": "ok" })))
+}
+```
+
+> If the `mnemos_core::rebuild::rebuild` signature shipped in Plan 1 takes a third `force: bool` argument, pass `false`. Verify the signature before commit.
+
+- [ ] **Step 5: Mount + pass + commit.** Add `pub mod vault;` + `.merge(vault::router())` to `routes/mod.rs`.
+```bash
+cargo fmt --all && cargo clippy -p mnemos_daemon --all-targets -- -D warnings
+git add Cargo.toml crates/mnemos_daemon/Cargo.toml crates/mnemos_daemon/src/routes/vault.rs crates/mnemos_daemon/src/routes/mod.rs crates/mnemos_daemon/tests/vault_export.rs
+git commit -m "feat: POST /v1/vault/export and /v1/vault/import (Plan 7 Task 15)"
+```
 
 ---
 
-## Task 16: UI — Doctor view + Export/Import actions + CLI `doctor`/`export`/`import`
+## Task 16: UI — Doctor view + Export/Import + CLI `export`/`import`
 
-UI Doctor view renders the `/v1/doctor` checks (green/yellow/red dots, expandable detail). Settings view (Task 12) gets a "Vault" section with "Export…" (download) and "Import…" (file picker). CLI `mnemos doctor` (already exists? — extend to call the daemon endpoint via mnemos_client) and `mnemos export <path>` / `mnemos import <path>`.
+UI Doctor view renders `/v1/doctor` checks (color-coded status dots, expandable detail, refresh). Settings view (Task 12) gains a "Vault" section with Export (download) + Import (file picker → POST). CLI `mnemos export <zip>` and `mnemos import <zip>` operate on the local vault directory directly — recommend stopping the daemon first so the file watcher doesn't catch half-applied state. `mnemos doctor` already exists locally from Plan 1; no changes needed.
 
-**Files:** `desktop/src/views/Doctor.tsx` (new), `desktop/src/components/VaultIO.tsx` (export/import buttons mounted in Settings), `crates/mnemos_cli/src/commands/{export,import}.rs` (new), `cli.rs` + `main.rs` (dispatch).
+**Files:** `desktop/src/views/Doctor.tsx` (new), `desktop/src/views/Doctor.test.tsx` (new), `desktop/src/components/VaultIO.tsx` (new, mounted in Settings), `desktop/src/api/client.ts` (+ `getDoctor`/`vaultExport`/`vaultImport`), `desktop/src/api/queries.ts` (+ `useDoctor`), `desktop/src/router.tsx` (+ `/doctor` route), `desktop/src/layout/LeftSidebar.tsx` (+ link), `desktop/src/views/Settings.tsx` (mount `<VaultIO />`), `crates/mnemos_cli/Cargo.toml`, `crates/mnemos_cli/src/cli.rs`, `crates/mnemos_cli/src/commands/{mod,export,import}.rs`, `crates/mnemos_cli/src/main.rs`.
 
-- [ ] Implement UI Doctor as a list of cards (one per check) with a `RefreshCcw` icon button to re-run. Implement Vault export by hitting `/v1/vault/export` and triggering a Blob download. Import via a hidden file input, POST multipart, show progress.
+- [ ] **Step 1: UI — failing test** `desktop/src/views/Doctor.test.tsx`:
 
-- [ ] Commit: `feat(ui): Doctor view + Export/Import actions + CLI commands (Plan 7 Task 16)`
+```tsx
+import { screen } from "@testing-library/react";
+import { setupServer } from "msw/node";
+import { http, HttpResponse } from "msw";
+import { renderWithQuery } from "../test/renderWithQuery";
+import { Doctor } from "./Doctor";
+
+const server = setupServer(
+  http.get("http://localhost:7423/v1/doctor", () =>
+    HttpResponse.json({
+      checks: [
+        { name: "schema_version", status: "ok", detail: "v8" },
+        { name: "file_db_drift", status: "warn", detail: "0 issues" },
+        { name: "embedder", status: "fail", detail: "Ollama unreachable" },
+      ],
+      report: { files_scanned: 4, db_rows: 4, issues: [] },
+    }),
+  ),
+);
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+test("renders the check rows with failures first", async () => {
+  renderWithQuery(<Doctor />);
+  expect(await screen.findByText(/schema_version/i)).toBeInTheDocument();
+  expect(screen.getByText(/Ollama unreachable/i)).toBeInTheDocument();
+  const rows = screen.getAllByTestId("doctor-row");
+  expect(rows[0]).toHaveTextContent(/embedder/i);
+});
+```
+
+- [ ] **Step 2: Verify fail.**
+
+- [ ] **Step 3: Extend `desktop/src/api/client.ts`**
+
+```ts
+  async getDoctor() {
+    return this.req<{
+      checks: { name: string; status: "ok" | "warn" | "fail"; detail: string }[];
+      report: { files_scanned: number; db_rows: number; issues: unknown[] };
+    }>("GET", "/v1/doctor");
+  }
+
+  async vaultExport(): Promise<Blob> {
+    const token = await this.tokenFn();
+    const res = await fetch(`${this.baseUrl}/v1/vault/export`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    return res.blob();
+  }
+
+  async vaultImport(zip: Blob): Promise<{ files_imported: number }> {
+    const token = await this.tokenFn();
+    const res = await fetch(`${this.baseUrl}/v1/vault/import`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/zip" },
+      body: zip,
+    });
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    return res.json();
+  }
+```
+
+In `desktop/src/api/queries.ts`:
+
+```ts
+export function useDoctor() {
+  return useQuery({ queryKey: ["doctor"], queryFn: () => client.getDoctor() });
+}
+```
+
+- [ ] **Step 4: `desktop/src/views/Doctor.tsx`**
+
+```tsx
+import { useQueryClient } from "@tanstack/react-query";
+import { useDoctor } from "../api/queries";
+import { Button, Card, Skeleton } from "../design/primitives";
+
+const STATUS_COLOR: Record<string, string> = {
+  ok: "var(--tier-semantic)",
+  warn: "var(--tier-working)",
+  fail: "var(--tier-procedural)",
+};
+
+export function Doctor() {
+  const qc = useQueryClient();
+  const { data, isLoading, isError } = useDoctor();
+  if (isLoading) {
+    return (
+      <div className="p-6">
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+  if (isError || !data) {
+    return <div className="p-6 text-tier-procedural">Could not load diagnostics.</div>;
+  }
+  const refresh = () => qc.invalidateQueries({ queryKey: ["doctor"] });
+  return (
+    <div className="p-6 space-y-4 max-w-3xl">
+      <div className="flex items-center justify-between">
+        <h1 className="display text-xl">Doctor</h1>
+        <Button variant="ghost" onClick={refresh}>
+          Refresh
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {data.checks.map((c) => (
+          <Card key={c.name} className="p-3" data-testid="doctor-row">
+            <div className="flex items-center gap-3">
+              <span
+                aria-hidden
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ background: STATUS_COLOR[c.status] }}
+              />
+              <div className="flex-1">
+                <div className="font-body">{c.name.replace(/_/g, " ")}</div>
+                <div className="label text-text-muted">{c.detail}</div>
+              </div>
+              <span className="label">{c.status}</span>
+            </div>
+          </Card>
+        ))}
+      </div>
+      <details className="text-sm">
+        <summary className="label cursor-pointer">file/DB drift report</summary>
+        <pre className="mono text-xs bg-surface border border-border rounded-md p-3 mt-2 overflow-auto">
+          {JSON.stringify(data.report, null, 2)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 5: `desktop/src/components/VaultIO.tsx`**
+
+```tsx
+import { useRef, useState } from "react";
+import { client } from "../api/client";
+import { Button, Card } from "../design/primitives";
+
+export function VaultIO() {
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [busy, setBusy] = useState<"export" | "import" | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const onExport = async () => {
+    setBusy("export");
+    try {
+      const blob = await client.vaultExport();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "mnemos-vault.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+      setMsg("Export downloaded.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onImport = async (file: File) => {
+    setBusy("import");
+    try {
+      const r = await client.vaultImport(file);
+      setMsg(`Imported ${r.files_imported} files.`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div>
+        <div className="display text-base">Vault</div>
+        <p className="label text-text-muted">
+          Back up or restore the entire vault as a zip. The database is rebuilt from files on import.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" onClick={onExport} disabled={busy !== null}>
+          {busy === "export" ? "Exporting…" : "Export…"}
+        </Button>
+        <Button variant="ghost" onClick={() => fileRef.current?.click()} disabled={busy !== null}>
+          {busy === "import" ? "Importing…" : "Import…"}
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".zip,application/zip"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void onImport(f);
+          }}
+        />
+        {msg && <span className="label text-text-muted">{msg}</span>}
+      </div>
+    </Card>
+  );
+}
+```
+
+Mount `<VaultIO />` at the bottom of `Settings.tsx`.
+
+- [ ] **Step 6: Router + sidebar.** In `desktop/src/router.tsx`, add a `/doctor` route that renders `<Doctor />`. In `LeftSidebar.tsx`, add a Doctor link using the same `editPath`-style string-widening pattern (`const doctorPath: string = "/doctor"`).
+
+- [ ] **Step 7: CLI deps.** In `crates/mnemos_cli/Cargo.toml [dependencies]`: `zip = { workspace = true }`, `walkdir = { workspace = true }`, `chrono = { workspace = true }`, `serde_json = { workspace = true }`.
+
+- [ ] **Step 8: `crates/mnemos_cli/src/commands/export.rs`**
+
+```rust
+use anyhow::{anyhow, Result};
+use std::fs::File;
+use std::io::Write;
+use std::path::PathBuf;
+use walkdir::WalkDir;
+use zip::{write::FileOptions, CompressionMethod, ZipWriter};
+
+pub async fn run(vault: Option<PathBuf>, output: PathBuf, json: bool) -> Result<()> {
+    let root = match vault {
+        Some(p) => p,
+        None => mnemos_core::paths::Paths::default_xdg()?.root.clone(),
+    };
+    let f = File::create(&output)?;
+    let mut zip = ZipWriter::new(f);
+    let opts: FileOptions<()> = FileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    zip.start_file("mnemos-vault.json", opts)?;
+    zip.write_all(
+        serde_json::json!({
+            "kind": "mnemos-vault",
+            "schema": "v1",
+            "exported_at": chrono::Utc::now().to_rfc3339(),
+        })
+        .to_string()
+        .as_bytes(),
+    )?;
+
+    let mut n = 0;
+    for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy();
+        if name.starts_with('.') || name.ends_with(".db") || name.ends_with(".db-journal") || !entry.file_type().is_file() {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(&root)
+            .map_err(|_| anyhow!("strip_prefix"))?
+            .to_string_lossy()
+            .to_string();
+        zip.start_file(&rel, opts)?;
+        let mut src = File::open(path)?;
+        std::io::copy(&mut src, &mut zip)?;
+        n += 1;
+    }
+    zip.finish()?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "files": n, "output": output.to_string_lossy() })
+        );
+    } else {
+        println!("exported {n} files → {}", output.display());
+    }
+    Ok(())
+}
+```
+
+- [ ] **Step 9: `crates/mnemos_cli/src/commands/import.rs`**
+
+```rust
+use anyhow::Result;
+use std::fs::File;
+use std::io::Read;
+use std::path::PathBuf;
+use zip::ZipArchive;
+
+pub async fn run(vault: Option<PathBuf>, input: PathBuf, json: bool) -> Result<()> {
+    let root = match vault {
+        Some(p) => p,
+        None => mnemos_core::paths::Paths::default_xdg()?.root.clone(),
+    };
+    std::fs::create_dir_all(&root)?;
+    let f = File::open(&input)?;
+    let mut archive = ZipArchive::new(f)?;
+    let mut count = 0;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let Some(safe) = entry.enclosed_name() else { continue };
+        if safe.as_os_str().is_empty() { continue; }
+        let dst = root.join(&safe);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&dst)?;
+            continue;
+        }
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf)?;
+        std::fs::write(&dst, buf)?;
+        count += 1;
+    }
+    if json {
+        println!("{}", serde_json::json!({ "files": count }));
+    } else {
+        println!("imported {count} files into {}", root.display());
+    }
+    println!("note: run `mnemos rebuild` to refresh the DB index from the imported files.");
+    Ok(())
+}
+```
+
+- [ ] **Step 10: `crates/mnemos_cli/src/cli.rs`** — add subcommands:
+
+```rust
+    /// Export the local vault as a zip.
+    Export {
+        /// Optional vault root (defaults to the XDG vault).
+        #[arg(long)]
+        vault: Option<PathBuf>,
+        /// Output zip path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import a vault zip into the local vault.
+    Import {
+        #[arg(long)]
+        vault: Option<PathBuf>,
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+```
+
+In `commands/mod.rs`: `pub mod export; pub mod import;`. Dispatch in `main.rs`:
+
+```rust
+        Commands::Export { vault, output, json } => commands::export::run(vault, output, json).await?,
+        Commands::Import { vault, input, json } => commands::import::run(vault, input, json).await?,
+```
+
+- [ ] **Step 11: Pass + commit.**
+```bash
+cd desktop && pnpm typecheck && pnpm lint && pnpm test -- --run && cd ..
+cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings
+git add desktop/src/views/Doctor.tsx desktop/src/views/Doctor.test.tsx desktop/src/components/VaultIO.tsx desktop/src/api/client.ts desktop/src/api/queries.ts desktop/src/router.tsx desktop/src/layout/LeftSidebar.tsx desktop/src/views/Settings.tsx crates/mnemos_cli/Cargo.toml crates/mnemos_cli/src/cli.rs crates/mnemos_cli/src/commands/mod.rs crates/mnemos_cli/src/commands/export.rs crates/mnemos_cli/src/commands/import.rs crates/mnemos_cli/src/main.rs
+git commit -m "feat(ui): Doctor view + Vault export/import + CLI export/import (Plan 7 Task 16)"
+```
 
 ---
 
@@ -2144,29 +2892,437 @@ git commit -m "feat: first-run wizard (vault path / Ollama check / integration s
 
 # Group F — Reference adapters
 
-## Task 18: Six small adapter packages
+## Task 18: Six reference adapter packages
 
-Each adapter is a self-contained folder under `adapters/` with a README + one or two config snippets. These are integration templates, not production code, and stay <200 lines each per spec. Group them in one commit — they share no source dependencies.
+Each adapter is a self-contained folder under `adapters/` with a README and the minimal glue file. <200 lines each. One commit. (The existing `adapters/claude-code/` folder from Plan 2 is not touched.)
 
-**Folders to create (or complete):** `adapters/gemini-cli/`, `adapters/codex/`, `adapters/hermes-agent/`, `adapters/openclaw/`, `adapters/generic-mcp/`, `adapters/openai-functions/`.
+- [ ] **Step 1: `adapters/gemini-cli/README.md`**
 
-- [ ] **Each adapter ships:**
-  - `README.md` (one paragraph "what this does" + the exact install/config steps).
-  - The minimal config/glue file (JSON snippet, MCP server entry, shell wrapper, function-call schema, etc.) — see spec lines 634-647.
+````markdown
+# Gemini CLI adapter
 
-- [ ] **Specifically:**
+Use mnemos as Gemini CLI's persistent memory.
 
-  - **`adapters/gemini-cli/`** — A `GEMINI.md` fragment and an `mcp.json` snippet pointing at `mnemos-mcp-stdio`. (The repo's `GEMINI.md` already exists per CLAUDE.md global rules; this is the importable fragment.)
-  - **`adapters/codex/`** — `codex.config.json` snippet showing `mnemos-mcp-stdio` as a tool provider; README documents Codex CLI's tool-use schema.
-  - **`adapters/hermes-agent/`** — `hermes-mnemos.py` (~120 lines): a tiny Python REST client (`requests`) that wraps `remember`/`recall`, plus a 20-line README on bridging Hermes' non-MCP interface to it.
-  - **`adapters/openclaw/`** — `openclaw-wrapper.sh` shell script that intercepts the `openclaw` CLI and pipes its session transcript through `mnemos remember`; README explains the `~/.bashrc` install.
-  - **`adapters/generic-mcp/`** — `client.example.ts` (~80 lines): a minimal `@modelcontextprotocol/sdk` Node client that connects to `http://localhost:7423/mcp` and demonstrates `tools/list` + `tools/call` for `remember` and `recall`. README walks through `npm i @modelcontextprotocol/sdk`.
-  - **`adapters/openai-functions/`** — `schema.json`: the OpenAI function-calling schema for the five mnemos MCP tools (`remember`, `recall`, `forget`, `get_memory`, `list_memories`), copy-pasteable into any OpenAI tool-use request. README shows a `curl` example.
+## Install
 
-- [ ] **Test/verify:** Lint the JSON snippets with `python -c "import json; json.load(open('<file>'))"` for each. Run the generic-mcp `client.example.ts` against a local daemon manually (note in README as the QA step; not automated CI).
+Add the snippet from `gemini-mcp.json` into your Gemini CLI MCP config
+(`~/.config/gemini-cli/mcp.json` or platform equivalent). After restart,
+Gemini CLI exposes mnemos's `remember`, `recall`, `forget`, `get_memory`,
+and `list_memories` tools.
 
-- [ ] **Commit:**
+## Verify
+
+```
+gemini -t mnemos.remember --body "Use Tauri 2"
+gemini -t mnemos.recall --query "desktop framework"
+```
+````
+
+`adapters/gemini-cli/gemini-mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mnemos": {
+      "command": "mnemos-mcp-stdio"
+    }
+  }
+}
+```
+
+- [ ] **Step 2: `adapters/codex/README.md`**
+
+````markdown
+# OpenAI Codex CLI adapter
+
+Wire mnemos into the Codex CLI so it can `remember` and `recall` across
+sessions.
+
+## Install
+
+Merge `codex.config.json` into `~/.codex/config.json` (combine the `mcp`
+object if you already have one).
+
+## Verify
+
+In a Codex session, `/tools` should list `mnemos.remember` and
+`mnemos.recall`.
+````
+
+`adapters/codex/codex.config.json`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "mnemos": {
+        "command": "mnemos-mcp-stdio",
+        "args": []
+      }
+    }
+  }
+}
+```
+
+- [ ] **Step 3: `adapters/hermes-agent/README.md`**
+
+````markdown
+# Hermes Agent adapter
+
+Hermes isn't MCP-native, so this adapter is a tiny Python REST client that
+wraps mnemos's HTTP API. Drop `hermes_mnemos.py` next to your Hermes config
+and import it.
+
+## Install
+
 ```bash
+cp hermes_mnemos.py ~/.config/hermes/plugins/
+export MNEMOS_TOKEN="$(cat ~/.config/mnemos/token)"
+```
+
+## Use from a Hermes prompt
+
+```python
+from hermes_mnemos import remember, recall
+remember("User prefers Tauri")
+hits = recall("desktop framework", k=5)
+```
+````
+
+`adapters/hermes-agent/hermes_mnemos.py`:
+
+```python
+"""Minimal mnemos REST client for Hermes Agent integration."""
+from __future__ import annotations
+import json
+import os
+import urllib.parse
+import urllib.request
+from typing import Any, Iterable, Optional
+
+DEFAULT_URL = os.environ.get("MNEMOS_URL", "http://localhost:7423")
+DEFAULT_TOKEN = os.environ.get("MNEMOS_TOKEN", "")
+
+
+def _req(method: str, path: str, body: Optional[dict] = None) -> Any:
+    url = f"{DEFAULT_URL}{path}"
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("authorization", f"Bearer {DEFAULT_TOKEN}")
+    if body is not None:
+        req.add_header("content-type", "application/json")
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def remember(
+    body: str,
+    *,
+    title: Optional[str] = None,
+    tier: str = "semantic",
+    tags: Optional[Iterable[str]] = None,
+    importance: Optional[float] = None,
+) -> str:
+    payload: dict = {"body": body, "tier": tier}
+    if title is not None:
+        payload["title"] = title
+    if tags is not None:
+        payload["tags"] = list(tags)
+    if importance is not None:
+        payload["importance"] = float(importance)
+    return _req("POST", "/v1/memories", payload)["id"]
+
+
+def recall(query: str, *, k: int = 10, explain: bool = False, graph: bool = True) -> list[dict]:
+    return _req(
+        "POST",
+        "/v1/memories/search",
+        {"query": query, "k": k, "explain": explain, "graph": graph},
+    )["hits"]
+
+
+def forget(memory_id: str, reason: Optional[str] = None) -> dict:
+    path = f"/v1/memories/{memory_id}"
+    if reason:
+        path += f"?reason={urllib.parse.quote(reason)}"
+    return _req("DELETE", path)
+
+
+def get_memory(memory_id: str) -> dict:
+    return _req("GET", f"/v1/memories/{memory_id}")
+
+
+def list_memories(*, tier: Optional[Iterable[str]] = None, limit: int = 50) -> list[dict]:
+    q = []
+    if tier:
+        for t in tier:
+            q.append(f"tier={t}")
+    q.append(f"limit={limit}")
+    return _req("GET", f"/v1/memories?{'&'.join(q)}")["memories"]
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) >= 3 and sys.argv[1] == "remember":
+        print(remember(" ".join(sys.argv[2:])))
+    elif len(sys.argv) >= 3 and sys.argv[1] == "recall":
+        for h in recall(" ".join(sys.argv[2:])):
+            print(f"{h['memory']['id']}\t{h['memory']['title']}")
+    else:
+        print("usage: hermes_mnemos.py [remember|recall] <text>")
+```
+
+- [ ] **Step 4: `adapters/openclaw/README.md`**
+
+````markdown
+# Openclaw adapter
+
+A shell wrapper that captures Openclaw CLI sessions and feeds them through
+mnemos so the daemon's extraction pipeline turns them into semantic
+memories.
+
+## Install
+
+```bash
+cp openclaw-wrapper.sh ~/.local/bin/openclaw-with-mnemos
+chmod +x ~/.local/bin/openclaw-with-mnemos
+# Add to ~/.bashrc or ~/.zshrc:
+alias openclaw='openclaw-with-mnemos'
+```
+
+The wrapper starts a mnemos session, streams the original openclaw output
+through to your terminal while POSTing each line as a chunk, and ends the
+session on exit. Mnemos's pipeline (Plan 4) then extracts facts
+asynchronously.
+````
+
+`adapters/openclaw/openclaw-wrapper.sh`:
+
+```bash
+#!/usr/bin/env bash
+# openclaw wrapper that streams the session through mnemos.
+set -u
+
+MNEMOS_URL="${MNEMOS_URL:-http://localhost:7423}"
+MNEMOS_TOKEN="${MNEMOS_TOKEN:-$(cat "$HOME/.config/mnemos/token" 2>/dev/null || true)}"
+
+if [[ -z "$MNEMOS_TOKEN" ]]; then
+  echo "openclaw-with-mnemos: no token at ~/.config/mnemos/token; running openclaw without capture" >&2
+  exec openclaw "$@"
+fi
+
+start=$(curl -fsS -X POST "$MNEMOS_URL/v1/sessions" \
+  -H "authorization: Bearer $MNEMOS_TOKEN" -H "content-type: application/json" \
+  -d '{"source_tool":"openclaw"}' || true)
+session_id=$(printf '%s' "$start" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+
+if [[ -z "$session_id" ]]; then
+  echo "openclaw-with-mnemos: could not start mnemos session; running openclaw without capture" >&2
+  exec openclaw "$@"
+fi
+
+cleanup() {
+  if [[ -n "$session_id" ]]; then
+    curl -fsS -o /dev/null -X POST -H "authorization: Bearer $MNEMOS_TOKEN" \
+      -H "content-type: application/json" -d "{}" \
+      "$MNEMOS_URL/v1/sessions/$session_id/end" >/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+openclaw "$@" | while IFS= read -r line; do
+  printf '%s\n' "$line"
+  body=$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.dumps({"speaker":"openclaw","body":sys.stdin.read()}))')
+  curl -fsS -o /dev/null -X POST "$MNEMOS_URL/v1/sessions/$session_id/chunks" \
+    -H "authorization: Bearer $MNEMOS_TOKEN" -H "content-type: application/json" -d "$body" || true
+done
+```
+
+- [ ] **Step 5: `adapters/generic-mcp/README.md`**
+
+````markdown
+# Generic MCP client
+
+A minimal `@modelcontextprotocol/sdk` Node example that connects to
+mnemos's streamable HTTP transport at `http://localhost:7423/mcp` and
+demonstrates `tools/list` + `tools/call`.
+
+## Install + run
+
+```bash
+npm i @modelcontextprotocol/sdk
+npx tsx client.example.ts
+```
+````
+
+`adapters/generic-mcp/client.example.ts`:
+
+```ts
+// Minimal MCP client connecting to mnemos over the daemon's streamable HTTP
+// endpoint. Run: `npx tsx client.example.ts` after `npm i @modelcontextprotocol/sdk`.
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+async function main(): Promise<void> {
+  const tokenPath = path.join(os.homedir(), ".config", "mnemos", "token");
+  const token = fs.readFileSync(tokenPath, "utf8").trim();
+  const transport = new StreamableHTTPClientTransport(
+    new URL("http://localhost:7423/mcp"),
+    { requestInit: { headers: { authorization: `Bearer ${token}` } } },
+  );
+  const client = new Client(
+    { name: "mnemos-generic-example", version: "0.1.0" },
+    { capabilities: {} },
+  );
+  await client.connect(transport);
+
+  const tools = await client.listTools();
+  console.log("tools:", tools.tools.map((t) => t.name).join(", "));
+
+  const rem = await client.callTool({
+    name: "remember",
+    arguments: { body: "Hello from generic-mcp", tier: "semantic" },
+  });
+  console.log("remember →", rem);
+
+  const hits = await client.callTool({
+    name: "recall",
+    arguments: { query: "hello", k: 5 },
+  });
+  console.log("recall →", hits);
+
+  await client.close();
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+```
+
+- [ ] **Step 6: `adapters/openai-functions/README.md`**
+
+````markdown
+# OpenAI function-calling schema
+
+Copy-paste `schema.json` into any OpenAI chat-completions or assistants
+request that supports `tools`. The five mnemos MCP tools become callable
+functions; your code then proxies each call to `http://localhost:7423/v1/*`
+(the daemon's REST API).
+
+## Curl example
+
+```bash
+curl -fsS -X POST https://api.openai.com/v1/chat/completions \
+  -H "authorization: Bearer $OPENAI_API_KEY" \
+  -H "content-type: application/json" \
+  -d "$(jq -n --slurpfile tools schema.json '{
+    "model": "gpt-4o",
+    "messages": [{"role":"user","content":"Remember that I prefer Tauri."}],
+    "tools": $tools[0]
+  }')"
+```
+````
+
+`adapters/openai-functions/schema.json`:
+
+```json
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_remember",
+      "description": "Store a new memory in the local mnemos vault.",
+      "parameters": {
+        "type": "object",
+        "required": ["body"],
+        "properties": {
+          "body": { "type": "string" },
+          "title": { "type": "string" },
+          "tier": {
+            "type": "string",
+            "enum": ["working", "episodic", "semantic", "procedural", "reflection"],
+            "default": "semantic"
+          },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "importance": { "type": "number" }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_recall",
+      "description": "Hybrid search (BM25 + dense + graph PPR) over the mnemos vault.",
+      "parameters": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string" },
+          "k": { "type": "integer", "default": 10 },
+          "explain": { "type": "boolean", "default": false },
+          "graph": { "type": "boolean", "default": true },
+          "global": { "type": "boolean", "default": false }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_forget",
+      "description": "Soft-invalidate a memory by id.",
+      "parameters": {
+        "type": "object",
+        "required": ["memory_id"],
+        "properties": {
+          "memory_id": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_get_memory",
+      "description": "Fetch a single memory by id.",
+      "parameters": {
+        "type": "object",
+        "required": ["memory_id"],
+        "properties": {
+          "memory_id": { "type": "string" }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_list_memories",
+      "description": "List recent memories with optional filters.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tier": { "type": "array", "items": { "type": "string" } },
+          "limit": { "type": "integer", "default": 50 }
+        }
+      }
+    }
+  }
+]
+```
+
+- [ ] **Step 7: Verify + commit.**
+```bash
+for f in adapters/codex/codex.config.json adapters/gemini-cli/gemini-mcp.json adapters/openai-functions/schema.json; do
+  python3 -c "import json; json.load(open('$f'))" && echo "$f ok"
+done
+chmod +x adapters/openclaw/openclaw-wrapper.sh
 git add adapters/
 git commit -m "feat: reference adapters (gemini-cli, codex, hermes-agent, openclaw, generic-mcp, openai-functions) (Plan 7 Task 18)"
 ```
