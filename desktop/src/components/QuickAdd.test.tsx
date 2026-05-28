@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
@@ -21,7 +21,7 @@ test("creates a memory", async () => {
   const textarea = await screen.findByPlaceholderText(/what should mnemos remember/i);
   await userEvent.type(textarea, "Use Tauri 2");
   await userEvent.click(screen.getByRole("button", { name: /add memory/i }));
-  expect(created).toMatchObject({ body: "Use Tauri 2" });
+  await waitFor(() => expect(created).toMatchObject({ body: "Use Tauri 2" }));
 });
 
 test("returns null when closed", () => {
