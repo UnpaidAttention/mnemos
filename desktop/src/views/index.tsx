@@ -1,5 +1,5 @@
 // desktop/src/views/index.tsx — stubs replaced by Tasks 9-20.
-export const Browser = () => <div className="p-6">Browser</div>;
+export { Browser } from "./Browser";
 export const Search = () => <div className="p-6">Search</div>;
 export const Graph = () => <div className="p-6">Graph</div>;
 export const Timeline = () => <div className="p-6">Timeline</div>;
