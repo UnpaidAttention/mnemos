@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "mnemos": {
+        "command": "mnemos-mcp-stdio",
+        "args": []
+      }
+    }
+  }
+}

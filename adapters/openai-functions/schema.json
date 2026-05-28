@@ -1,0 +1,85 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_remember",
+      "description": "Store a new memory in the local mnemos vault.",
+      "parameters": {
+        "type": "object",
+        "required": ["body"],
+        "properties": {
+          "body": { "type": "string" },
+          "title": { "type": "string" },
+          "tier": {
+            "type": "string",
+            "enum": ["working", "episodic", "semantic", "procedural", "reflection"],
+            "default": "semantic"
+          },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "importance": { "type": "number" }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_recall",
+      "description": "Hybrid search (BM25 + dense + graph PPR) over the mnemos vault.",
+      "parameters": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string" },
+          "k": { "type": "integer", "default": 10 },
+          "explain": { "type": "boolean", "default": false },
+          "graph": { "type": "boolean", "default": true },
+          "global": { "type": "boolean", "default": false }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_forget",
+      "description": "Soft-invalidate a memory by id.",
+      "parameters": {
+        "type": "object",
+        "required": ["memory_id"],
+        "properties": {
+          "memory_id": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_get_memory",
+      "description": "Fetch a single memory by id.",
+      "parameters": {
+        "type": "object",
+        "required": ["memory_id"],
+        "properties": {
+          "memory_id": { "type": "string" }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mnemos_list_memories",
+      "description": "List recent memories with optional filters.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tier": { "type": "array", "items": { "type": "string" } },
+          "limit": { "type": "integer", "default": 50 }
+        }
+      }
+    }
+  }
+]
