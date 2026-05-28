@@ -1,6 +1,7 @@
 //! Pluggable cloud-sync backends. Files are the durable record; each backend
 //! syncs the on-disk vault. The DB is rebuilt from files on pull when needed.
 
+pub mod filesystem;
 pub mod state;
 
 use crate::error::Result;

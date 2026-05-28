@@ -75,6 +75,9 @@ sha2 = "0.10"
 # Executable path resolution
 which = "6"
 
+# Directory traversal
+walkdir = "2"
+
 # ONNX reranker (optional; pulled in only with feature rerank-onnx)
 ort = { version = "2.0.0-rc.12", default-features = false, features = ["load-dynamic"] }
 tokenizers = "0.20"
