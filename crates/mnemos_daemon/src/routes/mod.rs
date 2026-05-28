@@ -17,6 +17,7 @@ pub mod recall_helper;
 pub mod reflections;
 pub mod sessions;
 pub mod sync;
+pub mod vault;
 pub mod working;
 pub mod ws;
 
@@ -46,6 +47,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(sync::router())
         .merge(config::router())
         .merge(doctor::router())
+        .merge(vault::router())
         .merge(crate::mcp::router())
         .route_layer(from_fn_with_state(state.clone(), bearer_auth));
 
