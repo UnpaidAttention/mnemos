@@ -6,30 +6,63 @@ plans.
 
 ## Install
 
-> v0.7.0 ships **Linux only**. macOS and Windows desktop bundles are
-> blocked on upstream issues (`dispatch2` macro recursion on macOS,
-> `libsql-sys` Windows compatibility); see CHANGELOG.md § "Known
-> limitations" for details. A follow-up release will restore both.
+> v0.8.0 ships **Linux only** for the desktop bundle. The daemon
+> `.deb`/`.rpm` also Linux-only. macOS and Windows still blocked on
+> upstream issues (see CHANGELOG § "Known limitations").
 
-### Linux
-
-Direct install (Debian/Ubuntu/Fedora):
+### Linux (zero setup)
 
 ```
-# Desktop app (includes daemon + CLI as sidecars):
-sudo dpkg -i Mnemos_X.Y.Z_amd64.deb       # Debian/Ubuntu
-sudo rpm -i Mnemos-X.Y.Z-1.x86_64.rpm     # Fedora/RHEL
+sudo dpkg -i mnemos-daemon_X.Y.Z_amd64.deb       # Debian/Ubuntu
+sudo rpm -i mnemos-daemon-X.Y.Z-1.x86_64.rpm     # Fedora/RHEL
+```
 
-# Or run the AppImage without installing:
+The daemon package includes the bundled embedder (22 MB MiniLM-L6 GGUF
++ llama.cpp's llama-server). Then:
+
+```
+mnemos remember "User prefers Tauri"
+mnemos recall "what does the user like"
+```
+
+Semantic recall works immediately. No Ollama install, no API key
+required.
+
+### Desktop GUI (Linux)
+
+```
+sudo dpkg -i Mnemos_X.Y.Z_amd64.deb              # Debian/Ubuntu
+sudo rpm -i Mnemos-X.Y.Z-1.x86_64.rpm            # Fedora/RHEL
+# Or AppImage without install:
 chmod +x Mnemos_X.Y.Z_amd64.AppImage
 ./Mnemos_X.Y.Z_amd64.AppImage
-
-# Server-only (no GUI):
-sudo dpkg -i mnemos_X.Y.Z_amd64.deb mnemos-daemon_X.Y.Z_amd64.deb
 ```
 
-Add an apt PPA or dnf repo (see [PACKAGING.md](PACKAGING.md)) for
-`apt update` / `dnf upgrade` integration.
+> Note: the desktop GUI's bundle does NOT yet include the local
+> embedder. For semantic recall in the desktop app, install the
+> `mnemos-daemon` package above (which includes the bundled
+> embedder), or set `MNEMOS_EMBEDDER=ollama` / `MNEMOS_EMBEDDER=openai`
+> via Settings.
+
+### Switching embedders or LLM
+
+Set `MNEMOS_EMBEDDER` and/or `MNEMOS_LLM` in your env:
+
+```
+export MNEMOS_EMBEDDER=ollama       # bundled / ollama / openai / mock / none
+export MNEMOS_LLM=openai             # ollama / openai / mock / none (default)
+export OPENAI_API_KEY=sk-...         # if using openai for either
+mnemos daemon restart
+```
+
+For existing vaults seeded with a different embedder, run:
+
+```
+mnemos embed-rebuild --target bundled   # or ollama / openai
+```
+
+The migration is atomic and audit-logged; see [BUILD.md](BUILD.md)
+§ "Switching embedders".
 
 ### Build from source
 
@@ -39,12 +72,14 @@ See [BUILD.md](BUILD.md).
 
 ### Auto-update
 
-Tauri auto-update is **disabled in v0.7.0** (signing key generation
-is a one-time manual setup step). A follow-up release will enable it.
-Until then, follow the latest release on GitHub Releases.
+Re-enabled in v0.8.0. The desktop app polls
+`https://github.com/UnpaidAttention/mnemos/releases/latest/download/latest.json`
+on launch and prompts to install via the `UpdateBanner` UI when a new
+version is available. Update manifests are ed25519-signed.
 
-The CLI + daemon (`apt install mnemos` / `dnf install mnemos` /
-`dpkg -i mnemos_*.deb`) update via your package manager.
+The daemon (CLI + bundled embedder) updates via your package manager
+once a repository is configured (see [PACKAGING.md](PACKAGING.md) §
+"Linux package repositories").
 
 ## Sync, settings, doctor, adapters (v0.6.0)
 

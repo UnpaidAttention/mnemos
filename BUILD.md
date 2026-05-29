@@ -42,6 +42,77 @@ cargo build --release -p mnemos_cli -p mnemos_daemon
 
 > The daemon binary is named `mnemosd` (per `crates/mnemos_daemon/Cargo.toml [[bin]]`). The CLI binary is `mnemos`.
 
+## Bundled embedder
+
+By default, Mnemos ships with `llama-server` (llama.cpp's HTTP server) and
+a 22 MB `all-MiniLM-L6-v2` GGUF model. The daemon spawns `llama-server`
+as a managed child process on startup; embeddings happen entirely locally.
+
+The bundled embedder is included in the daemon `.deb` and `.rpm` packages
+(installed to `/usr/lib/mnemos/`). It is **not yet bundled into the
+desktop AppImage** — AppImage users who want the local embedder install
+the daemon package separately, or fall back to Ollama / OpenAI.
+
+### Refreshing the bundled assets
+
+```
+bash scripts/fetch-bundled-assets.sh
+```
+
+Pinned versions (edit the script to upgrade):
+- llama.cpp: `b9400` (~17 KB binary + ~25 MB of .so libraries)
+- Model: `all-MiniLM-L6-v2.Q8_0.gguf` (~22 MB, 384-dim, Apache-2.0)
+
+The script downloads + extracts to `assets/`. Both `.deb`/`.rpm`
+packaging and CI test runs consume the same `assets/` tree.
+
+### Switching embedders
+
+Set `MNEMOS_EMBEDDER` to one of `bundled` (default), `ollama`, `openai`,
+`mock`, `none`. For NEW vaults, the env value is the default. For
+EXISTING vaults, the vault's recorded embedder is authoritative — to
+switch, run:
+
+```
+mnemos embed-rebuild --target bundled       # or ollama / openai / mock
+```
+
+The migration is atomic, resumable, and audit-logged. The old
+embeddings are kept as a `memory_embeddings_v2_backup_<ts>` table for
+7 days; drop manually after that, or wait for the future cleanup task.
+
+### OpenAI backends
+
+To use OpenAI embeddings or chat instead of local:
+
+```bash
+export OPENAI_API_KEY=sk-...
+# Optional:
+export OPENAI_BASE_URL=https://api.openai.com   # Azure: https://<resource>.openai.azure.com
+export MNEMOS_EMBEDDER=openai
+export MNEMOS_EMBEDDER_MODEL=text-embedding-3-small   # or -large for 3072d
+export MNEMOS_LLM=openai
+export MNEMOS_LLM_MODEL=gpt-4o-mini
+
+mnemos daemon restart
+```
+
+For new vaults, the env value seeds `vault.embedder_kind`. To switch
+an existing Ollama-seeded vault to OpenAI:
+
+```
+mnemos embed-rebuild --target openai
+```
+
+### Wrapper script
+
+The bundled `llama-server` binary is dynamically linked against
+`libllama.so` + several `libggml*.so` files. The `.deb`/`.rpm`
+install a small wrapper at `/usr/bin/mnemos-llama-server` that sets
+`LD_LIBRARY_PATH=/usr/lib/mnemos` before exec'ing the real binary.
+The Mnemos daemon's `bundled_embedder` module prefers this wrapper
+when present.
+
 ## Desktop app
 
 From the repo root:

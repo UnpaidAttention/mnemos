@@ -75,6 +75,51 @@ gh run watch
 (Create a `v0.7.0-rc1` tag locally first, push it, then dispatch.) After
 the run, delete the `v0.7.0-rc1` release + tag.
 
+## Bundled assets refresh
+
+Before tagging a release that ships the bundled embedder, ensure the
+pinned `llama-server` + model are downloaded:
+
+```
+bash scripts/fetch-bundled-assets.sh
+```
+
+The CI release workflow caches these assets keyed on the
+`LLAMA_CPP_TAG` value in the script. Bumping the tag invalidates the
+cache automatically.
+
+The `.deb` / `.rpm` for `mnemos-daemon` will include them at:
+- `/usr/lib/mnemos/llama-server` (real binary)
+- `/usr/lib/mnemos/all-MiniLM-L6-v2.Q8_0.gguf` (model)
+- `/usr/lib/mnemos/libllama.so*`, `libggml*.so` (~35 files, ~25 MB total)
+- `/usr/bin/mnemos-llama-server` (wrapper that sets LD_LIBRARY_PATH)
+
+## Auto-update key setup (one-time, before first signed release)
+
+Tauri auto-update verifies update manifests against an ed25519
+keypair. The public key is committed to `tauri.conf.json`; the
+private key lives in GH Secrets.
+
+```
+bash scripts/gen-updater-key.sh
+```
+
+This writes `desktop/src-tauri/updater-private.pem` (NOT committed).
+Paste the printed public key into `desktop/src-tauri/tauri.conf.json`
+`plugins.updater.pubkey`, replacing
+`PLACEHOLDER_PUBLIC_KEY_REPLACE_BEFORE_RELEASE`.
+
+Then upload the private key to GH:
+
+```
+gh secret set TAURI_SIGNING_PRIVATE_KEY < desktop/src-tauri/updater-private.pem
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --body ""
+```
+
+> Warning: rotating the key invalidates all in-the-wild auto-updates
+> from older versions. Users on older releases must manually download
+> the next version. Don't rotate without a strong reason.
+
 ## Auto-update verification (post-release)
 
 After a release publishes:
