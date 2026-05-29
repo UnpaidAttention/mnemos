@@ -93,6 +93,14 @@ impl Storage {
             )
             .await?;
         }
+        if current < 9 {
+            migration_v9(&conn).await?;
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (9)",
+                (),
+            )
+            .await?;
+        }
         Ok(())
     }
 }
@@ -184,6 +192,34 @@ const V8_STATEMENTS: &[&str] = &[
     // First-run wizard completion timestamp (RFC3339). NULL until the user
     // finishes the welcome flow; subsequent launches skip the wizard.
     "ALTER TABLE vault_meta ADD COLUMN first_run_completed_at TEXT",
+];
+
+async fn migration_v9(conn: &libsql::Connection) -> Result<()> {
+    for stmt in V9_STATEMENTS {
+        conn.execute(stmt, ()).await?;
+    }
+    Ok(())
+}
+
+const V9_STATEMENTS: &[&str] = &[
+    // Add embedder_kind column. Default to 'bundled' for fresh vaults;
+    // upgrades from v8 see NULL → we backfill below to 'ollama' since
+    // any pre-v9 vault was necessarily seeded with the old default.
+    "ALTER TABLE vault_meta ADD COLUMN embedder_kind TEXT",
+    // Backfill: existing v8 vaults had embedder_model_id set by the first
+    // remember; if that model_id was empty (truly fresh) treat as bundled,
+    // otherwise treat as ollama. The daemon will reconcile this with
+    // the actual configured embedder on next startup.
+    "UPDATE vault_meta
+        SET embedder_kind = CASE
+            WHEN embedder_model_id IS NULL OR embedder_model_id = '' THEN 'bundled'
+            WHEN embedder_model_id = 'mock' THEN 'mock'
+            ELSE 'ollama'
+        END
+        WHERE id = 1 AND embedder_kind IS NULL",
+    // Enforce non-null going forward.
+    // (sqlite can't add NOT NULL to an existing column without a rebuild;
+    //  we rely on application-level enforcement instead.)
 ];
 
 async fn migration_v2(conn: &libsql::Connection) -> Result<()> {

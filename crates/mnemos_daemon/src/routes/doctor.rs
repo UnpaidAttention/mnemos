@@ -23,9 +23,9 @@ struct Check {
     detail: String,
 }
 
-/// Latest schema version expected by this binary. Bumped to v8 by Plan 7
-/// Task 17 (first-run wizard adds `vault_meta.first_run_completed_at`).
-const LATEST_SCHEMA: u32 = 8;
+/// Latest schema version expected by this binary. Bumped to v9 by Plan 9
+/// Task 1 (bundled embedder adds `vault_meta.embedder_kind`).
+const LATEST_SCHEMA: u32 = 9;
 
 async fn schema_version(state: &AppState) -> Check {
     match state.vault.storage().schema_version().await {
