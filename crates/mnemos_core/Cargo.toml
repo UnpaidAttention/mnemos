@@ -43,3 +43,6 @@ rerank-onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
 [dev-dependencies]
 tempfile = { workspace = true }
 insta = { workspace = true }
+wiremock = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }

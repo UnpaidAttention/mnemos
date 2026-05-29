@@ -52,6 +52,7 @@ pub struct EmbedderConfig {
 pub enum EmbedderKind {
     Bundled,
     Ollama,
+    OpenAi,
     Mock,
     None,
 }
@@ -341,6 +342,7 @@ fn apply_env_overrides(cfg: &mut Config) {
         cfg.embedder.kind = match v.as_str() {
             "bundled" => EmbedderKind::Bundled,
             "ollama" => EmbedderKind::Ollama,
+            "openai" => EmbedderKind::OpenAi,
             "mock" => EmbedderKind::Mock,
             "none" => EmbedderKind::None,
             _ => EmbedderKind::Bundled,

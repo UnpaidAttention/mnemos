@@ -207,6 +207,27 @@ async fn embedder_reachable(state: &AppState) -> Check {
                 },
             }
         }
+        EmbedderKind::OpenAi => {
+            // Don't make a real /v1/embeddings call here (cost + side effects).
+            // Just confirm OPENAI_API_KEY is present.
+            if std::env::var("OPENAI_API_KEY")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .is_some()
+            {
+                Check {
+                    name: "embedder",
+                    status: "ok",
+                    detail: "openai: OPENAI_API_KEY set".into(),
+                }
+            } else {
+                Check {
+                    name: "embedder",
+                    status: "fail",
+                    detail: "openai: OPENAI_API_KEY not set".into(),
+                }
+            }
+        }
     }
 }
 

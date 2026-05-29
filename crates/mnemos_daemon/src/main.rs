@@ -194,6 +194,7 @@ fn build_embedder_for_daemon(
         bundled::BundledEmbedder,
         mock::MockEmbedder,
         ollama::{OllamaConfig, OllamaEmbedder},
+        openai_embedder::{self, OpenAiEmbedder},
     };
     Ok(match cfg.embedder.kind {
         EmbedderKind::None => None,
@@ -207,6 +208,22 @@ fn build_embedder_for_daemon(
                 timeout_secs: cfg.embedder.timeout_secs,
             };
             Some(Arc::new(OllamaEmbedder::new(oc)))
+        }
+        EmbedderKind::OpenAi => {
+            // Read OPENAI_API_KEY / OPENAI_BASE_URL / MNEMOS_EMBEDDER_MODEL from
+            // env. The config's `dim` (if non-zero) is preferred over the
+            // model-inferred default so operators can override.
+            let mut oc = openai_embedder::config_from_env()
+                .map_err(|e| anyhow::anyhow!("openai embedder env: {e}"))?;
+            if cfg.embedder.dim > 0 {
+                oc.dim = cfg.embedder.dim as u32;
+            }
+            if !cfg.embedder.model.is_empty() && cfg.embedder.model != "all-MiniLM-L6-v2" {
+                oc.model = cfg.embedder.model.clone();
+            }
+            let e = OpenAiEmbedder::new(&oc)
+                .map_err(|e| anyhow::anyhow!("openai embedder init: {e}"))?;
+            Some(Arc::new(e))
         }
     })
 }
