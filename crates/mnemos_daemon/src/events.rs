@@ -58,6 +58,24 @@ pub enum Event {
         path: String,
         detected_by: String,
     },
+    EmbedRebuildStarted {
+        target_kind: String,
+        target_model: String,
+        target_dim: u32,
+    },
+    EmbedRebuildProgress {
+        processed: usize,
+        total: usize,
+    },
+    EmbedRebuildCompleted {
+        processed: usize,
+        skipped: usize,
+        total: usize,
+    },
+    EmbedRebuildFailed {
+        error: String,
+        processed: usize,
+    },
 }
 
 /// Cloneable handle to the broadcast channel that backs all WebSocket subscriptions.

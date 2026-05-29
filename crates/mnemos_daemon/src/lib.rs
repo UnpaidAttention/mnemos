@@ -94,6 +94,9 @@ pub async fn build_app_full(
         reranker,
         llm,
         pipeline_status: pipeline_status::PipelineStatus::new(),
+        rebuild_status: Arc::new(tokio::sync::Mutex::new(
+            mnemos_core::embedder_rebuild::RebuildStatus::Idle,
+        )),
     };
     let app = routes::build_router(state.clone());
     let pipeline = if state.llm.is_some() {
