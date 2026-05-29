@@ -5,6 +5,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+echo "=== ensuring bundled assets are present ==="
+# mnemos_daemon's cargo-deb / cargo-generate-rpm metadata references files
+# under assets/ (the llama-server binary, .so shared libraries, and the GGUF
+# model). Fetch them if any are missing.
+if [[ ! -f assets/llama-server-linux-x86_64 ]] || [[ ! -f assets/all-MiniLM-L6-v2.Q8_0.gguf ]] || [[ ! -f assets/libllama.so ]]; then
+    bash scripts/fetch-bundled-assets.sh
+fi
+
+echo
 echo "=== building release binaries ==="
 cargo build --release -p mnemos_cli -p mnemos_daemon
 

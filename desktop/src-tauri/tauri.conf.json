@@ -38,7 +38,10 @@
     "longDescription": "Mnemos is a local-first AI memory provider for Claude Code and other AI tools. It stores memories as markdown files in your vault and indexes them with hybrid BM25 + dense + graph PPR search.",
     "homepage": "https://github.com/UnpaidAttention/mnemos",
     "externalBin": ["binaries/mnemos-daemon", "binaries/mnemos"],
-    "resources": [],
+    "resources": [
+      "../../assets/llama-server-linux-x86_64",
+      "../../assets/all-MiniLM-L6-v2.Q8_0.gguf"
+    ],
     "linux": {
       "deb": {
         "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"],

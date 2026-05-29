@@ -44,12 +44,23 @@ impl Default for BundledEmbedderConfig {
 ///
 /// Order of precedence:
 /// 1. `MNEMOS_BUNDLED_BIN_DIR` env var (`<dir>/llama-server`)
-/// 2. Packaged install at `/usr/lib/mnemos/llama-server`
-/// 3. Dev layout `assets/llama-server-linux-x86_64`
+/// 2. Packaged install wrapper at `/usr/bin/mnemos-llama-server` (sets
+///    `LD_LIBRARY_PATH` then execs the real binary in `/usr/lib/mnemos/`)
+/// 3. Raw packaged install at `/usr/lib/mnemos/llama-server` (relies on
+///    `LD_LIBRARY_PATH` being set externally)
+/// 4. Dev layout `assets/llama-server-linux-x86_64`
 pub fn default_binary_path() -> PathBuf {
     if let Ok(env) = std::env::var("MNEMOS_BUNDLED_BIN_DIR") {
         return PathBuf::from(env).join("llama-server");
     }
+    // Packaged install: wrapper at /usr/bin/mnemos-llama-server sets
+    // LD_LIBRARY_PATH=/usr/lib/mnemos so the dynamically-linked binary can
+    // find its bundled .so neighbors.
+    let wrapper = PathBuf::from("/usr/bin/mnemos-llama-server");
+    if wrapper.exists() {
+        return wrapper;
+    }
+    // Fallback: raw binary directly. Callers must arrange LD_LIBRARY_PATH.
     let install = PathBuf::from("/usr/lib/mnemos/llama-server");
     if install.exists() {
         return install;

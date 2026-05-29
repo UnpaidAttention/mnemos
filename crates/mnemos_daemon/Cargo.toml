@@ -63,7 +63,8 @@ extended-description = """\
 Mnemos daemon — the local HTTP + MCP server for the Mnemos memory
 provider. Listens on 127.0.0.1:7423 by default and exposes the REST + WS
 API plus the MCP streamable HTTP endpoint used by Claude Code, Codex,
-and other AI clients.
+and other AI clients. Bundles llama-server + the MiniLM GGUF model for
+zero-setup local embeddings.
 """
 section = "utils"
 priority = "optional"
@@ -72,6 +73,46 @@ assets = [
     ["target/release/mnemosd", "usr/bin/mnemos-daemon", "755"],
     ["../../README.md", "usr/share/doc/mnemos-daemon/README", "644"],
     ["../../CHANGELOG.md", "usr/share/doc/mnemos-daemon/CHANGELOG", "644"],
+    # Bundled embedder runtime: wrapper sets LD_LIBRARY_PATH so the raw
+    # binary in /usr/lib/mnemos/ can find its .so neighbors. The .so list
+    # below is filtered to libraries actually used by llama-server (direct
+    # ldd deps + dlopened libggml-cpu-* CPU backends + libggml-rpc).
+    ["../../scripts/llama-server-wrapper.sh", "usr/bin/mnemos-llama-server", "755"],
+    ["../../assets/llama-server-linux-x86_64", "usr/lib/mnemos/llama-server", "755"],
+    ["../../assets/all-MiniLM-L6-v2.Q8_0.gguf", "usr/lib/mnemos/all-MiniLM-L6-v2.Q8_0.gguf", "644"],
+    # Core libraries (direct ldd dependencies of llama-server)
+    ["../../assets/libllama-server-impl.so", "usr/lib/mnemos/libllama-server-impl.so", "644"],
+    ["../../assets/libllama.so", "usr/lib/mnemos/libllama.so", "644"],
+    ["../../assets/libllama.so.0", "usr/lib/mnemos/libllama.so.0", "644"],
+    ["../../assets/libllama.so.0.0.9400", "usr/lib/mnemos/libllama.so.0.0.9400", "644"],
+    ["../../assets/libllama-common.so", "usr/lib/mnemos/libllama-common.so", "644"],
+    ["../../assets/libllama-common.so.0", "usr/lib/mnemos/libllama-common.so.0", "644"],
+    ["../../assets/libllama-common.so.0.0.9400", "usr/lib/mnemos/libllama-common.so.0.0.9400", "644"],
+    ["../../assets/libmtmd.so", "usr/lib/mnemos/libmtmd.so", "644"],
+    ["../../assets/libmtmd.so.0", "usr/lib/mnemos/libmtmd.so.0", "644"],
+    ["../../assets/libmtmd.so.0.0.9400", "usr/lib/mnemos/libmtmd.so.0.0.9400", "644"],
+    ["../../assets/libggml.so", "usr/lib/mnemos/libggml.so", "644"],
+    ["../../assets/libggml.so.0", "usr/lib/mnemos/libggml.so.0", "644"],
+    ["../../assets/libggml.so.0.13.0", "usr/lib/mnemos/libggml.so.0.13.0", "644"],
+    ["../../assets/libggml-base.so", "usr/lib/mnemos/libggml-base.so", "644"],
+    ["../../assets/libggml-base.so.0", "usr/lib/mnemos/libggml-base.so.0", "644"],
+    ["../../assets/libggml-base.so.0.13.0", "usr/lib/mnemos/libggml-base.so.0.13.0", "644"],
+    ["../../assets/libggml-rpc.so", "usr/lib/mnemos/libggml-rpc.so", "644"],
+    # CPU backend variants (dlopened at runtime; ggml selects best for host)
+    ["../../assets/libggml-cpu-alderlake.so", "usr/lib/mnemos/libggml-cpu-alderlake.so", "644"],
+    ["../../assets/libggml-cpu-cannonlake.so", "usr/lib/mnemos/libggml-cpu-cannonlake.so", "644"],
+    ["../../assets/libggml-cpu-cascadelake.so", "usr/lib/mnemos/libggml-cpu-cascadelake.so", "644"],
+    ["../../assets/libggml-cpu-cooperlake.so", "usr/lib/mnemos/libggml-cpu-cooperlake.so", "644"],
+    ["../../assets/libggml-cpu-haswell.so", "usr/lib/mnemos/libggml-cpu-haswell.so", "644"],
+    ["../../assets/libggml-cpu-icelake.so", "usr/lib/mnemos/libggml-cpu-icelake.so", "644"],
+    ["../../assets/libggml-cpu-ivybridge.so", "usr/lib/mnemos/libggml-cpu-ivybridge.so", "644"],
+    ["../../assets/libggml-cpu-piledriver.so", "usr/lib/mnemos/libggml-cpu-piledriver.so", "644"],
+    ["../../assets/libggml-cpu-sandybridge.so", "usr/lib/mnemos/libggml-cpu-sandybridge.so", "644"],
+    ["../../assets/libggml-cpu-sapphirerapids.so", "usr/lib/mnemos/libggml-cpu-sapphirerapids.so", "644"],
+    ["../../assets/libggml-cpu-skylakex.so", "usr/lib/mnemos/libggml-cpu-skylakex.so", "644"],
+    ["../../assets/libggml-cpu-sse42.so", "usr/lib/mnemos/libggml-cpu-sse42.so", "644"],
+    ["../../assets/libggml-cpu-x64.so", "usr/lib/mnemos/libggml-cpu-x64.so", "644"],
+    ["../../assets/libggml-cpu-zen4.so", "usr/lib/mnemos/libggml-cpu-zen4.so", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -80,4 +121,39 @@ assets = [
     { source = "target/release/mnemosd", dest = "/usr/bin/mnemos-daemon", mode = "755" },
     { source = "README.md", dest = "/usr/share/doc/mnemos-daemon/README", mode = "644", doc = true },
     { source = "CHANGELOG.md", dest = "/usr/share/doc/mnemos-daemon/CHANGELOG", mode = "644", doc = true },
+    # Bundled embedder runtime (mirrors the .deb assets above).
+    { source = "../../scripts/llama-server-wrapper.sh", dest = "/usr/bin/mnemos-llama-server", mode = "755" },
+    { source = "../../assets/llama-server-linux-x86_64", dest = "/usr/lib/mnemos/llama-server", mode = "755" },
+    { source = "../../assets/all-MiniLM-L6-v2.Q8_0.gguf", dest = "/usr/lib/mnemos/all-MiniLM-L6-v2.Q8_0.gguf", mode = "644" },
+    { source = "../../assets/libllama-server-impl.so", dest = "/usr/lib/mnemos/libllama-server-impl.so", mode = "644" },
+    { source = "../../assets/libllama.so", dest = "/usr/lib/mnemos/libllama.so", mode = "644" },
+    { source = "../../assets/libllama.so.0", dest = "/usr/lib/mnemos/libllama.so.0", mode = "644" },
+    { source = "../../assets/libllama.so.0.0.9400", dest = "/usr/lib/mnemos/libllama.so.0.0.9400", mode = "644" },
+    { source = "../../assets/libllama-common.so", dest = "/usr/lib/mnemos/libllama-common.so", mode = "644" },
+    { source = "../../assets/libllama-common.so.0", dest = "/usr/lib/mnemos/libllama-common.so.0", mode = "644" },
+    { source = "../../assets/libllama-common.so.0.0.9400", dest = "/usr/lib/mnemos/libllama-common.so.0.0.9400", mode = "644" },
+    { source = "../../assets/libmtmd.so", dest = "/usr/lib/mnemos/libmtmd.so", mode = "644" },
+    { source = "../../assets/libmtmd.so.0", dest = "/usr/lib/mnemos/libmtmd.so.0", mode = "644" },
+    { source = "../../assets/libmtmd.so.0.0.9400", dest = "/usr/lib/mnemos/libmtmd.so.0.0.9400", mode = "644" },
+    { source = "../../assets/libggml.so", dest = "/usr/lib/mnemos/libggml.so", mode = "644" },
+    { source = "../../assets/libggml.so.0", dest = "/usr/lib/mnemos/libggml.so.0", mode = "644" },
+    { source = "../../assets/libggml.so.0.13.0", dest = "/usr/lib/mnemos/libggml.so.0.13.0", mode = "644" },
+    { source = "../../assets/libggml-base.so", dest = "/usr/lib/mnemos/libggml-base.so", mode = "644" },
+    { source = "../../assets/libggml-base.so.0", dest = "/usr/lib/mnemos/libggml-base.so.0", mode = "644" },
+    { source = "../../assets/libggml-base.so.0.13.0", dest = "/usr/lib/mnemos/libggml-base.so.0.13.0", mode = "644" },
+    { source = "../../assets/libggml-rpc.so", dest = "/usr/lib/mnemos/libggml-rpc.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-alderlake.so", dest = "/usr/lib/mnemos/libggml-cpu-alderlake.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-cannonlake.so", dest = "/usr/lib/mnemos/libggml-cpu-cannonlake.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-cascadelake.so", dest = "/usr/lib/mnemos/libggml-cpu-cascadelake.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-cooperlake.so", dest = "/usr/lib/mnemos/libggml-cpu-cooperlake.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-haswell.so", dest = "/usr/lib/mnemos/libggml-cpu-haswell.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-icelake.so", dest = "/usr/lib/mnemos/libggml-cpu-icelake.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-ivybridge.so", dest = "/usr/lib/mnemos/libggml-cpu-ivybridge.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-piledriver.so", dest = "/usr/lib/mnemos/libggml-cpu-piledriver.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-sandybridge.so", dest = "/usr/lib/mnemos/libggml-cpu-sandybridge.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-sapphirerapids.so", dest = "/usr/lib/mnemos/libggml-cpu-sapphirerapids.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-skylakex.so", dest = "/usr/lib/mnemos/libggml-cpu-skylakex.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-sse42.so", dest = "/usr/lib/mnemos/libggml-cpu-sse42.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-x64.so", dest = "/usr/lib/mnemos/libggml-cpu-x64.so", mode = "644" },
+    { source = "../../assets/libggml-cpu-zen4.so", dest = "/usr/lib/mnemos/libggml-cpu-zen4.so", mode = "644" },
 ]
