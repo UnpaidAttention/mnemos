@@ -50,6 +50,7 @@ pub struct EmbedderConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum EmbedderKind {
+    Bundled,
     Ollama,
     Mock,
     None,
@@ -117,11 +118,13 @@ impl Default for VaultConfig {
 
 impl Default for EmbedderConfig {
     fn default() -> Self {
+        // Fresh installs default to the bundled llama-server backend. Ollama
+        // remains opt-in via `MNEMOS_EMBEDDER=ollama` or config.toml.
         Self {
-            kind: EmbedderKind::Ollama,
-            url: "http://localhost:11434".into(),
-            model: "nomic-embed-text".into(),
-            dim: 768,
+            kind: EmbedderKind::Bundled,
+            url: "http://127.0.0.1:7424".into(),
+            model: "all-MiniLM-L6-v2".into(),
+            dim: 384,
             timeout_secs: 30,
         }
     }
@@ -336,9 +339,11 @@ pub fn default_config_path() -> Result<PathBuf> {
 fn apply_env_overrides(cfg: &mut Config) {
     if let Ok(v) = std::env::var("MNEMOS_EMBEDDER") {
         cfg.embedder.kind = match v.as_str() {
+            "bundled" => EmbedderKind::Bundled,
+            "ollama" => EmbedderKind::Ollama,
             "mock" => EmbedderKind::Mock,
             "none" => EmbedderKind::None,
-            _ => EmbedderKind::Ollama,
+            _ => EmbedderKind::Bundled,
         };
     }
     if let Ok(v) = std::env::var("MNEMOS_OLLAMA_URL") {

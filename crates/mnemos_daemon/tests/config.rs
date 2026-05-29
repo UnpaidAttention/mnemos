@@ -38,8 +38,9 @@ fn config_defaults_when_file_absent() {
     let path = tmp.path().join("does-not-exist.toml");
     let cfg = Config::load_from(&path).unwrap(); // fallback to defaults
     assert_eq!(cfg.daemon.port, 7423);
-    assert!(matches!(cfg.embedder.kind, EmbedderKind::Ollama));
-    assert_eq!(cfg.embedder.dim, 768);
+    // Fresh installs default to the bundled llama-server backend (Plan 9).
+    assert!(matches!(cfg.embedder.kind, EmbedderKind::Bundled));
+    assert_eq!(cfg.embedder.dim, 384);
     assert!(!cfg.reranker.enabled);
 }
 

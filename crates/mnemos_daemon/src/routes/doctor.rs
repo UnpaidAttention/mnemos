@@ -135,6 +135,42 @@ async fn embedder_reachable(state: &AppState) -> Check {
             status: "ok",
             detail: "mock".into(),
         },
+        EmbedderKind::Bundled => {
+            let url = format!("{}/health", state.config.embedder.url.trim_end_matches('/'));
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    return Check {
+                        name: "embedder",
+                        status: "fail",
+                        detail: e.to_string(),
+                    }
+                }
+            };
+            match client.get(&url).send().await {
+                Ok(r) if r.status().is_success() => Check {
+                    name: "embedder",
+                    status: "ok",
+                    detail: format!(
+                        "bundled llama-server reachable at {}",
+                        state.config.embedder.url
+                    ),
+                },
+                Ok(r) => Check {
+                    name: "embedder",
+                    status: "fail",
+                    detail: format!("HTTP {}", r.status()),
+                },
+                Err(e) => Check {
+                    name: "embedder",
+                    status: "fail",
+                    detail: e.to_string(),
+                },
+            }
+        }
         EmbedderKind::Ollama => {
             let url = format!(
                 "{}/api/tags",

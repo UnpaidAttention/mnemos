@@ -9,9 +9,10 @@ async fn build_app_full_without_llm_has_no_pipeline_handle() {
 
     let tmp = TempDir::new().unwrap();
     let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
-    let (_app, state, handle, sync) = build_app_full(Config::default(), vault, None, None)
-        .await
-        .unwrap();
+    let (_app, state, handle, sync, _bundled) =
+        build_app_full(Config::default(), vault, None, None)
+            .await
+            .unwrap();
     assert!(handle.is_none(), "no llm → no runner");
     assert!(sync.is_none(), "no sync config → no sync worker");
     assert!(state.llm.is_none());

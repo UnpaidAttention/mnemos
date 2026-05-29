@@ -4,6 +4,7 @@
 #![warn(clippy::all)]
 
 pub mod auth;
+pub mod bundled_embedder;
 pub mod config;
 pub mod error;
 pub mod events;
@@ -38,12 +39,16 @@ pub async fn build_app_with_reranker(
     vault: Vault,
     reranker: Option<Arc<dyn mnemos_core::providers::Reranker>>,
 ) -> Result<(axum::Router, AppState)> {
-    let (app, state, _pipeline, _sync) = build_app_full(config, vault, reranker, None).await?;
+    let (app, state, _pipeline, _sync, _bundled) =
+        build_app_full(config, vault, reranker, None).await?;
     Ok((app, state))
 }
 
 /// Full constructor: also wires the LLM and spawns the pipeline runner when an
-/// LLM is configured, plus the periodic sync worker when sync is enabled.
+/// LLM is configured, plus the periodic sync worker when sync is enabled, and
+/// the bundled llama-server child process when the embedder kind is
+/// `EmbedderKind::Bundled`.
+///
 /// Returns the handles (for graceful shutdown) when each was spawned.
 pub async fn build_app_full(
     config: Config,
@@ -55,9 +60,32 @@ pub async fn build_app_full(
     AppState,
     Option<crate::pipeline_runner::PipelineHandle>,
     Option<crate::sync_worker::SyncHandle>,
+    Option<crate::bundled_embedder::BundledHandle>,
 )> {
     let token_path = config_token_path()?;
     let token = auth::ensure_token(&token_path)?;
+    let bundled = if matches!(config.embedder.kind, config::EmbedderKind::Bundled) {
+        let bcfg = bundled_embedder::BundledEmbedderConfig::default();
+        // In dev / test environments where the bundled binary may not be
+        // installed, skip the spawn with a warning rather than aborting startup.
+        // Packaged installs always have the binary in /usr/lib/mnemos/.
+        if !bcfg.binary.exists() || !bcfg.model.exists() {
+            tracing::warn!(
+                binary = %bcfg.binary.display(),
+                model = %bcfg.model.display(),
+                "bundled embedder configured but assets missing; skipping spawn (run scripts/fetch-bundled-assets.sh or reinstall the Mnemos package)"
+            );
+            None
+        } else {
+            Some(
+                bundled_embedder::spawn(bcfg)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("spawn bundled embedder: {e}"))?,
+            )
+        }
+    } else {
+        None
+    };
     let state = AppState {
         config: Arc::new(config),
         vault,
@@ -74,7 +102,7 @@ pub async fn build_app_full(
         None
     };
     let sync = sync_worker::spawn(state.clone());
-    Ok((app, state, pipeline, sync))
+    Ok((app, state, pipeline, sync, bundled))
 }
 
 /// Resolve the canonical path to the daemon's auth token file.

@@ -83,7 +83,7 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
     tracing::info!(pid_file = %pid_path.display(), pid = std::process::id(), "PID file acquired");
 
     let decay_vault = vault.clone();
-    let (app, _state, pipeline, sync) = build_app_full(cfg, vault, reranker, llm).await?;
+    let (app, _state, pipeline, sync, bundled) = build_app_full(cfg, vault, reranker, llm).await?;
 
     // Hourly decay worker.
     let (decay_tx, mut decay_rx) = tokio::sync::watch::channel(false);
@@ -135,7 +135,8 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
         .await?;
 
     // Graceful shutdown: stop the decay worker, then the sync worker, then the
-    // pipeline runner, before the PID file (`_pid`) is dropped.
+    // pipeline runner, then the bundled llama-server, before the PID file
+    // (`_pid`) is dropped.
     let _ = decay_tx.send(true);
     let _ = decay_handle.await;
     if let Some(handle) = sync {
@@ -144,6 +145,10 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
     }
     if let Some(handle) = pipeline {
         tracing::info!("stopping pipeline runner");
+        handle.shutdown().await;
+    }
+    if let Some(handle) = bundled {
+        tracing::info!("stopping bundled llama-server");
         handle.shutdown().await;
     }
     Ok(())
@@ -186,12 +191,14 @@ fn build_embedder_for_daemon(
     cfg: &Config,
 ) -> Result<Option<Arc<dyn mnemos_core::providers::Embedder>>> {
     use mnemos_core::providers::{
+        bundled::BundledEmbedder,
         mock::MockEmbedder,
         ollama::{OllamaConfig, OllamaEmbedder},
     };
     Ok(match cfg.embedder.kind {
         EmbedderKind::None => None,
         EmbedderKind::Mock => Some(Arc::new(MockEmbedder::new(cfg.embedder.dim))),
+        EmbedderKind::Bundled => Some(Arc::new(BundledEmbedder::new(cfg.embedder.url.clone()))),
         EmbedderKind::Ollama => {
             let oc = OllamaConfig {
                 base_url: cfg.embedder.url.clone(),
