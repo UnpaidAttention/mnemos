@@ -4,6 +4,56 @@ Local-first, file-as-source-of-truth memory provider for AI tools. Plan 1
 ships the CLI foundation — vectors, daemon, MCP, and UI come in later
 plans.
 
+## Install
+
+### macOS
+
+Download `Mnemos_X.Y.Z_aarch64.dmg` from [the latest release][releases]
+and drag Mnemos to your Applications folder. The first launch will
+prompt "unidentified developer" — right-click the icon and choose Open.
+
+### Linux
+
+Direct install (Debian/Ubuntu/Fedora):
+
+```
+# Desktop app (includes daemon + CLI as sidecars):
+sudo dpkg -i Mnemos_X.Y.Z_amd64.deb       # Debian/Ubuntu
+sudo rpm -i Mnemos-X.Y.Z-1.x86_64.rpm     # Fedora/RHEL
+
+# Or run the AppImage without installing:
+chmod +x Mnemos_X.Y.Z_amd64.AppImage
+./Mnemos_X.Y.Z_amd64.AppImage
+
+# Server-only (no GUI):
+sudo dpkg -i mnemos_X.Y.Z_amd64.deb mnemos-daemon_X.Y.Z_amd64.deb
+```
+
+Add an apt PPA or dnf repo (see [PACKAGING.md](PACKAGING.md)) for
+`apt update` / `dnf upgrade` integration.
+
+### Windows
+
+Download `Mnemos_X.Y.Z_x64_en-US.msi` from [the latest release][releases]
+and double-click. SmartScreen may warn — choose More info → Run anyway
+(the installer is currently unsigned; see [BUILD.md](BUILD.md) for the
+notarization roadmap).
+
+### Build from source
+
+See [BUILD.md](BUILD.md).
+
+[releases]: https://github.com/UnpaidAttention/mnemos/releases/latest
+
+### Auto-update
+
+The desktop app polls for updates on launch. When a new version is
+available, an UpdateBanner appears at the top of the window with
+Install / Later actions. Update manifests are ed25519-signed.
+
+The CLI + daemon (`apt install mnemos` / `dnf install mnemos` /
+`dpkg -i mnemos_*.deb`) update via your package manager.
+
 ## Sync, settings, doctor, adapters (v0.6.0)
 
 mnemos is now multi-machine. Pick a backend:
@@ -178,14 +228,6 @@ Set `kind = "none"` to disable automatic learning (manual `remember` still works
 
 ```bash
 mnemos decay        # run a decay pass locally
-```
-
-## Install (from source)
-
-```bash
-git clone https://github.com/UnpaidAttention/mnemos
-cd mnemos
-cargo install --path crates/mnemos_cli
 ```
 
 ## Vault layout
