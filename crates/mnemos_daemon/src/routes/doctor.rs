@@ -377,5 +377,28 @@ async fn run(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
         "warn" => 1,
         _ => 2,
     });
-    Ok(Json(json!({ "checks": checks, "report": report })))
+
+    // Vault-vs-config embedder mismatch hint. Only surfaces when the vault
+    // has a non-empty stored `embedder_kind` (i.e. has been seeded by a
+    // prior remember) AND it differs from the currently configured kind.
+    let migration_hint =
+        match mnemos_core::storage::vault_meta::get_embedder_meta(state.vault.storage()).await {
+            Ok(meta)
+                if !meta.kind.is_empty() && meta.kind != state.config.embedder.kind.as_str() =>
+            {
+                Some(json!({
+                    "from_kind": meta.kind,
+                    "from_model": meta.model,
+                    "from_dim": meta.dim,
+                    "to_kind": state.config.embedder.kind.as_str(),
+                }))
+            }
+            _ => None,
+        };
+
+    Ok(Json(json!({
+        "checks": checks,
+        "report": report,
+        "migration_hint": migration_hint,
+    })))
 }

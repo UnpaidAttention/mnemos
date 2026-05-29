@@ -13,6 +13,7 @@ const server = setupServer(
         { name: "embedder", status: "fail", detail: "Ollama unreachable" },
       ],
       report: { files_scanned: 4, db_rows: 4, issues: [] },
+      migration_hint: null,
     }),
   ),
 );
@@ -26,4 +27,27 @@ test("renders the check rows with failures first", async () => {
   expect(screen.getByText(/Ollama unreachable/i)).toBeInTheDocument();
   const rows = screen.getAllByTestId("doctor-row");
   expect(rows[0]).toHaveTextContent(/embedder/i);
+});
+
+test("renders migration banner when migration_hint is set", async () => {
+  server.use(
+    http.get("http://localhost:7423/v1/doctor", () =>
+      HttpResponse.json({
+        checks: [{ name: "schema_version", status: "ok", detail: "v9" }],
+        report: { files_scanned: 0, db_rows: 0, issues: [] },
+        migration_hint: {
+          from_kind: "ollama",
+          from_model: "nomic-embed-text",
+          from_dim: 768,
+          to_kind: "bundled",
+        },
+      }),
+    ),
+  );
+  renderWithQuery(<Doctor />);
+  const banner = await screen.findByTestId("migration-hint");
+  expect(banner).toBeInTheDocument();
+  expect(banner).toHaveTextContent(/ollama/i);
+  expect(banner).toHaveTextContent(/bundled/i);
+  expect(banner).toHaveTextContent(/nomic-embed-text/i);
 });

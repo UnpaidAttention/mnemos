@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useDoctor } from "../api/queries";
 import { Button, Card, Skeleton } from "../design/primitives";
 
@@ -12,6 +13,10 @@ const STATUS_ORDER: Record<string, number> = { fail: 0, warn: 1, ok: 2 };
 
 export function Doctor() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  // Router type-tree only narrowly infers known routes; widen to string so
+  // the new `/embed-rebuild` route (added in Plan 9 Task 14) typechecks.
+  const rebuildPath: string = "/embed-rebuild";
   const { data, isLoading, isError } = useDoctor();
   if (isLoading) {
     return (
@@ -35,6 +40,27 @@ export function Doctor() {
           Refresh
         </Button>
       </div>
+      {data.migration_hint && (
+        <Card className="p-3 border-tier-working" data-testid="migration-hint">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="display text-base">Migrate embedder</div>
+              <p className="label text-text-muted">
+                Your vault was seeded with{" "}
+                <span className="mono">{data.migration_hint.from_kind}</span> (
+                {data.migration_hint.from_model}, dim {data.migration_hint.from_dim}). The
+                configured embedder is{" "}
+                <span className="mono">{data.migration_hint.to_kind}</span>. Run{" "}
+                <code className="mono">
+                  mnemos embed-rebuild --target {data.migration_hint.to_kind}
+                </code>{" "}
+                to migrate.
+              </p>
+            </div>
+            <Button onClick={() => void navigate({ to: rebuildPath })}>Open migration</Button>
+          </div>
+        </Card>
+      )}
       <div className="space-y-2">
         {sortedChecks.map((c) => (
           <Card key={c.name} className="p-3" data-testid="doctor-row">

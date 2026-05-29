@@ -19,6 +19,12 @@ async fn doctor_returns_check_list() {
     assert!(checks.iter().any(|c| c["name"] == "audit_triggers"));
     assert!(checks.iter().any(|c| c["name"] == "vault_writable"));
     assert!(v["report"]["files_scanned"].is_number());
+    // Plan 9 Task 12: `migration_hint` is always present (null on a fresh
+    // vault whose stored embedder kind matches the configured kind).
+    assert!(
+        v.get("migration_hint").is_some(),
+        "expected migration_hint field on doctor response"
+    );
 }
 
 async fn call(

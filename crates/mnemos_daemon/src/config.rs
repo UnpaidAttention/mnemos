@@ -57,6 +57,21 @@ pub enum EmbedderKind {
     None,
 }
 
+impl EmbedderKind {
+    /// Stable lowercase tag matching the `serde(rename_all = "lowercase")`
+    /// repr. Mirrors the strings written into `vault_meta.embedder_kind` so
+    /// the doctor can compare vault-vs-config without re-deriving them.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EmbedderKind::Bundled => "bundled",
+            EmbedderKind::Ollama => "ollama",
+            EmbedderKind::OpenAi => "openai",
+            EmbedderKind::Mock => "mock",
+            EmbedderKind::None => "none",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RerankerConfig {

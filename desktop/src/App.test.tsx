@@ -45,6 +45,7 @@ vi.mock("./api/client", async () => {
       stubResponse({
         checks: [],
         report: { files_scanned: 0, db_rows: 0, issues: [] },
+        migration_hint: null,
       }),
     getSyncStatus: () =>
       stubResponse({

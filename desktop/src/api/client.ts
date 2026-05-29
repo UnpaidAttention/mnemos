@@ -120,6 +120,9 @@ export class MnemosClient {
     return this.req<{
       checks: { name: string; status: "ok" | "warn" | "fail"; detail: string }[];
       report: { files_scanned: number; db_rows: number; issues: unknown[] };
+      migration_hint:
+        | { from_kind: string; from_model: string; from_dim: number; to_kind: string }
+        | null;
     }>("GET", "/v1/doctor");
   }
 
