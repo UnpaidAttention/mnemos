@@ -33,6 +33,19 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # Bundled embedder assets needed for Tauri to copy them into the
+      # AppImage/deb/rpm resources.
+      - name: Cache bundled assets
+        id: cache-assets
+        uses: actions/cache@v4
+        with:
+          path: assets/
+          key: bundled-assets-llamacpp-b9400-minilm-q8
+
+      - name: Fetch bundled assets
+        if: steps.cache-assets.outputs.cache-hit != 'true'
+        run: bash scripts/fetch-bundled-assets.sh
+
       - name: Install Linux deps
         run: |
           sudo apt-get update
@@ -84,6 +97,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+
+      # The mnemos-daemon .deb / .rpm bundle the llama-server binary +
+      # .so libraries + GGUF model. Prepare-linux-packages.sh will fetch
+      # them on demand, but caching here saves ~50 MB / ~30s per build.
+      - name: Cache bundled assets
+        id: cache-assets
+        uses: actions/cache@v4
+        with:
+          path: assets/
+          key: bundled-assets-llamacpp-b9400-minilm-q8
+
+      - name: Fetch bundled assets
+        if: steps.cache-assets.outputs.cache-hit != 'true'
+        run: bash scripts/fetch-bundled-assets.sh
+
       - name: Install cargo-deb + cargo-generate-rpm
         run: |
           cargo install cargo-deb --locked

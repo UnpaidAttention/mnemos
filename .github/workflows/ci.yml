@@ -23,6 +23,23 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+
+      # Bundled embedder assets: llama-server binary + .so libraries +
+      # MiniLM GGUF model. ~50 MB total. Cache keyed on the pinned
+      # llama.cpp tag + model name. Bump key when fetch-bundled-assets.sh
+      # changes LLAMA_CPP_TAG.
+      - name: Cache bundled assets
+        if: runner.os == 'Linux'
+        id: cache-assets
+        uses: actions/cache@v4
+        with:
+          path: assets/
+          key: bundled-assets-llamacpp-b9400-minilm-q8
+
+      - name: Fetch bundled assets
+        if: runner.os == 'Linux' && steps.cache-assets.outputs.cache-hit != 'true'
+        run: bash scripts/fetch-bundled-assets.sh
+
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -33,3 +50,36 @@ jobs:
         # the current pinned `ort` RC does not compile in CI. rerank-onnx is
         # built/verified manually until a stable `ort` lands.
         run: cargo test --workspace
+
+      # Spawn a llama-server in the background and re-run the workspace tests
+      # with `--include-ignored` so the bundled-embedder integration tests
+      # (gated on MNEMOS_TEST_LLAMA_SERVER) execute. Linux-only — assets are
+      # only fetched on Linux runners.
+      - name: Run ignored tests against bundled llama-server
+        if: runner.os == 'Linux'
+        env:
+          MNEMOS_TEST_BUNDLED: "1"
+          MNEMOS_TEST_LLAMA_SERVER: "1"
+        run: |
+          export LD_LIBRARY_PATH="$(pwd)/assets:${LD_LIBRARY_PATH:-}"
+          ./assets/llama-server-linux-x86_64 \
+            --model assets/all-MiniLM-L6-v2.Q8_0.gguf \
+            --host 127.0.0.1 --port 7424 \
+            --embedding --pooling mean --ctx-size 8192 \
+            > llama-server.log 2>&1 &
+          LLAMA_PID=$!
+          # Wait up to 30s for /health to respond.
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:7424/health > /dev/null 2>&1; then
+              echo "llama-server healthy after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          set +e
+          cargo test --workspace -- --include-ignored
+          status=$?
+          set -e
+          kill "$LLAMA_PID" 2>/dev/null || true
+          wait "$LLAMA_PID" 2>/dev/null || true
+          exit "$status"
