@@ -2,6 +2,50 @@
 
 All notable changes to this project are recorded here.
 
+## [0.7.0] - 2026-05-29
+
+### Added
+- Cross-platform installers via Tauri bundler (`.dmg` + `.app` macOS,
+  `.deb` + `.rpm` + `.AppImage` Linux, `.msi` Windows). Desktop installer
+  bundles the daemon + CLI as Tauri sidecars.
+- Stand-alone `.deb` + `.rpm` packages for the CLI (`mnemos`) and daemon
+  (`mnemos-daemon`) via `cargo-deb` and `cargo-generate-rpm`.
+- Tauri-built-in auto-update: ed25519-signed `latest.json` manifest on
+  GitHub Releases, `UpdateBanner` UI in the desktop app, defer-or-install
+  flow with progress.
+- `.github/workflows/release.yml` — tag-triggered build matrix on macOS,
+  Linux, and Windows runners + a release-publish job that uploads all
+  artifacts and generates the updater manifest.
+- `mnemos_release_manifest` workspace member — small binary that
+  generates the Tauri updater `latest.json` from a tagged set of
+  platform / URL / signature triples.
+- Icon set (SVG source + generated PNG/ICO/ICNS) under
+  `desktop/src-tauri/icons/`.
+- Documentation: `BUILD.md` (cross-platform build steps), `PACKAGING.md`
+  (release + distribution runbook), README "Install" section.
+- Workspace package metadata (license, repository, homepage,
+  description, authors).
+
+### Deferred
+- Apple Developer notarization, Microsoft Authenticode signing — both
+  documented in BUILD.md; future v0.7.x release re-runs CI with secrets.
+- Launchpad PPA / OBS RPM repository submission — documented in
+  PACKAGING.md; requires accounts the framework cannot create.
+- Homebrew tap, crates.io publish — explicitly opted out in plan scoping.
+- Turso libSQL embedded replicas wire-up, encrypt-at-rest, secret
+  detection at ingest — carried forward from Plan 7.
+
+### Notes
+- The Tauri updater public key is `PLACEHOLDER_PUBLIC_KEY_REPLACE_BEFORE_RELEASE`
+  in `tauri.conf.json` — run `bash scripts/gen-updater-key.sh` and replace
+  before cutting the first signed release. The private key lives in
+  `TAURI_SIGNING_PRIVATE_KEY` (CI secret).
+- macOS and Windows installers are **unsigned** for v0.7.0. SmartScreen
+  / Gatekeeper warnings on first launch are expected; see PACKAGING.md.
+- AppImage builds may fail locally on Fedora 43 (linuxdeploy/binutils
+  version drift on `.relr.dyn` ELF sections). CI on ubuntu-22.04 builds
+  AppImages cleanly. See BUILD.md § Troubleshooting.
+
 ## [0.6.0] - 2026-05-28
 
 ### Added

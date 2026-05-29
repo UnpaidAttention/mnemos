@@ -73,7 +73,13 @@ fn main() -> Result<()> {
         .zip(args.urls.into_iter())
         .zip(args.signatures.into_iter())
     {
-        platforms.insert(p, Platform { signature: s, url: u });
+        platforms.insert(
+            p,
+            Platform {
+                signature: s,
+                url: u,
+            },
+        );
     }
 
     let manifest = Manifest {
@@ -83,10 +89,8 @@ fn main() -> Result<()> {
         platforms,
     };
 
-    let text = serde_json::to_string_pretty(&manifest)
-        .context("serialize manifest")?;
+    let text = serde_json::to_string_pretty(&manifest).context("serialize manifest")?;
     std::fs::write(&args.output, text).context("write manifest")?;
     println!("wrote {}", args.output.display());
     Ok(())
 }
-
