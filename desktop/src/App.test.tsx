@@ -60,6 +60,10 @@ vi.mock("./api/client", async () => {
       stubResponse({ completed_at: "2026-01-01T00:00:00Z" }),
     completeFirstRun: () => stubResponse({ completed: true as const }),
     getConfig: () => stubResponse({}),
+    getEmbedRebuildStatus: () =>
+      stubResponse({ status: "idle" as const }),
+    startEmbedRebuild: () => stubResponse({ started: true }),
+    abortEmbedRebuild: () => stubResponse({ aborted: true }),
   };
   return { client, ApiError };
 });

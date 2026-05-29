@@ -126,6 +126,33 @@ export class MnemosClient {
     }>("GET", "/v1/doctor");
   }
 
+  async getEmbedRebuildStatus() {
+    return this.req<
+      | { status: "idle" }
+      | { status: "running"; processed: number; total: number }
+      | {
+          status: "completed";
+          processed: number;
+          skipped: number;
+          total: number;
+          swapped: boolean;
+        }
+      | { status: "failed"; error: string; processed: number }
+    >("GET", "/v1/embed-rebuild/status");
+  }
+
+  async startEmbedRebuild(target_kind: string, target_model: string, target_dim: number) {
+    return this.req<{ started: boolean }>("POST", "/v1/embed-rebuild/start", {
+      target_kind,
+      target_model,
+      target_dim,
+    });
+  }
+
+  async abortEmbedRebuild() {
+    return this.req<{ aborted: boolean }>("POST", "/v1/embed-rebuild/abort");
+  }
+
   async getFirstRun() {
     return this.req<{ completed_at: string | null }>("GET", "/v1/first-run");
   }

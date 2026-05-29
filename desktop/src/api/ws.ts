@@ -14,6 +14,10 @@ const INVALIDATE: Record<string, string[][]> = {
   sync_completed: [["sync", "status"]],
   sync_failed: [["sync", "status"]],
   sync_conflict: [["sync", "status"]],
+  embed_rebuild_started: [["embed-rebuild", "status"]],
+  embed_rebuild_progress: [["embed-rebuild", "status"]],
+  embed_rebuild_completed: [["embed-rebuild", "status"], ["doctor"], ["memories"]],
+  embed_rebuild_failed: [["embed-rebuild", "status"]],
   session_started: [], session_ended: [],
 };
 

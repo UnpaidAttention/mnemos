@@ -30,3 +30,13 @@ export const useSyncStatus = () =>
 export function useDoctor() {
   return useQuery({ queryKey: ["doctor"], queryFn: () => client.getDoctor() });
 }
+export function useEmbedRebuildStatus() {
+  return useQuery({
+    queryKey: ["embed-rebuild", "status"],
+    queryFn: () => client.getEmbedRebuildStatus(),
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      return d && (d as { status: string }).status === "running" ? 500 : 5000;
+    },
+  });
+}

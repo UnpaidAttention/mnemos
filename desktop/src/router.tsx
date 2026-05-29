@@ -17,7 +17,7 @@ const r = (path: string, component: () => JSX.Element) => createRoute({ getParen
 const routes = [
   r("/", V.Browser), r("/search", V.Search), r("/graph", V.Graph), r("/timeline", V.Timeline),
   r("/pipelines", V.Pipelines), r("/reflections", V.Reflections), r("/audit", V.Audit),
-  r("/settings", V.Settings), r("/doctor", V.Doctor),
+  r("/settings", V.Settings), r("/doctor", V.Doctor), r("/embed-rebuild", V.EmbedRebuild),
   // Editor/EntityProfile accept an optional `id` prop for test isolation;
   // the router calls them with no args so wrap with a no-arg closure.
   r("/editor/$id", () => <V.Editor />), r("/entity/$id", () => <V.EntityProfile />),

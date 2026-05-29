@@ -10,3 +10,4 @@ export { EntityProfile } from "./EntityProfile";
 export { Editor } from "./Editor";
 export { Settings } from "./Settings";
 export { Doctor } from "./Doctor";
+export { EmbedRebuild } from "./EmbedRebuild";
