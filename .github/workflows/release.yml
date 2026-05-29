@@ -78,7 +78,10 @@ jobs:
         run: |
           mkdir -p staged
           shopt -s globstar nullglob
-          for f in desktop/src-tauri/target/release/bundle/**/*.{deb,rpm,AppImage}; do
+          # .AppImage.tar.gz + .sig are emitted by Tauri when
+          # createUpdaterArtifacts is true; they back the auto-update
+          # latest.json manifest published below.
+          for f in desktop/src-tauri/target/release/bundle/**/*.{deb,rpm,AppImage,AppImage.tar.gz,sig}; do
             cp "$f" staged/
           done
           ls -la staged/
@@ -134,6 +137,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -142,8 +148,55 @@ jobs:
       - name: Flatten + list
         run: |
           mkdir -p release/
-          find artifacts/ -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \) -exec cp -v {} release/ \;
+          # Include Tauri auto-update artifacts (.AppImage.tar.gz, .sig)
+          # alongside the regular packages so latest.json + signature files
+          # are uploaded to the GitHub Release.
+          find artifacts/ -type f \( \
+              -name "*.deb" -o \
+              -name "*.rpm" -o \
+              -name "*.AppImage" -o \
+              -name "*.AppImage.tar.gz" -o \
+              -name "*.sig" \
+            \) -exec cp -v {} release/ \;
           ls -la release/
+
+      - name: Build release-manifest tool
+        run: cargo build --release --bin mnemos-release-manifest
+
+      - name: Generate latest.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          # github.ref_name is set when tag-triggered; workflow_dispatch
+          # uses inputs.tag.
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          LIN_FILE=$(ls release/*.AppImage.tar.gz 2>/dev/null | head -1)
+          if [[ -z "$LIN_FILE" ]]; then
+            echo "no AppImage.tar.gz found; skipping latest.json generation"
+            echo "(set TAURI_SIGNING_PRIVATE_KEY in secrets to enable signed updater artifacts)"
+            exit 0
+          fi
+          SIG_FILE="${LIN_FILE}.sig"
+          if [[ -f "$SIG_FILE" ]]; then
+            LIN_SIG=$(cat "$SIG_FILE")
+          else
+            echo "no .sig file alongside $LIN_FILE; latest.json signature will be empty" >&2
+            LIN_SIG=""
+          fi
+          NOTES=$(awk "/^## \[$VERSION\]/{f=1;next} /^## \[/{f=0} f" CHANGELOG.md | head -100)
+          if [[ -z "$NOTES" ]]; then
+            NOTES="Release ${TAG}"
+          fi
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          ./target/release/mnemos-release-manifest \
+            --version "$VERSION" \
+            --notes "$NOTES" \
+            --platform linux-x86_64 \
+            --url "${base_url}/$(basename "$LIN_FILE")" \
+            --signature "$LIN_SIG" \
+            --output release/latest.json
+          cat release/latest.json
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
