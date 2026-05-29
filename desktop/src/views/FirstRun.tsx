@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { client } from "../api/client";
 import { Button, Card } from "../design/primitives";
 
@@ -6,39 +6,6 @@ type Step = 0 | 1 | 2;
 
 export function FirstRun({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<Step>(0);
-  const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
-  const [ollamaError, setOllamaError] = useState<string | null>(null);
-  const [pulling, setPulling] = useState(false);
-
-  useEffect(() => {
-    if (step !== 1) return;
-    void (async () => {
-      try {
-        const cfg = (await client.getConfig()) as { embedder: { url: string } };
-        const res = await fetch(`${cfg.embedder.url}/api/tags`);
-        if (!res.ok) throw new Error(`Ollama responded ${res.status}`);
-        const j = (await res.json()) as { models?: { name: string }[] };
-        setOllamaModels((j.models ?? []).map((m) => m.name));
-      } catch (e) {
-        setOllamaError(e instanceof Error ? e.message : "unreachable");
-      }
-    })();
-  }, [step]);
-
-  const pullEmbed = async () => {
-    setPulling(true);
-    try {
-      const cfg = (await client.getConfig()) as { embedder: { url: string } };
-      await fetch(`${cfg.embedder.url}/api/pull`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: "nomic-embed-text" }),
-      });
-      setOllamaModels((m) => (m ?? []).concat("nomic-embed-text"));
-    } finally {
-      setPulling(false);
-    }
-  };
 
   const finish = async () => {
     await client.completeFirstRun();
@@ -64,30 +31,18 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
         )}
         {step === 1 && (
           <>
-            <h1 className="display text-xl">Embedder · Ollama</h1>
-            {ollamaModels === null && !ollamaError && (
-              <p className="text-text-muted">Checking Ollama…</p>
-            )}
-            {ollamaError && (
-              <p className="text-tier-procedural">
-                Ollama isn&apos;t running. Install from ollama.com and start it, then click Retry.
-              </p>
-            )}
-            {ollamaModels && (
-              <div>
-                <p className="text-text-muted">
-                  Found {ollamaModels.length} installed model
-                  {ollamaModels.length === 1 ? "" : "s"}.
-                </p>
-                {!ollamaModels.includes("nomic-embed-text") ? (
-                  <Button onClick={pullEmbed} disabled={pulling}>
-                    {pulling ? "Pulling nomic-embed-text…" : "Pull nomic-embed-text"}
-                  </Button>
-                ) : (
-                  <p className="label">✓ nomic-embed-text installed</p>
-                )}
-              </div>
-            )}
+            <h1 className="display text-xl">Embedder</h1>
+            <p className="text-text-muted font-body">
+              Mnemos ships with a local 22 MB embedder (all-MiniLM-L6-v2). Semantic recall works
+              immediately — no setup needed.
+            </p>
+            <p className="text-text-muted font-body text-sm">
+              To use Ollama or OpenAI for embeddings instead, switch in{" "}
+              <strong>Settings &rarr; Embedder</strong> after the wizard.
+            </p>
+            <div className="flex items-center gap-3">
+              <span className="label">✓ Bundled embedder ready</span>
+            </div>
             <div className="flex justify-between">
               <button className="label text-text-muted" onClick={() => setStep(0)}>
                 Back
@@ -100,7 +55,8 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
           <>
             <h1 className="display text-xl">Connect your AI tools</h1>
             <p className="text-text-muted font-body">
-              Copy a snippet into each tool&apos;s config to use mnemos as its memory provider.
+              The Mnemos daemon is running with the bundled embedder. Copy a snippet into each
+              tool&apos;s config to give it persistent memory.
             </p>
             <details open>
               <summary className="display text-base cursor-pointer">Claude Code</summary>
