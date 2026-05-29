@@ -6,6 +6,7 @@ pub mod memory_ops;
 pub mod migrations;
 pub mod reflection_ops;
 pub mod triggers;
+pub mod vault_meta;
 pub mod vec_ops;
 
 use crate::error::{MnemosError, Result};
