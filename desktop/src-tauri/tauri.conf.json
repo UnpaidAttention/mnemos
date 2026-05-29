@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "sh src-tauri/build-sidecars.sh && pnpm build"
+    "beforeBuildCommand": "bash src-tauri/build-sidecars.sh && pnpm build"
   },
   "app": {
     "windows": [

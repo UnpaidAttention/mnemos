@@ -70,8 +70,8 @@ fn main() -> Result<()> {
     for ((p, u), s) in args
         .platforms
         .into_iter()
-        .zip(args.urls.into_iter())
-        .zip(args.signatures.into_iter())
+        .zip(args.urls)
+        .zip(args.signatures)
     {
         platforms.insert(
             p,
