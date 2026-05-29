@@ -1,10 +1,12 @@
 //! Provider abstractions for embeddings and reranking.
 //!
 //! Implementations live in submodules:
-//! - `ollama` — HTTP client for Ollama embedding API (default; populated in Task 5)
-//! - `mock`   — deterministic test stub
+//! - `bundled` — HTTP client for the local llama-server child process (default)
+//! - `ollama`  — HTTP client for Ollama embedding API
+//! - `mock`    — deterministic test stub
 //! - `onnx_reranker` — bge-reranker-base via ONNX (feature: `rerank-onnx`; Task 12)
 
+pub mod bundled;
 pub mod mock;
 pub mod mock_llm;
 pub mod ollama;
