@@ -31,6 +31,27 @@ async fn main() -> Result<()> {
             json,
         } => commands::export::run(vault, output, json).await,
         Cmd::Import { vault, input, json } => commands::import::run(vault, input, json).await,
+        Cmd::EmbedRebuild(a) => {
+            // Auto-detect default model + dim per target if not supplied.
+            let (default_model, default_dim) = match a.target.as_str() {
+                "bundled" => ("all-MiniLM-L6-v2", 384u32),
+                "ollama" => ("nomic-embed-text", 768),
+                "openai" => ("text-embedding-3-small", 1536),
+                "mock" => ("mock", 768),
+                _ => ("", 0),
+            };
+            let model = a.model.unwrap_or_else(|| default_model.to_string());
+            let dim = a.dim.unwrap_or(default_dim);
+            let opts = commands::embed_rebuild::EmbedRebuildOpts {
+                vault: args.vault,
+                target_kind: a.target,
+                target_model: model,
+                target_dim: dim,
+                json: a.json || args.json,
+                poll: false,
+            };
+            commands::embed_rebuild::run(opts).await
+        }
     }
 }
 

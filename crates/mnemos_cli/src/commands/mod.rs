@@ -2,6 +2,7 @@ pub mod daemon;
 pub mod decay;
 pub mod doctor;
 pub mod embed;
+pub mod embed_rebuild;
 pub mod export;
 pub mod forget;
 pub mod get;

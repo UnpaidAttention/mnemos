@@ -66,6 +66,25 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Re-embed every memory in the vault with a different embedder.
+    EmbedRebuild(EmbedRebuildArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct EmbedRebuildArgs {
+    /// Target embedder kind: bundled | ollama | openai | mock
+    #[arg(long)]
+    pub target: String,
+    /// Model identifier (e.g. "all-MiniLM-L6-v2", "nomic-embed-text",
+    /// "text-embedding-3-small"). Auto-detected per target if omitted.
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Override the target dim. Auto-detected per known model.
+    #[arg(long)]
+    pub dim: Option<u32>,
+    /// Emit JSON status.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(clap::Args, Debug)]
