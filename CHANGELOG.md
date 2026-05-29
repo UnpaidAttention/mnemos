@@ -2,6 +2,84 @@
 
 All notable changes to this project are recorded here.
 
+## [0.8.0] - 2026-05-29
+
+> **Zero-setup release.** Mnemos now ships with a bundled embedder
+> (llama.cpp + 22 MB MiniLM Q8 GGUF) in the daemon `.deb` / `.rpm`
+> packages. A fresh install — `apt install ./mnemos-daemon_X.Y.Z_amd64.deb`
+> — gives you `mnemos remember` + `mnemos recall` end-to-end with no
+> Ollama install, no API key, no internet after the download.
+
+### Added
+- **Bundled embedder.** llama.cpp's `llama-server` ships in
+  `/usr/lib/mnemos/`; daemon spawns + manages it as a child process,
+  health-checks every 30s, restarts on crash with backoff. A wrapper at
+  `/usr/bin/mnemos-llama-server` sets `LD_LIBRARY_PATH` so the
+  dynamically-linked binary finds its bundled `.so` neighbors. Total
+  daemon `.deb` size ~39 MB (vs Ollama's ~200 MB + nomic-embed-text's
+  274 MB).
+- **`MNEMOS_EMBEDDER=bundled`** is the new default for fresh vaults.
+- **OpenAI embeddings backend** (`MNEMOS_EMBEDDER=openai`,
+  `OPENAI_API_KEY`). Supports Azure OpenAI via `OPENAI_BASE_URL`.
+  Defaults to `text-embedding-3-small` (1536-dim); override via
+  `MNEMOS_EMBEDDER_MODEL`.
+- **OpenAI LLM backend** (`MNEMOS_LLM=openai`) for reflections,
+  community summaries, entity extraction. Default model
+  `gpt-4o-mini`, override via `MNEMOS_LLM_MODEL`.
+- **`mnemos embed-rebuild --target <kind>`** — atomic, resumable,
+  audit-logged migration between embedders. Shadow-table-based;
+  handles both same-dim and different-dim migrations via DELETE+INSERT
+  or DROP+CREATE+INSERT against the sqlite-vec `memory_vec` virtual
+  table. UI progress view at `/embed-rebuild`.
+- **Vault meta tracks embedder authoritatively.** Schema v9 adds
+  `vault_meta.embedder_kind`. The vault's recorded kind is the source
+  of truth; the daemon uses it to choose the backend at startup, env
+  vars are only the default for new vaults.
+- **Doctor + Settings UI updates.** Doctor surfaces embedder mismatch
+  + migration prompt (linking to `/embed-rebuild`). Settings exposes
+  `bundled / ollama / openai / mock / none` for both embedder and
+  LLM. Settings includes an `[openai]` config block for `base_url` +
+  `api_key`.
+- **Tauri auto-update re-enabled.** Deferred from v0.7.0; now back on
+  for AppImage + `.AppImage.tar.gz` signed manifest via
+  `mnemos_release_manifest`. (Requires the project owner to run
+  `bash scripts/gen-updater-key.sh` + upload the secret before the
+  release tag is pushed.)
+- **First-run wizard simplified.** No Ollama probe by default since
+  the bundled embedder is ready. Three-step flow: welcome →
+  bundled-embedder confirm → integration snippets.
+
+### Changed
+- **`MNEMOS_LLM` defaults to `none`** for fresh installs (was
+  `ollama`). Reflections and community summaries silently no-op if no
+  LLM is configured — opt in via Ollama or OpenAI.
+- **Schema v9**: adds `vault_meta.embedder_kind` (backfilled from
+  existing `embedder_model_id` for upgrades; defaults to `bundled` for
+  fresh vaults).
+- **Modules reorganized** under `crates/mnemos_core/src/providers/`
+  (was scattered across `embedder/` + `llm/`). External API
+  unchanged.
+
+### Migrating from v0.7.x
+- Existing vaults seeded with Ollama keep working — the daemon
+  detects `vault.embedder_kind=ollama` (backfilled at schema v9
+  upgrade) and continues using Ollama as before.
+- Doctor view surfaces a migration prompt: run
+  `mnemos embed-rebuild --target bundled` to switch to the bundled
+  embedder. The rebuild re-embeds every memory atomically (~30s per
+  100 memories on a 4-core CPU) and updates the vault meta.
+
+### Known limitations (carried from v0.7.0)
+- macOS desktop bundle still blocked on `dispatch2` macro recursion.
+- Windows desktop bundle still blocked on `libsql-sys` Unix-only
+  APIs.
+- The desktop AppImage does NOT yet ship the bundled embedder
+  (deferred to a follow-up). AppImage users who want the local
+  embedder install the daemon `.deb`/`.rpm` separately, or fall back
+  to Ollama / OpenAI via Settings.
+- Both desktop-portability and AppImage-bundled-embedder gaps will
+  be addressed in a future plan.
+
 ## [0.7.0] - 2026-05-29
 
 > **Linux-only release.** macOS and Windows desktop bundles surfaced
