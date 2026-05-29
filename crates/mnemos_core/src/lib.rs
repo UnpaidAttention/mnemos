@@ -6,6 +6,7 @@
 #![warn(clippy::all)]
 
 pub mod doctor;
+pub mod embedder_rebuild;
 pub mod error;
 pub mod file_io;
 pub mod frontmatter;
