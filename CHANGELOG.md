@@ -60,6 +60,24 @@ All notable changes to this project are recorded here.
   (was scattered across `embedder/` + `llm/`). External API
   unchanged.
 
+### Fixed
+- **Fresh vault now creates its `vec0` tables at the embedder's
+  dimension.** The static schema migration declared `memory_vec` /
+  `chunk_vec` as `FLOAT[768]` (nomic-embed-text's dim); on a fresh
+  vault using the 384-dim bundled embedder every `remember` failed
+  with "Dimension mismatch ... Expected 768 ... received 384".
+  `Vault::open_with_embedder` now aligns the tables to the configured
+  embedder's dim on first seed (idempotent; never wipes vectors a
+  same-dim index rebuild already inserted). Without this the zero-setup
+  bundled flow could not store a single memory.
+- **CLI `remember` / `recall` now honor the bundled embedder.** The
+  CLI embedder factory still defaulted to Ollama and lacked
+  `bundled` / `openai` arms, so `mnemos remember` on a fresh install
+  tried `localhost:11434` (or errored on `MNEMOS_EMBEDDER=bundled`).
+  It now mirrors the daemon: all five kinds, default `bundled`.
+- Added an end-to-end regression test exercising remember→store→recall
+  at 384-dim (every prior test used a 768-dim mock, masking both bugs).
+
 ### Migrating from v0.7.x
 - Existing vaults seeded with Ollama keep working — the daemon
   detects `vault.embedder_kind=ollama` (backfilled at schema v9
@@ -79,6 +97,12 @@ All notable changes to this project are recorded here.
   to Ollama / OpenAI via Settings.
 - Both desktop-portability and AppImage-bundled-embedder gaps will
   be addressed in a future plan.
+- The standalone CLI (`mnemos remember` / `recall`) opens the vault
+  directly and does not spawn the bundled `llama-server`; with
+  `MNEMOS_EMBEDDER=bundled` it requires `mnemosd` to be running (which
+  owns the embedder on `:7424`). MCP clients already go through the
+  daemon, so they are unaffected. CLI auto-start of the daemon is a
+  future-plan candidate.
 
 ## [0.7.0] - 2026-05-29
 

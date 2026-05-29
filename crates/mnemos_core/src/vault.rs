@@ -98,7 +98,15 @@ impl Vault {
             // or first open with an embedder.)
             let is_seeded = meta.dim != 0 && !meta.model.is_empty();
             if !is_seeded {
-                // First time an embedder is configured — record all three fields atomically.
+                // First time an embedder is configured. The static v2 migration
+                // created `memory_vec`/`chunk_vec` at the legacy 768-dim default;
+                // align them with this embedder's dim so the first remember
+                // succeeds (the bundled embedder is 384-dim). The dim-difference
+                // guard makes this a no-op when they already match, so it never
+                // wipes vectors a same-dim index rebuild already inserted.
+                crate::storage::vec_ops::ensure_vec_tables_dim(&storage, configured.dim as usize)
+                    .await?;
+                // Record all three fields atomically.
                 set_embedder_meta(&storage, &configured).await?;
             } else {
                 if meta.dim != configured.dim {

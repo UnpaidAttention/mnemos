@@ -40,6 +40,80 @@ pub(crate) fn f32s_to_bytes(v: &[f32]) -> Vec<u8> {
     out
 }
 
+/// Read the declared dimension of the `memory_vec` virtual table from
+/// `sqlite_master` (sqlite-vec stores the column as `FLOAT[N]`). Returns `None`
+/// if the table does not exist or its dim cannot be parsed.
+pub async fn memory_vec_declared_dim(storage: &Storage) -> Result<Option<usize>> {
+    let conn = storage.conn()?;
+    let mut rows = conn
+        .query(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_vec'",
+            (),
+        )
+        .await?;
+    let Some(row) = rows.next().await? else {
+        return Ok(None);
+    };
+    let Ok(sql) = row.get::<String>(0) else {
+        return Ok(None);
+    };
+    if let Some(open) = sql.find("FLOAT[") {
+        let after = &sql[open + "FLOAT[".len()..];
+        if let Some(close) = after.find(']') {
+            if let Ok(n) = after[..close].trim().parse::<usize>() {
+                return Ok(Some(n));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Ensure the `memory_vec` and `chunk_vec` virtual tables are declared at the
+/// given embedding dimension, recreating them only if the current declared dim
+/// differs.
+///
+/// The static v2 migration creates both tables at a fixed `FLOAT[768]`
+/// (nomic-embed-text's dim). A fresh vault whose embedder produces a different
+/// dimension (e.g. the 384-dim bundled embedder) needs the tables rebuilt at
+/// that dim before the first vector insert, otherwise sqlite-vec rejects the
+/// insert with a dimension mismatch.
+///
+/// The dim-difference guard makes this idempotent and avoids destroying vectors
+/// already inserted at the correct dim (e.g. by `rebuild_index_with_embedder`,
+/// which populates `memory_vec` without seeding `vault_meta`). When the dim
+/// already matches, this is a no-op.
+pub async fn ensure_vec_tables_dim(storage: &Storage, dim: usize) -> Result<()> {
+    if memory_vec_declared_dim(storage).await? == Some(dim) {
+        return Ok(());
+    }
+    let (conn, _g) = storage.write_conn().await?;
+    let tx = conn.transaction().await?;
+    tx.execute("DROP TABLE IF EXISTS memory_vec", ()).await?;
+    tx.execute("DROP TABLE IF EXISTS chunk_vec", ()).await?;
+    tx.execute(
+        &format!(
+            "CREATE VIRTUAL TABLE memory_vec USING vec0(
+                memory_id TEXT PRIMARY KEY,
+                embedding FLOAT[{dim}]
+            )"
+        ),
+        (),
+    )
+    .await?;
+    tx.execute(
+        &format!(
+            "CREATE VIRTUAL TABLE chunk_vec USING vec0(
+                chunk_id TEXT PRIMARY KEY,
+                embedding FLOAT[{dim}]
+            )"
+        ),
+        (),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Insert (or replace) a memory embedding in `memory_vec`.
 pub async fn insert_memory_vec(
     storage: &Storage,
