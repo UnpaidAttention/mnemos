@@ -27,6 +27,10 @@ impl Embedder for MockEmbedder {
         "mock"
     }
 
+    fn kind(&self) -> &str {
+        "mock"
+    }
+
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         // NOTE: `DefaultHasher` is explicitly **not** stable across Rust versions
         // (per the standard library docs). Vectors produced here may change on a

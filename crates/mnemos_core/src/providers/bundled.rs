@@ -60,6 +60,10 @@ impl Embedder for BundledEmbedder {
         "all-MiniLM-L6-v2"
     }
 
+    fn kind(&self) -> &str {
+        "bundled"
+    }
+
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let url = format!("{}/v1/embeddings", self.base_url.trim_end_matches('/'));
         let resp = self

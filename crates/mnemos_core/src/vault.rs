@@ -9,6 +9,7 @@ use crate::storage::audit::write_audit;
 use crate::storage::memory_ops::{
     add_memory_link, get_memory, insert_memory, list_memories, soft_invalidate, ListFilter,
 };
+use crate::storage::vault_meta::{get_embedder_meta, set_embedder_meta, EmbedderMeta};
 use crate::storage::vec_ops::{delete_memory_vec, insert_memory_vec};
 use crate::storage::Storage;
 use crate::tier::Tier;
@@ -68,10 +69,15 @@ impl Vault {
     /// will generate and store a vector embedding.  When `None`, the
     /// `memory_vec` table is left untouched.
     ///
-    /// If an embedder is provided and this vault has previously been used with
-    /// a different dimension, an error is returned to prevent silently mixing
-    /// incompatible vectors.  A model-id change at the same dimension produces
-    /// a warning and updates the stored model id.
+    /// **Vault meta is authoritative.** When this vault has previously been
+    /// seeded with an embedder, three fields are checked against the configured
+    /// embedder:
+    ///   - `embedder_dim` — hard mismatch fails to prevent mixing incompatible vectors
+    ///   - `embedder_kind` — hard mismatch fails to prevent silently swapping backends
+    ///   - `embedder_model_id` — change at the same kind+dim is logged as a warning
+    ///
+    /// On a fresh vault (no previous embedder), all three fields are recorded
+    /// atomically so they always move together.
     pub async fn open_with_embedder(
         paths: Paths,
         embedder: Option<Arc<dyn Embedder>>,
@@ -80,31 +86,45 @@ impl Vault {
         let storage = Storage::open(&paths.db_path).await?;
 
         if let Some(e) = embedder.as_ref() {
-            let meta = storage.get_vault_meta().await?;
-            match (meta.embedder_dim, meta.embedder_model_id.as_deref()) {
-                (None, _) | (_, None) => {
-                    // First time an embedder is configured — record it.
-                    storage.set_vault_meta(e.dim(), e.model_id()).await?;
+            let meta = get_embedder_meta(&storage).await?;
+            let configured = EmbedderMeta {
+                kind: e.kind().to_string(),
+                model: e.model_id().to_string(),
+                dim: e.dim() as u32,
+            };
+            // A vault is considered "seeded" once both dim and model are set.
+            // (The migration backfills `kind = "bundled"` for v8→v9 upgrades,
+            // but leaves dim/model untouched — those land on first remember
+            // or first open with an embedder.)
+            let is_seeded = meta.dim != 0 && !meta.model.is_empty();
+            if !is_seeded {
+                // First time an embedder is configured — record all three fields atomically.
+                set_embedder_meta(&storage, &configured).await?;
+            } else {
+                if meta.dim != configured.dim {
+                    return Err(MnemosError::Validation(format!(
+                        "embedder dim mismatch: vault stored {}d, \
+                         embedder produces {}d (model {} → {})",
+                        meta.dim, configured.dim, meta.model, configured.model,
+                    )));
                 }
-                (Some(stored_dim), Some(stored_model)) => {
-                    if stored_dim != e.dim() {
-                        return Err(MnemosError::Validation(format!(
-                            "embedder dim mismatch: vault stored {stored_dim}d, \
-                             embedder produces {}d (model {} → {})",
-                            e.dim(),
-                            stored_model,
-                            e.model_id()
-                        )));
-                    }
-                    if stored_model != e.model_id() {
-                        tracing::warn!(
-                            "vault model_id changed: {} → {} (dim {} unchanged)",
-                            stored_model,
-                            e.model_id(),
-                            stored_dim
-                        );
-                        storage.set_vault_meta(e.dim(), e.model_id()).await?;
-                    }
+                if !meta.kind.is_empty() && meta.kind != configured.kind {
+                    return Err(MnemosError::Validation(format!(
+                        "embedder kind mismatch: vault seeded with {:?}, \
+                         configured embedder is {:?}. To switch backends safely, \
+                         run an embed-rebuild.",
+                        meta.kind, configured.kind,
+                    )));
+                }
+                if meta.model != configured.model {
+                    tracing::warn!(
+                        "vault model_id changed: {} → {} (kind {} unchanged, dim {} unchanged)",
+                        meta.model,
+                        configured.model,
+                        configured.kind,
+                        configured.dim
+                    );
+                    set_embedder_meta(&storage, &configured).await?;
                 }
             }
         }

@@ -83,6 +83,10 @@ impl Embedder for OllamaEmbedder {
         &self.config.model
     }
 
+    fn kind(&self) -> &str {
+        "ollama"
+    }
+
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let url = format!(
             "{}/api/embeddings",

@@ -30,6 +30,13 @@ pub trait Embedder: Send + Sync {
         "unknown"
     }
 
+    /// Backend kind tag persisted to `vault_meta.embedder_kind`. One of
+    /// `"bundled"`, `"ollama"`, `"openai"`, `"mock"`. Override per
+    /// implementation; default is `"unknown"`.
+    fn kind(&self) -> &str {
+        "unknown"
+    }
+
     /// Embed a single string.
     async fn embed(&self, text: &str) -> Result<Vec<f32>>;
 
