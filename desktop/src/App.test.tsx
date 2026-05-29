@@ -1,5 +1,4 @@
 import { render, screen } from "@testing-library/react";
-import App from "./App";
 
 // Sigma needs WebGL which jsdom doesn't provide — mock it so the
 // full app tree (including Graph view) can render in tests.
@@ -21,20 +20,34 @@ vi.mock("graphology-layout-forceatlas2", () => ({
   default: { assign: () => {}, inferSettings: () => ({}) },
 }));
 
-// App.tsx mounts a first-run check + sync status pill + a WebSocket
-// connection on launch. Stub fetch + WebSocket so none of those reach
-// the real network and trip Vitest's unhandled-rejection guard.
-const fetchStub = vi.fn(async (input: RequestInfo | URL) => {
-  const url = typeof input === "string" ? input : input.toString();
-  if (url.includes("/v1/first-run")) {
-    return new Response(
-      JSON.stringify({ completed_at: "2026-01-01T00:00:00Z" }),
-      { headers: { "content-type": "application/json" } },
-    );
+// Stub the client + ws modules so App.tsx's on-mount calls never reach
+// the real network. Vitest hoists vi.mock() above import statements, so
+// `App.tsx`'s `import { client } from "./api/client"` already resolves
+// to the stub by the time the component renders.
+vi.mock("./api/client", async () => {
+  class ApiError extends Error {
+    constructor(public status: number, message: string) {
+      super(message);
+      this.name = "ApiError";
+    }
   }
-  if (url.includes("/v1/sync/status")) {
-    return new Response(
-      JSON.stringify({
+  const stubResponse = async <T,>(value: T): Promise<T> => value;
+  const client = {
+    listMemories: () => stubResponse([]),
+    listEntities: () => stubResponse([]),
+    listReflections: () => stubResponse([]),
+    listAudit: () => stubResponse([]),
+    listWorking: () => stubResponse([]),
+    pipelines: () => stubResponse({}),
+    communities: () => stubResponse({ communities: [], summaries: [] }),
+    graph: () => stubResponse({ nodes: [], edges: [] }),
+    getDoctor: () =>
+      stubResponse({
+        checks: [],
+        report: { files_scanned: 0, db_rows: 0, issues: [] },
+      }),
+    getSyncStatus: () =>
+      stubResponse({
         backend: "none",
         ready: false,
         detail: "sync disabled",
@@ -42,30 +55,20 @@ const fetchStub = vi.fn(async (input: RequestInfo | URL) => {
         last_pulled_at: null,
         last_error: null,
       }),
-      { headers: { "content-type": "application/json" } },
-    );
-  }
-  return new Response("{}", {
-    headers: { "content-type": "application/json" },
-  });
+    getFirstRun: () =>
+      stubResponse({ completed_at: "2026-01-01T00:00:00Z" }),
+    completeFirstRun: () => stubResponse({ completed: true as const }),
+    getConfig: () => stubResponse({}),
+  };
+  return { client, ApiError };
 });
-class StubWebSocket {
-  onopen: (() => void) | null = null;
-  onmessage: ((e: MessageEvent) => void) | null = null;
-  onclose: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  readyState = 0;
-  close() { /* no-op */ }
-  send() { /* no-op */ }
-}
 
-beforeAll(() => {
-  vi.stubGlobal("fetch", fetchStub);
-  vi.stubGlobal("WebSocket", StubWebSocket);
-});
-afterAll(() => {
-  vi.unstubAllGlobals();
-});
+// Stub the WS module so connectEvents() never opens a real socket.
+vi.mock("./api/ws", () => ({
+  connectEvents: () => () => {},
+}));
+
+import App from "./App";
 
 test("renders the app shell with the mnemos brand", async () => {
   render(<App />);
