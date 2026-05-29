@@ -12,6 +12,7 @@ pub mod mock_llm;
 pub mod ollama;
 pub mod ollama_llm;
 pub mod openai_embedder;
+pub mod openai_llm;
 
 #[cfg(feature = "rerank-onnx")]
 pub mod onnx_reranker;

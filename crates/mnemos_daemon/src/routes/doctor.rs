@@ -277,6 +277,27 @@ async fn llm_reachable(state: &AppState) -> Check {
                 },
             }
         }
+        LlmKind::OpenAi => {
+            // Don't make a real /v1/chat/completions call here (cost + side
+            // effects). Confirm OPENAI_API_KEY is present.
+            if std::env::var("OPENAI_API_KEY")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .is_some()
+            {
+                Check {
+                    name: "llm",
+                    status: "ok",
+                    detail: "openai: OPENAI_API_KEY set".into(),
+                }
+            } else {
+                Check {
+                    name: "llm",
+                    status: "fail",
+                    detail: "openai: OPENAI_API_KEY not set".into(),
+                }
+            }
+        }
     }
 }
 

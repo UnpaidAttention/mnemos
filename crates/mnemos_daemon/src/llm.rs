@@ -3,6 +3,7 @@
 use crate::config::{Config, LlmKind};
 use mnemos_core::providers::mock_llm::MockLlm;
 use mnemos_core::providers::ollama_llm::{OllamaLlm, OllamaLlmConfig};
+use mnemos_core::providers::openai_llm::{self, OpenAiLlm};
 use mnemos_core::providers::LlmProvider;
 use std::sync::Arc;
 
@@ -25,5 +26,25 @@ pub fn build_llm_for_daemon(cfg: &Config) -> Option<Arc<dyn LlmProvider>> {
                 }
             }
         }
+        LlmKind::OpenAi => match openai_llm::config_from_env() {
+            Ok(mut oc) => {
+                // Allow config.toml `llm.model` to override the env model when
+                // it's set to a non-default value.
+                if !cfg.llm.model.is_empty() && cfg.llm.model != "llama3.2" {
+                    oc.model = cfg.llm.model.clone();
+                }
+                match OpenAiLlm::new(&oc) {
+                    Ok(llm) => Some(Arc::new(llm)),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to init OpenAI LLM; learning pipeline disabled");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "OpenAI LLM env not configured; learning pipeline disabled");
+                None
+            }
+        },
     }
 }

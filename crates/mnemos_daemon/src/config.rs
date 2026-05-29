@@ -144,14 +144,18 @@ pub struct LlmConfig {
 #[serde(rename_all = "lowercase")]
 pub enum LlmKind {
     Ollama,
+    OpenAi,
     Mock,
     None,
 }
 
 impl Default for LlmConfig {
     fn default() -> Self {
+        // Fresh installs default to no LLM: reflections and community
+        // summaries silently skip until the user opts into Ollama or OpenAI
+        // via `MNEMOS_LLM` or config.toml.
         Self {
-            kind: LlmKind::Ollama,
+            kind: LlmKind::None,
             url: "http://localhost:11434".into(),
             model: "llama3.2".into(),
             timeout_secs: 120,
@@ -372,9 +376,11 @@ fn apply_env_overrides(cfg: &mut Config) {
     }
     if let Ok(v) = std::env::var("MNEMOS_LLM") {
         cfg.llm.kind = match v.as_str() {
+            "ollama" => LlmKind::Ollama,
+            "openai" => LlmKind::OpenAi,
             "mock" => LlmKind::Mock,
             "none" => LlmKind::None,
-            _ => LlmKind::Ollama,
+            _ => LlmKind::None,
         };
     }
     if let Ok(v) = std::env::var("MNEMOS_LLM_URL") {
