@@ -14,6 +14,7 @@ pub struct Config {
     pub vault: VaultConfig,
     pub embedder: EmbedderConfig,
     pub llm: LlmConfig,
+    pub openai: OpenAiConfig,
     pub reranker: RerankerConfig,
     pub retrieval: RetrievalConfig,
     pub mcp: McpConfig,
@@ -21,6 +22,17 @@ pub struct Config {
     pub reflection: ReflectionConfig,
     pub community: CommunityConfig,
     pub sync: SyncConfig,
+}
+
+/// Cross-cutting OpenAI credentials shared by the OpenAI embedder and LLM
+/// backends. `api_key` is read from this struct first; if empty, the
+/// backends fall back to the `OPENAI_API_KEY` environment variable. Empty
+/// values are normal on fresh installs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OpenAiConfig {
+    pub base_url: String,
+    pub api_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

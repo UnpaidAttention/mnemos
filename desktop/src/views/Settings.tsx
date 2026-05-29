@@ -25,8 +25,13 @@ const SCHEMA: Section[] = [
     title: "Embedder",
     path: ["embedder"],
     fields: [
-      { key: "kind", label: "Backend", kind: "select", options: ["ollama", "mock", "none"] },
-      { key: "url", label: "URL", kind: "text" },
+      {
+        key: "kind",
+        label: "Backend",
+        kind: "select",
+        options: ["bundled", "ollama", "openai", "mock", "none"],
+      },
+      { key: "url", label: "URL (Ollama)", kind: "text" },
       { key: "model", label: "Model", kind: "text" },
       { key: "dim", label: "Dim", kind: "number" },
       { key: "timeout_secs", label: "Timeout (s)", kind: "number" },
@@ -36,10 +41,23 @@ const SCHEMA: Section[] = [
     title: "LLM",
     path: ["llm"],
     fields: [
-      { key: "kind", label: "Backend", kind: "select", options: ["ollama", "mock", "none"] },
+      {
+        key: "kind",
+        label: "Backend",
+        kind: "select",
+        options: ["ollama", "openai", "mock", "none"],
+      },
       { key: "url", label: "URL", kind: "text" },
       { key: "model", label: "Model", kind: "text" },
       { key: "timeout_secs", label: "Timeout (s)", kind: "number" },
+    ],
+  },
+  {
+    title: "OpenAI",
+    path: ["openai"],
+    fields: [
+      { key: "base_url", label: "Base URL", kind: "text" },
+      { key: "api_key", label: "API Key", kind: "password" },
     ],
   },
   {
