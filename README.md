@@ -6,11 +6,10 @@ plans.
 
 ## Install
 
-### macOS
-
-Download `Mnemos_X.Y.Z_aarch64.dmg` from [the latest release][releases]
-and drag Mnemos to your Applications folder. The first launch will
-prompt "unidentified developer" — right-click the icon and choose Open.
+> v0.7.0 ships **Linux only**. macOS and Windows desktop bundles are
+> blocked on upstream issues (`dispatch2` macro recursion on macOS,
+> `libsql-sys` Windows compatibility); see CHANGELOG.md § "Known
+> limitations" for details. A follow-up release will restore both.
 
 ### Linux
 
@@ -32,13 +31,6 @@ sudo dpkg -i mnemos_X.Y.Z_amd64.deb mnemos-daemon_X.Y.Z_amd64.deb
 Add an apt PPA or dnf repo (see [PACKAGING.md](PACKAGING.md)) for
 `apt update` / `dnf upgrade` integration.
 
-### Windows
-
-Download `Mnemos_X.Y.Z_x64_en-US.msi` from [the latest release][releases]
-and double-click. SmartScreen may warn — choose More info → Run anyway
-(the installer is currently unsigned; see [BUILD.md](BUILD.md) for the
-notarization roadmap).
-
 ### Build from source
 
 See [BUILD.md](BUILD.md).
@@ -47,9 +39,9 @@ See [BUILD.md](BUILD.md).
 
 ### Auto-update
 
-The desktop app polls for updates on launch. When a new version is
-available, an UpdateBanner appears at the top of the window with
-Install / Later actions. Update manifests are ed25519-signed.
+Tauri auto-update is **disabled in v0.7.0** (signing key generation
+is a one-time manual setup step). A follow-up release will enable it.
+Until then, follow the latest release on GitHub Releases.
 
 The CLI + daemon (`apt install mnemos` / `dnf install mnemos` /
 `dpkg -i mnemos_*.deb`) update via your package manager.

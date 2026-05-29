@@ -4,27 +4,48 @@ All notable changes to this project are recorded here.
 
 ## [0.7.0] - 2026-05-29
 
+> **Linux-only release.** macOS and Windows desktop bundles surfaced
+> platform issues during CI (see "Known limitations" below); v0.7.0
+> ships `.deb` + `.rpm` + `.AppImage` for Linux only. The bundler
+> configuration, sidecar staging, updater UI, and signing
+> infrastructure for all three platforms remain in the tree so the
+> follow-up release can re-enable them after the upstream fixes land.
+
 ### Added
-- Cross-platform installers via Tauri bundler (`.dmg` + `.app` macOS,
-  `.deb` + `.rpm` + `.AppImage` Linux, `.msi` Windows). Desktop installer
-  bundles the daemon + CLI as Tauri sidecars.
+- Linux installers via Tauri bundler: `.deb` + `.rpm` + `.AppImage`.
+  Desktop installer bundles the daemon + CLI as Tauri sidecars.
 - Stand-alone `.deb` + `.rpm` packages for the CLI (`mnemos`) and daemon
   (`mnemos-daemon`) via `cargo-deb` and `cargo-generate-rpm`.
-- Tauri-built-in auto-update: ed25519-signed `latest.json` manifest on
-  GitHub Releases, `UpdateBanner` UI in the desktop app, defer-or-install
-  flow with progress.
-- `.github/workflows/release.yml` — tag-triggered build matrix on macOS,
-  Linux, and Windows runners + a release-publish job that uploads all
-  artifacts and generates the updater manifest.
-- `mnemos_release_manifest` workspace member — small binary that
-  generates the Tauri updater `latest.json` from a tagged set of
-  platform / URL / signature triples.
+- Tauri auto-update plumbing: `tauri-plugin-updater`, `UpdateBanner`
+  React component, `mnemos_release_manifest` binary that generates the
+  Tauri updater `latest.json`. **Disabled in v0.7.0** —
+  `createUpdaterArtifacts: false` until the signing key is generated
+  and uploaded to CI secrets (see `BUILD.md` § "Tauri updater signing
+  key"). Re-enable in v0.7.1 once the secret is configured.
+- `.github/workflows/release.yml` — tag-triggered Linux build job +
+  Linux server-side packages job + release-publish job that uploads
+  artifacts to a GitHub Release. macOS and Windows jobs removed; will
+  be restored after the upstream issues are fixed.
 - Icon set (SVG source + generated PNG/ICO/ICNS) under
   `desktop/src-tauri/icons/`.
-- Documentation: `BUILD.md` (cross-platform build steps), `PACKAGING.md`
-  (release + distribution runbook), README "Install" section.
+- Documentation: `BUILD.md` (cross-platform build steps + known
+  limitations), `PACKAGING.md` (release + distribution runbook),
+  README "Install" section.
 - Workspace package metadata (license, repository, homepage,
   description, authors).
+
+### Known limitations
+- **macOS desktop bundle**: `dispatch2` (a Tauri transitive dep on
+  macOS) hits a `bitflags::bitflags` macro recursion limit on current
+  stable Rust. Tracked upstream; will revisit after a `dispatch2`
+  release or via a `RUSTFLAGS=-Z macro-backtrace`-style workaround.
+- **Windows desktop bundle**: `libsql-sys` uses Unix-only
+  `OsStr::as_bytes()` and doesn't compile on Windows. The mnemos
+  daemon's storage layer depends on libsql; full Windows support
+  requires libsql to gain Windows compatibility or mnemos to swap
+  storage backends on Windows.
+- **Auto-update**: deferred to v0.7.1 (key generation step is a
+  one-time manual setup the user must perform).
 
 ### Deferred
 - Apple Developer notarization, Microsoft Authenticode signing — both

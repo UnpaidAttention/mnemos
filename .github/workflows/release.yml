@@ -13,28 +13,15 @@ on:
 permissions:
   contents: write
 
+# v0.7.0 ships Linux-only. macOS bundles fail on `dispatch2`
+# bitflags-macro recursion (a Tauri transitive); Windows fails on
+# `libsql-sys` using Unix-only OsStr::as_bytes(). Both tracked for
+# a future v0.8.0+ release. The Linux jobs here build .deb + .rpm +
+# .AppImage desktop bundles AND stand-alone CLI/daemon .deb + .rpm.
 jobs:
   build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            platform: darwin-aarch64
-            bundles: "dmg,app"
-          - os: ubuntu-22.04
-            platform: linux-x86_64
-            bundles: "deb,rpm,appimage"
-          - os: windows-latest
-            platform: windows-x86_64
-            bundles: "msi"
-
-    env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
+    name: Build (linux-x86_64)
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,7 +34,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux deps
-        if: matrix.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -72,17 +58,14 @@ jobs:
 
       - name: Build desktop bundle
         working-directory: desktop
-        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+        run: pnpm tauri build --bundles deb,rpm,appimage
 
       - name: Stage artifacts
         shell: bash
         run: |
           mkdir -p staged
           shopt -s globstar nullglob
-          for f in desktop/src-tauri/target/release/bundle/**/*.{dmg,app.tar.gz,deb,rpm,AppImage,msi,nsis}; do
-            cp "$f" staged/
-          done
-          for f in desktop/src-tauri/target/release/bundle/**/*.sig; do
+          for f in desktop/src-tauri/target/release/bundle/**/*.{deb,rpm,AppImage}; do
             cp "$f" staged/
           done
           ls -la staged/
@@ -90,7 +73,7 @@ jobs:
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bundle-${{ matrix.platform }}
+          name: bundle-linux-x86_64
           path: staged/
           retention-days: 7
 
@@ -131,47 +114,8 @@ jobs:
       - name: Flatten + list
         run: |
           mkdir -p release/
-          find artifacts/ -type f \( -name "*.dmg" -o -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.sig" \) -exec cp -v {} release/ \;
+          find artifacts/ -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \) -exec cp -v {} release/ \;
           ls -la release/
-
-      - name: Build release-manifest tool
-        run: cargo build --release --bin mnemos-release-manifest
-
-      - name: Generate latest.json
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-
-          first_match() {
-            ls release/$1 2>/dev/null | head -1
-          }
-
-          MAC_FILE=$(first_match "*.app.tar.gz")
-          LIN_FILE=$(first_match "*.AppImage.tar.gz")
-          WIN_FILE=$(first_match "*.msi.zip")
-
-          MAC_SIG=$(cat "${MAC_FILE}.sig" 2>/dev/null || echo "")
-          LIN_SIG=$(cat "${LIN_FILE}.sig" 2>/dev/null || echo "")
-          WIN_SIG=$(cat "${WIN_FILE}.sig" 2>/dev/null || echo "")
-
-          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
-
-          ./target/release/mnemos-release-manifest \
-            --version "$VERSION" \
-            --notes "$(awk "/^## \[$VERSION\]/{f=1;next} /^## \[/{f=0} f" CHANGELOG.md | head -100)" \
-            --platform darwin-aarch64 \
-            --platform linux-x86_64 \
-            --platform windows-x86_64 \
-            --url  "${base_url}/$(basename "$MAC_FILE")" \
-            --url  "${base_url}/$(basename "$LIN_FILE")" \
-            --url  "${base_url}/$(basename "$WIN_FILE")" \
-            --signature "$MAC_SIG" \
-            --signature "$LIN_SIG" \
-            --signature "$WIN_SIG" \
-            --output release/latest.json
-
-          cat release/latest.json
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
