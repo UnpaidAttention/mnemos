@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config_io;
+mod daemon;
 mod vault_move;
 
 /// Read the daemon bearer token from `~/.config/mnemos/token`. Kept in the Rust
