@@ -132,6 +132,20 @@ stages the daemon + CLI binaries into `src-tauri/binaries/` via the
 `build-sidecars.sh` script. The resulting bundles include them as
 Tauri sidecars.
 
+## Desktop app + bundled embedder
+
+The desktop `.deb`/`.rpm` currently bundle only the `llama-server` binary
+and the `all-MiniLM-L6-v2` GGUF model as Tauri resources — **not** the
+`libggml*`/`libllama*` shared libraries that `llama-server` links against.
+The app points the supervised daemon at these assets via
+`MNEMOS_BUNDLED_BIN_DIR`/`MNEMOS_BUNDLED_MODEL_DIR` (resolved from the Tauri
+resource dir, under `_up_/_up_/assets`). Until the shared libraries are also
+bundled into the desktop package (or the separate `mnemos-daemon` package is
+installed alongside, which provides them at `/usr/lib/mnemos` plus the
+`LD_LIBRARY_PATH` wrapper), the desktop-app-supervised daemon's bundled
+embedder works in `dev` (via `assets/` + `LD_LIBRARY_PATH`) but will fail to
+embed from a standalone desktop-package install. Tracked as a follow-up.
+
 ## Server-side .deb / .rpm packages
 
 Independent of the desktop bundle, you can produce stand-alone CLI and

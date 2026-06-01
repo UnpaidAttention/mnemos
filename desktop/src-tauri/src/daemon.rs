@@ -48,11 +48,34 @@ pub async fn status(app: &AppHandle) -> DaemonStatus {
 }
 
 pub async fn start(app: &AppHandle) -> Result<(), String> {
-    let (out, ok) = run_daemon(app, "start").await?;
-    if ok {
+    use tauri::Manager;
+    let mut cmd = app
+        .shell()
+        .sidecar("mnemos")
+        .map_err(|e| format!("resolve sidecar: {e}"))?
+        .args(["daemon", "start", "--json"]);
+    if let Ok(res) = app.path().resource_dir() {
+        // Bundled llama-server + GGUF live under <resource_dir>/_up_/_up_/assets
+        // in packaged builds (Tauri maps the ../../assets resource entries to a
+        // _up_/_up_ prefix). In dev the daemon falls back to ./assets relative
+        // to its CWD, so a missing path here is harmless.
+        let assets = res.join("_up_").join("_up_").join("assets");
+        let assets_str = assets.to_string_lossy().to_string();
+        cmd = cmd
+            .env("MNEMOS_BUNDLED_BIN_DIR", &assets_str)
+            .env("MNEMOS_BUNDLED_MODEL_DIR", &assets_str);
+    }
+    let out = cmd
+        .output()
+        .await
+        .map_err(|e| format!("run mnemos daemon start: {e}"))?;
+    if out.status.success() {
         Ok(())
     } else {
-        Err(format!("daemon start failed: {out}"))
+        Err(format!(
+            "daemon start failed: {}",
+            String::from_utf8_lossy(&out.stdout)
+        ))
     }
 }
 
