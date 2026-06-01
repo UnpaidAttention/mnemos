@@ -44,6 +44,40 @@ pub fn validate(source: &Path, target: &Path) -> Result<(), MoveError> {
     Ok(())
 }
 
+/// Move `source` directory to `target`. Tries an atomic rename first (same
+/// filesystem); on cross-device error, copies recursively then removes source.
+/// On copy failure, removes the partial target and leaves source intact.
+pub fn execute(source: &Path, target: &Path) -> Result<(), MoveError> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| MoveError::Io(e.to_string()))?;
+    }
+    match std::fs::rename(source, target) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            if let Err(e) = copy_dir_recursive(source, target) {
+                let _ = std::fs::remove_dir_all(target);
+                return Err(MoveError::Io(e));
+            }
+            std::fs::remove_dir_all(source).map_err(|e| MoveError::Io(e.to_string()))
+        }
+    }
+}
+
+fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(from).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+            copy_dir_recursive(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,5 +111,20 @@ mod tests {
         let src = tempfile::tempdir().unwrap();
         let tgt = src.path().join("new-loc");
         assert!(validate(src.path(), &tgt).is_ok());
+    }
+
+    #[test]
+    fn moves_directory_contents() {
+        let parent = tempfile::tempdir().unwrap();
+        let src = parent.path().join("vault");
+        std::fs::create_dir(&src).unwrap();
+        std::fs::write(src.join("a.md"), b"hello").unwrap();
+        let tgt = parent.path().join("moved");
+
+        execute(&src, &tgt).unwrap();
+
+        assert!(tgt.join("a.md").exists(), "file moved");
+        assert_eq!(std::fs::read(tgt.join("a.md")).unwrap(), b"hello");
+        assert!(!src.exists(), "source removed after successful move");
     }
 }
