@@ -30,4 +30,14 @@ describe("StorageSettings", () => {
     await waitFor(() => expect(tauri.moveVault).toHaveBeenCalledWith("/data/mnemos"));
     expect(await screen.findByText(/moved to/i)).toBeInTheDocument();
   });
+
+  it("shows an error when the config fetch fails", async () => {
+    vi.mocked(client.getConfig).mockRejectedValueOnce(new Error("daemon down"));
+
+    render(<StorageSettings />);
+
+    expect(
+      await screen.findByText(/couldn't reach the daemon to read your storage location/i),
+    ).toBeInTheDocument();
+  });
 });

@@ -8,12 +8,18 @@ export interface DaemonStatus {
 }
 
 async function invokeSafe<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
+  let core: typeof import("@tauri-apps/api/core");
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke<T>(cmd, args);
+    core = await import("@tauri-apps/api/core");
   } catch {
-    return null;
+    return null; // Tauri runtime not present
   }
+  const present =
+    typeof core.isTauri === "function"
+      ? core.isTauri()
+      : typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  if (!present) return null;
+  return await core.invoke<T>(cmd, args); // real command errors propagate
 }
 
 export function pickVaultDir(): Promise<string | null> {

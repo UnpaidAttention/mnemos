@@ -10,12 +10,22 @@ export function StorageSettings() {
   const [target, setTarget] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    void client.getConfig().then((c) => {
-      const root = (c as { vault?: { root?: string } }).vault?.root ?? null;
-      setCurrent(root);
-    });
+    void client
+      .getConfig()
+      .then((c) => {
+        const root = (c as { vault?: { root?: string } }).vault?.root ?? null;
+        setCurrent(root);
+      })
+      .catch(() => {
+        setLoadError("Couldn't reach the daemon to read your storage location.");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
 
   const pick = async () => {
@@ -46,11 +56,20 @@ export function StorageSettings() {
   return (
     <Card className="p-4 space-y-3">
       <h2 className="display text-lg">Storage</h2>
-      <div className="font-body text-text-muted">
-        Current location: <span className="mono">{current ?? "unknown"}</span>
-      </div>
 
-      {phase !== "picked" && phase !== "moving" && (
+      {loading && <p className="label" aria-busy="true">Loading…</p>}
+
+      {loadError && (
+        <p className="label text-tier-procedural" role="alert">{loadError}</p>
+      )}
+
+      {!loading && !loadError && (
+        <div className="font-body text-text-muted">
+          Current location: <span className="mono">{current ?? "unknown"}</span>
+        </div>
+      )}
+
+      {!loading && !loadError && phase !== "picked" && phase !== "moving" && (
         <Button onClick={pick}>Change location…</Button>
       )}
 
