@@ -21,8 +21,8 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
             <h1 className="display text-2xl">Set up your memory vault</h1>
             <p className="text-text-muted font-body">
               mnemos keeps a local-first vault of your AI conversations. Memories live as markdown
-              files in <span className="mono">~/.local/share/mnemos/</span> (you can change this in
-              Settings).
+              files in <span className="mono">~/.local/share/mnemos/</span> (you can move it
+              anytime in <strong>Settings &rarr; Storage</strong>).
             </p>
             <div className="flex justify-end">
               <Button onClick={() => setStep(1)}>Continue</Button>
