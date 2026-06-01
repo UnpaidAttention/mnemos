@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { client } from "../api/client";
 import { VaultIO } from "../components/VaultIO";
+import { StorageSettings } from "./StorageSettings";
 import { Button, Card, Skeleton } from "../design/primitives";
 
 type Field =
@@ -180,6 +181,7 @@ export function Settings() {
           </Button>
         </div>
       </div>
+      <StorageSettings />
       {SCHEMA.map((section) => (
         <Card key={section.title} className="p-4">
           <details open className="space-y-3">
