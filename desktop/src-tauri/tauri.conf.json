@@ -78,7 +78,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "PLACEHOLDER_PUBLIC_KEY_REPLACE_BEFORE_RELEASE",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCNzhGN0Y2OTdGNjExOUUKUldTZUVmYVg5dmQ0ZTVlQmQ2VDJ4S2dlbFNYTWJrYSt1WXd4MnB6RExrb1FBdHFvZmlRZTFHa2EK",
       "endpoints": [
         "https://github.com/UnpaidAttention/mnemos/releases/latest/download/latest.json"
       ]

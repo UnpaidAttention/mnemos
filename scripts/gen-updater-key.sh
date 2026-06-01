@@ -14,8 +14,8 @@ if [[ -f desktop/src-tauri/updater-private.pem ]]; then
 fi
 
 cd desktop
-# Tauri 2.x signer: writes private key to -f path and public key to <path>.pub
-pnpm tauri signer generate -f ../desktop/src-tauri/updater-private.pem -p ""
+# Tauri 2.x signer: writes private key to -w path and public key to <path>.pub
+pnpm tauri signer generate -w ../desktop/src-tauri/updater-private.pem -p "" --ci
 
 echo
 echo "=== PUBLIC KEY (paste into desktop/src-tauri/tauri.conf.json → plugins.updater.pubkey) ==="

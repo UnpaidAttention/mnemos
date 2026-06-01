@@ -72,6 +72,13 @@ jobs:
       - name: Build desktop bundle
         working-directory: desktop
         run: pnpm tauri build --bundles deb,rpm,appimage
+        env:
+          # Required because tauri.conf.json sets a real updater pubkey +
+          # createUpdaterArtifacts: true. Without the private key, the build
+          # fails. These produce the signed .AppImage.tar.gz + .sig consumed
+          # by the latest.json step below.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Stage artifacts
         shell: bash
