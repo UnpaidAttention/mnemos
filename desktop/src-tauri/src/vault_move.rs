@@ -25,20 +25,49 @@ impl std::fmt::Display for MoveError {
     }
 }
 
+/// Canonicalize `p` if it exists; otherwise canonicalize its nearest existing
+/// ancestor and re-append the remaining components. Best-effort: returns the
+/// input unchanged if nothing resolves.
+fn canonicalize_existing(p: &Path) -> PathBuf {
+    if let Ok(c) = p.canonicalize() {
+        return c;
+    }
+    let mut ancestor = p.parent();
+    while let Some(a) = ancestor {
+        if let Ok(c) = a.canonicalize() {
+            if let Ok(rest) = p.strip_prefix(a) {
+                return c.join(rest);
+            }
+            return c;
+        }
+        ancestor = a.parent();
+    }
+    p.to_path_buf()
+}
+
 /// Validate a proposed move. `target` may or may not exist; if it exists it
 /// must be an empty directory.
 pub fn validate(source: &Path, target: &Path) -> Result<(), MoveError> {
-    let src = source.canonicalize().map_err(|_| MoveError::SourceMissing(source.into()))?;
-    let tgt_abs = if target.is_absolute() { target.to_path_buf() } else {
-        std::env::current_dir().map_err(|e| MoveError::Io(e.to_string()))?.join(target)
+    let src = source
+        .canonicalize()
+        .map_err(|_| MoveError::SourceMissing(source.into()))?;
+    let tgt_abs = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| MoveError::Io(e.to_string()))?
+            .join(target)
     };
-    if tgt_abs == src {
+    // Canonicalize whatever exists (the dir itself, or its nearest existing
+    // ancestor) so a symlinked target can't alias the source undetected.
+    let tgt_real = canonicalize_existing(&tgt_abs);
+    if tgt_real == src {
         return Err(MoveError::SamePath);
     }
-    if tgt_abs.exists() {
-        let mut entries = std::fs::read_dir(&tgt_abs).map_err(|e| MoveError::Io(e.to_string()))?;
+    if tgt_real.exists() {
+        let mut entries = std::fs::read_dir(&tgt_real).map_err(|e| MoveError::Io(e.to_string()))?;
         if entries.next().is_some() {
-            return Err(MoveError::TargetNotEmpty(tgt_abs));
+            return Err(MoveError::TargetNotEmpty(tgt_real));
         }
     }
     Ok(())
@@ -95,15 +124,30 @@ mod tests {
         std::fs::write(tgt.path().join("x"), b"data").unwrap();
         assert_eq!(
             validate(src.path(), tgt.path()),
-            Err(MoveError::TargetNotEmpty(tgt.path().canonicalize().unwrap()))
+            Err(MoveError::TargetNotEmpty(
+                tgt.path().canonicalize().unwrap()
+            ))
         );
+    }
+
+    #[test]
+    fn rejects_symlink_to_source() {
+        let parent = tempfile::tempdir().unwrap();
+        let src = parent.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        let link = parent.path().join("link");
+        std::os::unix::fs::symlink(&src, &link).unwrap();
+        assert_eq!(validate(&src, &link), Err(MoveError::SamePath));
     }
 
     #[test]
     fn rejects_missing_source() {
         let tgt = tempfile::tempdir().unwrap();
         let missing = tgt.path().join("does-not-exist");
-        assert_eq!(validate(&missing, tgt.path()), Err(MoveError::SourceMissing(missing)));
+        assert_eq!(
+            validate(&missing, tgt.path()),
+            Err(MoveError::SourceMissing(missing))
+        );
     }
 
     #[test]

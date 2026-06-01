@@ -73,8 +73,9 @@ pub async fn start(app: &AppHandle) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "daemon start failed: {}",
-            String::from_utf8_lossy(&out.stdout)
+            "daemon start failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
         ))
     }
 }
@@ -107,6 +108,26 @@ pub async fn wait_healthy(port: u16, timeout_ms: u64) -> Result<(), String> {
         }
         if started.elapsed().as_millis() as u64 > timeout_ms {
             return Err("daemon did not become healthy in time".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+
+/// Poll until the daemon's public /health stops responding (process gone), or timeout.
+pub async fn wait_stopped(port: u16, timeout_ms: u64) -> Result<(), String> {
+    let url = format!("http://127.0.0.1:{port}/health");
+    let started = std::time::Instant::now();
+    loop {
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .timeout(std::time::Duration::from_millis(500))
+            .send()
+            .await;
+        if resp.is_err() {
+            return Ok(()); // connection refused → listener down
+        }
+        if started.elapsed().as_millis() as u64 > timeout_ms {
+            return Err("daemon did not stop in time".into());
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }

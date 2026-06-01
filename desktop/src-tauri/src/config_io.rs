@@ -31,6 +31,20 @@ pub fn read_vault_root(path: &Path) -> Result<Option<PathBuf>, String> {
         .map(PathBuf::from))
 }
 
+/// Read `daemon.port` from config.toml; None if unset/missing.
+pub fn read_daemon_port(path: &Path) -> Result<Option<u16>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let value: toml::Value = toml::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(value
+        .get("daemon")
+        .and_then(|d| d.get("port"))
+        .and_then(|p| p.as_integer())
+        .map(|n| n as u16))
+}
+
 /// Set `vault.root` in `config.toml`, preserving all other keys. Creates the
 /// file and parent dir if absent.
 pub fn write_vault_root(path: &Path, root: &Path) -> Result<(), String> {
@@ -57,7 +71,9 @@ pub fn write_vault_root(path: &Path, root: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, text).map_err(|e| e.to_string())
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -72,7 +88,10 @@ mod tests {
 
         write_vault_root(&cfg, Path::new("/new/place")).unwrap();
 
-        assert_eq!(read_vault_root(&cfg).unwrap(), Some(PathBuf::from("/new/place")));
+        assert_eq!(
+            read_vault_root(&cfg).unwrap(),
+            Some(PathBuf::from("/new/place"))
+        );
         let text = std::fs::read_to_string(&cfg).unwrap();
         assert!(text.contains("port = 7423"), "other keys preserved: {text}");
     }
@@ -88,6 +107,29 @@ mod tests {
     #[test]
     fn read_missing_is_none() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(read_vault_root(&dir.path().join("nope.toml")).unwrap(), None);
+        assert_eq!(
+            read_vault_root(&dir.path().join("nope.toml")).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn reads_daemon_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config.toml");
+        std::fs::write(&cfg, "[daemon]\nport = 9000\n").unwrap();
+        assert_eq!(read_daemon_port(&cfg).unwrap(), Some(9000));
+    }
+
+    #[test]
+    fn read_daemon_port_missing_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config.toml");
+        std::fs::write(&cfg, "[vault]\nroot = \"/x\"\n").unwrap();
+        assert_eq!(read_daemon_port(&cfg).unwrap(), None);
+        assert_eq!(
+            read_daemon_port(&dir.path().join("nope.toml")).unwrap(),
+            None
+        );
     }
 }

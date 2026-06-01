@@ -31,23 +31,42 @@ pub async fn move_vault(app: AppHandle, new_path: String) -> Result<MoveResult, 
 
     vault_move::validate(&current, &target).map_err(|e| e.to_string())?;
 
+    let port = config_io::read_daemon_port(&cfg_path)?.unwrap_or(7423);
+
     daemon::stop(&app).await?;
+    // SIGTERM returns immediately; wait until the listener is actually gone so
+    // the daemon no longer holds the SQLite DB open before we move it.
+    daemon::wait_stopped(port, 10_000).await?;
 
     // Persist new location BEFORE moving so a restart reads the new path.
     config_io::write_vault_root(&cfg_path, &target)?;
 
     if let Err(e) = vault_move::execute(&current, &target) {
-        let _ = config_io::write_vault_root(&cfg_path, &current);
+        let mut problems = vec![format!("move failed: {e}")];
+        if let Err(ce) = config_io::write_vault_root(&cfg_path, &current) {
+            problems.push(format!(
+                "REVERT FAILED restoring config ({ce}) — your data is still at {} but config points elsewhere; manual recovery may be needed",
+                current.display()
+            ));
+        }
         let _ = daemon::start(&app).await;
-        return Err(format!("move failed: {e}"));
+        return Err(problems.join("; "));
     }
 
     daemon::start(&app).await?;
-    if let Err(e) = daemon::wait_healthy(7423, 30_000).await {
-        let _ = vault_move::execute(&target, &current);
-        let _ = config_io::write_vault_root(&cfg_path, &current);
+    if let Err(e) = daemon::wait_healthy(port, 30_000).await {
+        let mut problems = vec![format!("daemon unhealthy after move: {e}")];
+        if let Err(re) = vault_move::execute(&target, &current) {
+            problems.push(format!(
+                "REVERT FAILED moving data back ({re}) — your data is at {} and may need manual recovery",
+                target.display()
+            ));
+        }
+        if let Err(ce) = config_io::write_vault_root(&cfg_path, &current) {
+            problems.push(format!("REVERT FAILED restoring config ({ce})"));
+        }
         let _ = daemon::start(&app).await;
-        return Err(format!("daemon unhealthy after move, reverted: {e}"));
+        return Err(problems.join("; "));
     }
 
     Ok(MoveResult {
