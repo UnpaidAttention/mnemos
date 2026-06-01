@@ -79,6 +79,13 @@ jobs:
           # by the latest.json step below.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # GitHub runners have no FUSE, so linuxdeploy (itself an AppImage)
+          # can't mount and the AppImage bundle step dies with the opaque
+          # "failed to run linuxdeploy". Extracting instead of mounting is the
+          # standard fix. NO_STRIP avoids linuxdeploy stripping the bundled
+          # llama-server/.so embedder assets.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
 
       - name: Stage artifacts
         shell: bash
