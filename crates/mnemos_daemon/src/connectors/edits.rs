@@ -85,6 +85,45 @@ pub fn json_remove(doc: &str, pointer: &[&str], key: &str) -> Result<String, Str
     serde_json::to_string_pretty(&root).map_err(|e| e.to_string())
 }
 
+pub const BLOCK_START: &str = "<!-- mnemos:start -->";
+pub const BLOCK_END: &str = "<!-- mnemos:end -->";
+
+/// Insert or replace the marked block containing `body` in `doc`. The block is
+/// delimited by BLOCK_START/BLOCK_END so it can be detected and removed cleanly.
+pub fn marked_block_apply(doc: &str, body: &str) -> String {
+    let block = format!("{BLOCK_START}\n{}\n{BLOCK_END}", body.trim_end());
+    if let (Some(s), Some(e)) = (doc.find(BLOCK_START), doc.find(BLOCK_END)) {
+        let end = e + BLOCK_END.len();
+        let mut out = String::with_capacity(doc.len());
+        out.push_str(&doc[..s]);
+        out.push_str(&block);
+        out.push_str(&doc[end..]);
+        out
+    } else {
+        let sep = if doc.is_empty() || doc.ends_with('\n') { "" } else { "\n" };
+        format!("{doc}{sep}\n{block}\n")
+    }
+}
+
+/// True if the marked block is present.
+pub fn marked_block_present(doc: &str) -> bool {
+    doc.contains(BLOCK_START) && doc.contains(BLOCK_END)
+}
+
+/// Remove the marked block. No-op if absent. Preserves surrounding content.
+pub fn marked_block_remove(doc: &str) -> String {
+    match (doc.find(BLOCK_START), doc.find(BLOCK_END)) {
+        (Some(s), Some(e)) => {
+            let end = (e + BLOCK_END.len()).min(doc.len());
+            let mut out = String::new();
+            out.push_str(doc[..s].trim_end_matches('\n'));
+            out.push_str(&doc[end..]);
+            out
+        }
+        _ => doc.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +164,19 @@ mod tests {
         assert!(f.with_extension("json.mnemos.bak").exists());
         atomic_write(&f, "{\"a\":1}").unwrap();
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "{\"a\":1}");
+    }
+
+    #[test]
+    fn marked_block_apply_is_idempotent_and_removable() {
+        let original = "# My CLAUDE.md\n\nmy own notes\n";
+        let once = marked_block_apply(original, "hint body");
+        assert!(marked_block_present(&once));
+        assert!(once.contains("my own notes"), "preserves user content");
+        let twice = marked_block_apply(&once, "hint body");
+        assert_eq!(once.matches(BLOCK_START).count(), 1);
+        assert_eq!(twice.matches(BLOCK_START).count(), 1, "no duplicate block");
+        let removed = marked_block_remove(&twice);
+        assert!(!marked_block_present(&removed));
+        assert!(removed.contains("my own notes"), "user content survives removal");
     }
 }
