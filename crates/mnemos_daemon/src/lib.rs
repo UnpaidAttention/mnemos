@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod bundled_embedder;
 pub mod config;
+pub mod connectors;
 pub mod error;
 pub mod events;
 pub mod llm;
