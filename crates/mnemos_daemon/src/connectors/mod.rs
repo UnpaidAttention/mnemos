@@ -34,6 +34,8 @@ pub enum EditStrategy {
     JsonMerge { pointer: &'static [&'static str], key: &'static str, value_json: &'static str },
     /// Insert a marked block of `body` into a markdown/text file.
     MarkedBlock { body: &'static str },
+    /// Insert the table parsed from `value_toml` at `table_path`/`key` in a TOML config.
+    TomlMerge { table_path: &'static [&'static str], key: &'static str, value_toml: &'static str },
 }
 
 pub struct ToolConnector {
@@ -62,6 +64,7 @@ impl ConfigEdit {
         match &self.strategy {
             EditStrategy::JsonMerge { pointer, key, .. } => edits::json_has(&doc, pointer, key),
             EditStrategy::MarkedBlock { .. } => edits::marked_block_present(&doc),
+            EditStrategy::TomlMerge { table_path, key, .. } => edits::toml_has(&doc, table_path, key),
         }
     }
     /// Compute the post-apply contents without writing.
@@ -73,6 +76,7 @@ impl ConfigEdit {
                 edits::json_merge(&doc, pointer, key, &v)
             }
             EditStrategy::MarkedBlock { body } => Ok(edits::marked_block_apply(&doc, body)),
+            EditStrategy::TomlMerge { table_path, key, value_toml } => edits::toml_merge(&doc, table_path, key, value_toml),
         }
     }
     pub fn removed(&self) -> Result<String, String> {
@@ -80,6 +84,7 @@ impl ConfigEdit {
         match &self.strategy {
             EditStrategy::JsonMerge { pointer, key, .. } => edits::json_remove(&doc, pointer, key),
             EditStrategy::MarkedBlock { .. } => Ok(edits::marked_block_remove(&doc)),
+            EditStrategy::TomlMerge { table_path, key, .. } => edits::toml_remove(&doc, table_path, key),
         }
     }
 }

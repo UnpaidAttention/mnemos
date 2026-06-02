@@ -124,6 +124,57 @@ pub fn marked_block_remove(doc: &str) -> String {
     }
 }
 
+/// Insert the table parsed from `value_toml` at `table_path`/`key` in a TOML
+/// document. Creates intermediate tables. Idempotent (replaces the key).
+pub fn toml_merge(doc: &str, table_path: &[&str], key: &str, value_toml: &str) -> Result<String, String> {
+    let mut root: toml::Value = if doc.trim().is_empty() {
+        toml::Value::Table(toml::map::Map::new())
+    } else {
+        doc.parse().map_err(|e: toml::de::Error| e.to_string())?
+    };
+    if !root.is_table() {
+        return Err("config root is not a TOML table".into());
+    }
+    let mut cur = &mut root;
+    for seg in table_path {
+        cur = cur
+            .as_table_mut()
+            .ok_or_else(|| format!("`{seg}` parent is not a table"))?
+            .entry(seg.to_string())
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    }
+    let entry: toml::Value = value_toml.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    cur.as_table_mut()
+        .ok_or_else(|| "target is not a table".to_string())?
+        .insert(key.to_string(), entry);
+    toml::to_string_pretty(&root).map_err(|e| e.to_string())
+}
+
+/// True if `table_path`/`key` exists in the TOML document.
+pub fn toml_has(doc: &str, table_path: &[&str], key: &str) -> bool {
+    let root: toml::Value = match doc.parse() { Ok(v) => v, Err(_) => return false };
+    let mut cur = &root;
+    for seg in table_path {
+        match cur.get(seg) { Some(v) => cur = v, None => return false }
+    }
+    cur.get(key).is_some()
+}
+
+/// Remove `table_path`/`key` from the TOML document. No-op if absent.
+pub fn toml_remove(doc: &str, table_path: &[&str], key: &str) -> Result<String, String> {
+    if doc.trim().is_empty() { return Ok(doc.to_string()); }
+    let mut root: toml::Value = doc.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let mut cur = &mut root;
+    for seg in table_path {
+        match cur.as_table_mut().and_then(|t| t.get_mut(*seg)) {
+            Some(v) => cur = v,
+            None => return toml::to_string_pretty(&root).map_err(|e| e.to_string()),
+        }
+    }
+    if let Some(t) = cur.as_table_mut() { t.remove(key); }
+    toml::to_string_pretty(&root).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +229,22 @@ mod tests {
         let removed = marked_block_remove(&twice);
         assert!(!marked_block_present(&removed));
         assert!(removed.contains("my own notes"), "user content survives removal");
+    }
+
+    #[test]
+    fn toml_merge_inserts_nested_table_idempotently_and_preserves_keys() {
+        let start = "model = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"x\"\n";
+        let once = toml_merge(start, &["mcp_servers"], "mnemos", "command = \"mnemos-mcp-stdio\"\nargs = []").unwrap();
+        assert!(toml_has(&once, &["mcp_servers"], "mnemos"));
+        assert!(toml_has(&once, &["mcp_servers"], "other"), "keeps other server");
+        assert!(once.contains("model = \"gpt\""), "keeps top-level key");
+        // idempotent
+        let twice = toml_merge(&once, &["mcp_servers"], "mnemos", "command = \"mnemos-mcp-stdio\"\nargs = []").unwrap();
+        let parsed: toml::Value = twice.parse().unwrap();
+        assert_eq!(parsed["mcp_servers"].as_table().unwrap().len(), 2);
+        // removable
+        let removed = toml_remove(&twice, &["mcp_servers"], "mnemos").unwrap();
+        assert!(!toml_has(&removed, &["mcp_servers"], "mnemos"));
+        assert!(toml_has(&removed, &["mcp_servers"], "other"));
     }
 }
