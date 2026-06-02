@@ -60,10 +60,16 @@ pub async fn start(app: &AppHandle) -> Result<(), String> {
         // _up_/_up_ prefix). In dev the daemon falls back to ./assets relative
         // to its CWD, so a missing path here is harmless.
         let assets = res.join("_up_").join("_up_").join("assets");
-        let assets_str = assets.to_string_lossy().to_string();
-        cmd = cmd
-            .env("MNEMOS_BUNDLED_BIN_DIR", &assets_str)
-            .env("MNEMOS_BUNDLED_MODEL_DIR", &assets_str);
+        // Only override the daemon's asset discovery when the bundled assets
+        // are actually present (packaged builds). In a dev/non-packaged run the
+        // path doesn't exist; setting the env var anyway would override the
+        // daemon's working `./assets` fallback and break the embedder.
+        if assets.is_dir() {
+            let assets_str = assets.to_string_lossy().to_string();
+            cmd = cmd
+                .env("MNEMOS_BUNDLED_BIN_DIR", &assets_str)
+                .env("MNEMOS_BUNDLED_MODEL_DIR", &assets_str);
+        }
     }
     let out = cmd
         .output()
