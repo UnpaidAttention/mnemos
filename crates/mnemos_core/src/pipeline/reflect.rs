@@ -1,6 +1,7 @@
 //! Reflection stage: synthesize recent un-reflected memories into durable,
 //! typed reflection-tier memories with `reflects_on` provenance.
 
+use crate::correction::Correction;
 use crate::error::{MnemosError, Result};
 use crate::pipeline::extract_json;
 use crate::providers::{CompletionRequest, LlmProvider};
@@ -8,6 +9,7 @@ use crate::storage::memory_ops::{list_by_kind, mark_reflected, recent_unreflecte
 use crate::types::MemoryType;
 use crate::vault::Vault;
 use chrono::Utc;
+use libsql::params;
 use serde::Deserialize;
 
 pub const REFLECT_SYSTEM: &str = "TASK=reflect\n\
@@ -216,6 +218,126 @@ pub async fn harden_corrections(
             used_ids.insert(id.clone());
         }
         created.push(rule_id);
+    }
+
+    Ok(created)
+}
+
+/// System prompt for the correction-mining LLM call.
+pub const MINE_SYSTEM: &str = "TASK=mine-corrections\n\
+Review this conversation and extract moments where the user corrected the \
+assistant. For each, output the mistake, the correct approach, the reason, and \
+the triggering situation. Only include corrections with a clear reason. \
+Respond ONLY with JSON {\"corrections\":[{\"wrong\":\"\",\"right\":\"\",\"why\":\"\",\"trigger\":\"\"}]}.";
+
+#[derive(Deserialize)]
+struct MineOut {
+    #[serde(default)]
+    corrections: Vec<MinedCorrection>,
+}
+
+#[derive(Deserialize)]
+struct MinedCorrection {
+    #[serde(default)]
+    wrong: String,
+    #[serde(default)]
+    right: String,
+    #[serde(default)]
+    why: String,
+    #[serde(default)]
+    trigger: String,
+}
+
+/// Scan a session's raw conversation chunks with the LLM and extract corrections
+/// the model did not log explicitly.
+///
+/// For each tuple with a non-empty `why`, builds a [`Correction`] and calls
+/// [`Vault::remember_correction`] (which deduplicates against tool-logged ones
+/// automatically). Individual validation failures are skipped — they do not
+/// abort the whole pass. LLM errors are silenced and return `Ok(vec![])` so
+/// that a mining failure never blocks session-end processing.
+///
+/// Returns the ids of all newly created correction memories.
+pub async fn mine_corrections(
+    vault: &Vault,
+    llm: &dyn LlmProvider,
+    session_id: &str,
+) -> Result<Vec<String>> {
+    // Load the session's chunks from the `chunks` table, ordered by ordinal.
+    let chunks = {
+        let conn = vault.storage().conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT speaker, body FROM chunks
+                  WHERE session_id = ?
+                  ORDER BY ordinal ASC",
+                params![session_id.to_string()],
+            )
+            .await?;
+        let mut out: Vec<(String, String)> = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push((row.get::<String>(0)?, row.get::<String>(1)?));
+        }
+        out
+    };
+
+    if chunks.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build a readable transcript to send to the LLM.
+    let corpus = chunks
+        .iter()
+        .map(|(speaker, body)| format!("{speaker}: {body}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Call LLM; silence errors so that a transient failure never blocks
+    // session-end processing.
+    let raw = match llm
+        .complete(&CompletionRequest::new(MINE_SYSTEM, corpus))
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(session_id = %session_id, error = %e, "mine_corrections LLM call failed; skipping");
+            return Ok(vec![]);
+        }
+    };
+
+    let parsed: MineOut = match serde_json::from_str(extract_json(&raw)) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(session_id = %session_id, error = %e, "mine_corrections JSON parse failed; skipping");
+            return Ok(vec![]);
+        }
+    };
+
+    let mut created = Vec::new();
+    for mc in parsed.corrections {
+        // Skip tuples without a substantive `why`.
+        if mc.why.trim().is_empty() {
+            continue;
+        }
+        let trigger = if mc.trigger.trim().is_empty() {
+            None
+        } else {
+            Some(mc.trigger.trim().to_string())
+        };
+        let correction = Correction {
+            wrong: mc.wrong.trim().to_string(),
+            right: mc.right.trim().to_string(),
+            why: mc.why.trim().to_string(),
+            trigger,
+        };
+        match vault.remember_correction(correction, None).await {
+            Ok(id) => created.push(id),
+            Err(e) => {
+                // Validation errors (e.g. `why` too short, weaponized) are
+                // expected for noisy LLM output — skip the tuple.
+                tracing::debug!(error = %e, "mine_corrections skipping invalid correction tuple");
+            }
+        }
     }
 
     Ok(created)
