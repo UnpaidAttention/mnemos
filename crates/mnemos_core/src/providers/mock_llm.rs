@@ -84,6 +84,16 @@ impl LlmProvider for MockLlm {
                 .filter(|v| !v["text"].as_str().unwrap_or("").is_empty())
                 .collect();
             json!({ "reflections": reflections }).to_string()
+        } else if req.system.contains("TASK=harden") {
+            // One hardened rule per `RULE:<text>` occurrence (first match wins).
+            let rule_text = content
+                .lines()
+                .find_map(|l| {
+                    l.find("RULE:")
+                        .map(|i| l[i + "RULE:".len()..].trim().to_string())
+                })
+                .unwrap_or_default();
+            json!({ "rule": rule_text }).to_string()
         } else if req.system.contains("TASK=community") {
             // Deterministic summary: echo the entity list back.
             json!({ "title": "Community summary", "summary": content.trim() }).to_string()

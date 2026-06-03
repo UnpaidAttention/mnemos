@@ -4,7 +4,7 @@
 use crate::error::{MnemosError, Result};
 use crate::pipeline::extract_json;
 use crate::providers::{CompletionRequest, LlmProvider};
-use crate::storage::memory_ops::{mark_reflected, recent_unreflected};
+use crate::storage::memory_ops::{list_by_kind, mark_reflected, recent_unreflected};
 use crate::types::MemoryType;
 use crate::vault::Vault;
 use chrono::Utc;
@@ -76,5 +76,147 @@ pub async fn reflect(
     // Mark sources reflected even if nothing was synthesized, so the same window
     // is not reprocessed on the next trigger.
     mark_reflected(vault.storage(), &source_ids, Utc::now()).await?;
+    Ok(created)
+}
+
+/// System prompt for the correction-hardening LLM call.
+pub const HARDEN_SYSTEM: &str = "TASK=harden\n\
+You review a cluster of related correction memories sharing a common trigger. \
+Synthesize them into ONE concise, actionable rule. \
+Respond ONLY with JSON {\"rule\":\"...\"}. \
+The rule must be standalone and self-explanatory.";
+
+#[derive(Deserialize)]
+struct HardenOut {
+    #[serde(default)]
+    rule: String,
+}
+
+/// Cluster recent un-reflected `Correction` memories by shared trigger tag.
+/// For each cluster of `>= min_cluster` members, synthesize one hardened rule
+/// (Reflection tier, tagged `mnemos:hardened` and the cluster tag, importance
+/// 1.0), link it to the source memories with `reflects_on` edges, and mark
+/// the sources reflected so they are not processed again.
+///
+/// Returns the ids of all newly created hardened-rule memories.
+pub async fn harden_corrections(
+    vault: &Vault,
+    llm: &dyn LlmProvider,
+    min_cluster: usize,
+) -> Result<Vec<String>> {
+    // Load all valid, un-reflected Correction memories.
+    // `list_by_kind` queries by kind across all tiers without a `reflected_at`
+    // filter, so we apply the reflected filter manually via a direct DB query.
+    // Use a generous limit (1000) since correction memories are typically sparse.
+    let candidates = list_by_kind(vault.storage(), MemoryType::Correction, 1_000).await?;
+
+    // Keep only those that have not yet been reflected.
+    // `list_by_kind` does not filter on `reflected_at`, so we post-filter by
+    // loading from the DB column. We do this via a raw query on storage.
+    let unreflected = {
+        let conn = vault.storage().conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT id FROM memories
+                  WHERE kind = 'correction'
+                    AND invalid_at IS NULL
+                    AND reflected_at IS NULL",
+                (),
+            )
+            .await?;
+        let mut ids = std::collections::HashSet::new();
+        while let Some(row) = rows.next().await? {
+            ids.insert(row.get::<String>(0)?);
+        }
+        ids
+    };
+
+    let corrections: Vec<_> = candidates
+        .into_iter()
+        .filter(|m| unreflected.contains(&m.id))
+        .collect();
+
+    if corrections.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build map: tag → Vec<memory> (excluding the literal "correction" tag).
+    let mut tag_map: std::collections::HashMap<String, Vec<&crate::types::Memory>> =
+        std::collections::HashMap::new();
+    for mem in &corrections {
+        for tag in &mem.tags {
+            if tag == "correction" {
+                continue;
+            }
+            tag_map.entry(tag.clone()).or_default().push(mem);
+        }
+    }
+
+    // Process each qualifying cluster. Track used memory ids so each correction
+    // is assigned to at most one hardened rule per run.
+    let mut used_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut created: Vec<String> = Vec::new();
+
+    // Sort tags for deterministic ordering.
+    let mut tags_sorted: Vec<String> = tag_map.keys().cloned().collect();
+    tags_sorted.sort();
+
+    for cluster_tag in tags_sorted {
+        let members: Vec<&crate::types::Memory> = tag_map[&cluster_tag]
+            .iter()
+            .filter(|m| !used_ids.contains(&m.id))
+            .copied()
+            .collect();
+
+        if members.len() < min_cluster {
+            continue;
+        }
+
+        // Build corpus from member bodies.
+        let corpus = members
+            .iter()
+            .map(|m| format!("- {}", m.body))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Call LLM and parse response.
+        let raw = llm
+            .complete(&CompletionRequest::new(HARDEN_SYSTEM, &corpus))
+            .await?;
+        let parsed: HardenOut = serde_json::from_str(extract_json(&raw)).map_err(|e| {
+            MnemosError::Internal(format!("harden_corrections parse failed: {e}; raw={raw}"))
+        })?;
+
+        let rule_text = parsed.rule.trim().to_string();
+        if rule_text.is_empty() {
+            continue;
+        }
+
+        let source_ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
+
+        // Write the hardened rule as a Reflection-tier memory.
+        let rule_id = vault
+            .remember_reflection(
+                &rule_text,
+                Some(format!("Hardened rule ({cluster_tag})")),
+                MemoryType::Reflection,
+                vec!["mnemos:hardened".into(), cluster_tag.clone()],
+                &source_ids,
+                vec![],
+            )
+            .await?;
+
+        // Override the default importance (0.5) with 1.0 to signal high confidence.
+        vault.patch(&rule_id, None, Some(1.0)).await?;
+
+        // Mark sources reflected so they won't be re-clustered.
+        mark_reflected(vault.storage(), &source_ids, Utc::now()).await?;
+
+        for id in &source_ids {
+            used_ids.insert(id.clone());
+        }
+        created.push(rule_id);
+    }
+
     Ok(created)
 }
