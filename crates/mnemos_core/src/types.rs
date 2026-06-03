@@ -10,6 +10,7 @@ pub enum MemoryType {
     Episode,
     Reflection,
     Rule,
+    Correction,
     Identity,
     Project,
     Entity,
