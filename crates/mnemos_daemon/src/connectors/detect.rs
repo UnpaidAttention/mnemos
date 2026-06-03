@@ -5,7 +5,9 @@ use std::path::Path;
 
 /// True if `name` resolves to an executable on `PATH`.
 pub fn binary_on_path(name: &str) -> bool {
-    let Ok(path) = std::env::var("PATH") else { return false };
+    let Ok(path) = std::env::var("PATH") else {
+        return false;
+    };
     std::env::split_paths(&path).any(|dir| {
         let candidate = dir.join(name);
         candidate.is_file()

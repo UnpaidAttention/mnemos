@@ -7,7 +7,11 @@ fn claude_code_connect_then_disconnect_roundtrip() {
     std::env::set_var("HOME", home.path());
     std::fs::create_dir_all(home.path().join(".claude")).unwrap();
     std::fs::write(home.path().join(".claude/CLAUDE.md"), "# mine\n\nkeep me\n").unwrap();
-    std::fs::write(home.path().join(".claude.json"), r#"{"mcpServers":{"other":{"command":"x"}}}"#).unwrap();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"other":{"command":"x"}}}"#,
+    )
+    .unwrap();
 
     let c = descriptors::by_id("claude-code").unwrap();
 
@@ -18,7 +22,10 @@ fn claude_code_connect_then_disconnect_roundtrip() {
     }
     assert_eq!(format!("{:?}", c.connected()), "Full");
     let mcp = std::fs::read_to_string(home.path().join(".claude.json")).unwrap();
-    assert!(mcp.contains("mnemos") && mcp.contains("other"), "added mnemos, kept other");
+    assert!(
+        mcp.contains("mnemos") && mcp.contains("other"),
+        "added mnemos, kept other"
+    );
     let md = std::fs::read_to_string(home.path().join(".claude/CLAUDE.md")).unwrap();
     assert!(md.contains("keep me") && md.contains("mnemos:start"));
 
@@ -28,5 +35,8 @@ fn claude_code_connect_then_disconnect_roundtrip() {
     }
     assert_eq!(format!("{:?}", c.connected()), "None");
     let md2 = std::fs::read_to_string(home.path().join(".claude/CLAUDE.md")).unwrap();
-    assert!(md2.contains("keep me") && !md2.contains("mnemos:start"), "user content kept, block gone");
+    assert!(
+        md2.contains("keep me") && !md2.contains("mnemos:start"),
+        "user content kept, block gone"
+    );
 }
