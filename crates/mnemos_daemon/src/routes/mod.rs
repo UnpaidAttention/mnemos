@@ -7,6 +7,7 @@
 
 pub mod communities;
 pub mod config;
+pub mod corrections;
 pub mod doctor;
 pub mod embed_rebuild;
 pub mod entities;
@@ -46,6 +47,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(working::router())
         .merge(pipelines::router())
         .merge(reflections::router())
+        .merge(corrections::router())
         .merge(sync::router())
         .merge(config::router())
         .merge(doctor::router())
