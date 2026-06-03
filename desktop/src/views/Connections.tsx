@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { client, type Connector, type ConnectorPreview } from "../api/client";
 import { Button, Card } from "../design/primitives";
 
@@ -7,6 +7,7 @@ type PreviewState = { connectorId: string; preview: ConnectorPreview };
 function statusLabel(c: Connector): string {
   if (c.connected === "full") return "Connected";
   if (c.connected === "partial") return "Partially connected";
+  if (c.kind === "manual") return "Available";
   if (c.kind === "detectable" && !c.installed) return "Not installed";
   return "Installed";
 }
@@ -17,40 +18,66 @@ export function Connections() {
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const load = () => {
     setError(null);
     client
       .listConnectors()
-      .then(setConnectors)
-      .catch(() => setError("Couldn't reach the daemon to list AI tools."));
+      .then((cs) => {
+        if (mounted.current) setConnectors(cs);
+      })
+      .catch(() => {
+        if (mounted.current) setError("Couldn't reach the daemon to list AI tools.");
+      });
   };
 
   useEffect(load, []);
 
   const handleConnect = async (id: string) => {
-    const p = await client.previewConnector(id);
-    setPreview({ connectorId: id, preview: p });
+    setError(null);
+    setBusy(id);
+    try {
+      const p = await client.previewConnector(id);
+      if (mounted.current) setPreview({ connectorId: id, preview: p });
+    } catch (err) {
+      if (mounted.current) setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      if (mounted.current) setBusy(null);
+    }
   };
 
   const handleApply = async () => {
     if (!preview) return;
+    setError(null);
     setBusy(preview.connectorId);
     try {
       await client.connectConnector(preview.connectorId);
-      setPreview(null);
-      load();
+      if (mounted.current) setPreview(null);
+      if (mounted.current) load();
+    } catch (err) {
+      if (mounted.current) setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
-      setBusy(null);
+      if (mounted.current) setBusy(null);
     }
   };
 
   const handleDisconnect = async (id: string) => {
+    setError(null);
     setBusy(id);
     try {
       await client.disconnectConnector(id);
-      load();
+      if (mounted.current) load();
+    } catch (err) {
+      if (mounted.current) setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
-      setBusy(null);
+      if (mounted.current) setBusy(null);
     }
   };
 
@@ -66,8 +93,20 @@ export function Connections() {
     return <div className="label text-text-muted">Loading AI tool connections…</div>;
   }
 
+  const detectedConnectors = connectors.filter((c) => c.kind === "detectable");
+  const manualConnectors = connectors.filter((c) => c.kind === "manual");
+
   return (
     <div className="space-y-3">
+      {detectedConnectors.length === 0 && (
+        <Card className="p-4">
+          <p className="font-body text-text-muted text-sm">
+            No AI tools detected. Install Claude Code, Codex, or Antigravity CLI and reopen this
+            page — or use a manual integration below.
+          </p>
+        </Card>
+      )}
+
       {connectors.map((c) => (
         <Card key={c.id} className="p-4 space-y-2">
           <div className="flex items-start justify-between gap-4">
@@ -122,7 +161,7 @@ export function Connections() {
                 </div>
               ))}
               <div className="flex gap-2">
-                <Button onClick={() => void handleApply()} disabled={busy === c.id}>
+                <Button onClick={() => void handleApply()} disabled={busy === preview.connectorId}>
                   Apply changes
                 </Button>
                 <Button variant="ghost" onClick={() => setPreview(null)}>
@@ -133,6 +172,8 @@ export function Connections() {
           )}
         </Card>
       ))}
+
+      {detectedConnectors.length === 0 && manualConnectors.length === 0 && null}
     </div>
   );
 }

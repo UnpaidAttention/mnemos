@@ -182,11 +182,11 @@ export class MnemosClient {
   previewConnector(id: string): Promise<ConnectorPreview> {
     return this.req<ConnectorPreview>("POST", `/v1/connectors/${id}/preview`);
   }
-  connectConnector(id: string): Promise<{ id: string; connected: string }> {
-    return this.req<{ id: string; connected: string }>("POST", `/v1/connectors/${id}/connect`);
+  connectConnector(id: string): Promise<{ id: string; connected: "full" | "partial" | "none" }> {
+    return this.req<{ id: string; connected: "full" | "partial" | "none" }>("POST", `/v1/connectors/${id}/connect`);
   }
-  disconnectConnector(id: string): Promise<{ id: string; connected: string }> {
-    return this.req<{ id: string; connected: string }>("POST", `/v1/connectors/${id}/disconnect`);
+  disconnectConnector(id: string): Promise<{ id: string; connected: "full" | "partial" | "none" }> {
+    return this.req<{ id: string; connected: "full" | "partial" | "none" }>("POST", `/v1/connectors/${id}/disconnect`);
   }
 
   async vaultExport(): Promise<Blob> {
