@@ -635,7 +635,15 @@ fn truncate_title(s: &str) -> String {
     if trimmed.len() <= 72 {
         trimmed.into()
     } else {
-        format!("{}…", &trimmed[..71])
+        // Cut at a char boundary at or before byte 71 (right may contain
+        // non-ASCII text; a raw byte slice would panic mid-codepoint).
+        let cut = trimmed
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= 71)
+            .last()
+            .unwrap_or(0);
+        format!("{}…", &trimmed[..cut])
     }
 }
 

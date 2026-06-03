@@ -181,13 +181,25 @@ pub async fn harden_corrections(
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Call LLM and parse response.
-        let raw = llm
+        // Call the LLM; skip this cluster (don't abort the whole run) on failure
+        // so one bad response doesn't block hardening the other clusters.
+        let raw = match llm
             .complete(&CompletionRequest::new(HARDEN_SYSTEM, &corpus))
-            .await?;
-        let parsed: HardenOut = serde_json::from_str(extract_json(&raw)).map_err(|e| {
-            MnemosError::Internal(format!("harden_corrections parse failed: {e}; raw={raw}"))
-        })?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(cluster_tag = %cluster_tag, error = %e, "harden_corrections LLM call failed; skipping cluster");
+                continue;
+            }
+        };
+        let parsed: HardenOut = match serde_json::from_str(extract_json(&raw)) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(cluster_tag = %cluster_tag, error = %e, "harden_corrections parse failed; skipping cluster");
+                continue;
+            }
+        };
 
         let rule_text = parsed.rule.trim().to_string();
         if rule_text.is_empty() {

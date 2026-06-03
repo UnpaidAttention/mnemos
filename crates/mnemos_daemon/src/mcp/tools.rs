@@ -267,7 +267,7 @@ async fn correct(state: &AppState, args: &Value) -> anyhow::Result<Value> {
     let correction = mnemos_core::correction::Correction {
         wrong: get("wrong").ok_or_else(|| anyhow::anyhow!("wrong required"))?,
         right: get("right").ok_or_else(|| anyhow::anyhow!("right required"))?,
-        why: get("why").unwrap_or_default(),
+        why: get("why").ok_or_else(|| anyhow::anyhow!("why required"))?,
         trigger: get("trigger"),
     };
     let id = state
