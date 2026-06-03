@@ -97,6 +97,21 @@ pub fn descriptors() -> Vec<Value> {
                 "properties": { "limit": { "type": "integer", "default": 50 } }
             }
         }),
+        json!({
+            "name": "correct",
+            "description": "Record a correction after you did something wrong and were corrected. Stores wrong→right→why so the mistake isn't repeated. `why` is required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "wrong": {"type": "string", "description": "What you did incorrectly"},
+                    "right": {"type": "string", "description": "The correct approach going forward"},
+                    "why": {"type": "string", "description": "Why the correct approach is right (required)"},
+                    "trigger": {"type": "string", "description": "The situation this applies to"},
+                    "supersedes": {"type": "string", "description": "Optional id of a prior memory this invalidates"}
+                },
+                "required": ["wrong", "right", "why"]
+            }
+        }),
     ]
 }
 
@@ -110,6 +125,7 @@ pub async fn call(state: &AppState, name: &str, args: &Value) -> anyhow::Result<
         "list_memories" => list_memories(state, args).await,
         "reflect" => reflect_tool(state, args).await,
         "list_reflections" => list_reflections_tool(state, args).await,
+        "correct" => correct(state, args).await,
         other => Err(anyhow::anyhow!("unknown tool: {other}")),
     }
 }
@@ -244,6 +260,21 @@ async fn list_reflections_tool(state: &AppState, args: &Value) -> anyhow::Result
         })
         .await?;
     Ok(tool_content_json(json!({ "reflections": reflections })))
+}
+
+async fn correct(state: &AppState, args: &Value) -> anyhow::Result<Value> {
+    let get = |k: &str| args[k].as_str().map(String::from);
+    let correction = mnemos_core::correction::Correction {
+        wrong: get("wrong").ok_or_else(|| anyhow::anyhow!("wrong required"))?,
+        right: get("right").ok_or_else(|| anyhow::anyhow!("right required"))?,
+        why: get("why").unwrap_or_default(),
+        trigger: get("trigger"),
+    };
+    let id = state
+        .vault
+        .remember_correction(correction, get("supersedes"))
+        .await?;
+    Ok(tool_content_json(json!({ "id": id })))
 }
 
 fn tool_content_json(value: Value) -> Value {
