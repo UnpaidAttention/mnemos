@@ -3,6 +3,7 @@ import { client } from "../api/client";
 import { VaultIO } from "../components/VaultIO";
 import { StorageSettings } from "./StorageSettings";
 import { Button, Card, Skeleton } from "../design/primitives";
+import { Connections } from "./Connections";
 
 type Field =
   | { key: string; label: string; kind: "text" | "password" }
@@ -182,6 +183,14 @@ export function Settings() {
         </div>
       </div>
       <StorageSettings />
+      <Card className="p-4">
+        <details open className="space-y-3">
+          <summary className="display text-base cursor-pointer">AI Tool Connections</summary>
+          <div className="pt-2">
+            <Connections />
+          </div>
+        </details>
+      </Card>
       {SCHEMA.map((section) => (
         <Card key={section.title} className="p-4">
           <details open className="space-y-3">

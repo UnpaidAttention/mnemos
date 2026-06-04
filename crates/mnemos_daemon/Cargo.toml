@@ -43,12 +43,12 @@ futures = { workspace = true }
 async-trait = { workspace = true }
 walkdir = { workspace = true }
 zip = { workspace = true }
+tempfile = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 tokio-tungstenite = "0.24"

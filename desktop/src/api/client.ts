@@ -3,6 +3,22 @@ import type {
 } from "./types";
 import { getToken } from "./token";
 
+export interface ConnectorEdit { path: string; present: boolean }
+export interface Connector {
+  id: string;
+  display_name: string;
+  kind: "detectable" | "manual";
+  deprecated: string | null;
+  installed: boolean;
+  connected: "full" | "partial" | "none";
+  manual_snippet: { target: string; snippet: string } | null;
+  edits: ConnectorEdit[];
+}
+export interface ConnectorPreview {
+  id: string;
+  edits: { path: string; before: string; after: string; already_present: boolean }[];
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -158,6 +174,19 @@ export class MnemosClient {
   }
   async completeFirstRun() {
     return this.req<{ completed: true }>("POST", "/v1/first-run/complete");
+  }
+
+  async listConnectors(): Promise<Connector[]> {
+    return (await this.req<{ connectors: Connector[] }>("GET", "/v1/connectors")).connectors;
+  }
+  previewConnector(id: string): Promise<ConnectorPreview> {
+    return this.req<ConnectorPreview>("POST", `/v1/connectors/${id}/preview`);
+  }
+  connectConnector(id: string): Promise<{ id: string; connected: "full" | "partial" | "none" }> {
+    return this.req<{ id: string; connected: "full" | "partial" | "none" }>("POST", `/v1/connectors/${id}/connect`);
+  }
+  disconnectConnector(id: string): Promise<{ id: string; connected: "full" | "partial" | "none" }> {
+    return this.req<{ id: string; connected: "full" | "partial" | "none" }>("POST", `/v1/connectors/${id}/disconnect`);
   }
 
   async vaultExport(): Promise<Blob> {

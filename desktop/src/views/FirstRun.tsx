@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { client } from "../api/client";
 import { Button, Card } from "../design/primitives";
+import { Connections } from "./Connections";
 
 type Step = 0 | 1 | 2;
 
@@ -55,29 +56,10 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
           <>
             <h1 className="display text-xl">Connect your AI tools</h1>
             <p className="text-text-muted font-body">
-              The Mnemos daemon is running with the bundled embedder. Copy a snippet into each
-              tool&apos;s config to give it persistent memory.
+              The Mnemos daemon is running with the bundled embedder. Connect your AI tools below to
+              give them persistent memory.
             </p>
-            <details open>
-              <summary className="display text-base cursor-pointer">Claude Code</summary>
-              <pre className="mono text-xs bg-surface border border-border rounded-md p-3 overflow-x-auto">
-                {`{"mcpServers":{"mnemos":{"command":"mnemos-mcp-stdio"}}}`}
-              </pre>
-            </details>
-            <details>
-              <summary className="display text-base cursor-pointer">
-                Codex / OpenAI function-calling
-              </summary>
-              <pre className="mono text-xs bg-surface border border-border rounded-md p-3 overflow-x-auto">
-                {`see adapters/openai-functions/schema.json`}
-              </pre>
-            </details>
-            <details>
-              <summary className="display text-base cursor-pointer">Generic MCP</summary>
-              <pre className="mono text-xs bg-surface border border-border rounded-md p-3 overflow-x-auto">
-                {`see adapters/generic-mcp/example.json`}
-              </pre>
-            </details>
+            <Connections />
             <div className="flex justify-between">
               <button className="label text-text-muted" onClick={() => setStep(1)}>
                 Back

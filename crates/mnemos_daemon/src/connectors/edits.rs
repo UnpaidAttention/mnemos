@@ -1,0 +1,421 @@
+//! File-edit primitives for tool connectors: safe backup + atomic write, and
+//! the JSON-merge / marked-block strategies used to add or remove the mnemos
+//! entry from a tool's config files.
+
+use std::path::Path;
+
+/// Back up `path` to `<path>.mnemos.bak` if it exists and no backup exists yet.
+pub fn backup(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let bak = path.with_extension(format!(
+        "{}.mnemos.bak",
+        path.extension().and_then(|e| e.to_str()).unwrap_or("")
+    ));
+    if !bak.exists() {
+        std::fs::copy(path, &bak).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Write `contents` to `path` atomically using a unique temp file in the same
+/// directory, then rename into place.
+///
+/// Using `tempfile::NamedTempFile` avoids two races that the old fixed-name
+/// `.mnemos.tmp` approach suffered from:
+///   1. Two concurrent writers targeting the same destination would clobber
+///      each other's temp file.
+///   2. If the rename failed (e.g. cross-device) the orphaned `.mnemos.tmp`
+///      was left on disk; `NamedTempFile` deletes it on drop instead.
+pub fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
+    // Determine the directory in which to create the temp file.  The temp file
+    // MUST live on the same filesystem as the destination so that the rename is
+    // atomic.  `path.parent()` covers the overwhelming majority of cases; if
+    // `path` has no parent component (bare filename, extremely unlikely in
+    // practice) we fall back to the current directory.
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+
+    use std::io::Write as _;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    tmp.write_all(contents.as_bytes())
+        .map_err(|e| e.to_string())?;
+    // `persist` does the atomic rename; on failure it returns the NamedTempFile
+    // back so the caller can inspect the error — and `Drop` cleans up the temp
+    // file automatically if this function returns an Err.
+    tmp.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Insert `value` at `pointer`/`key` in a JSON document string, creating
+/// intermediate objects as needed. Returns the new document string. Idempotent
+/// (replaces an existing key, never duplicates).
+pub fn json_merge(
+    doc: &str,
+    pointer: &[&str],
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<String, String> {
+    let mut root: serde_json::Value = if doc.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(doc).map_err(|e| e.to_string())?
+    };
+    if !root.is_object() {
+        return Err("config root is not a JSON object".into());
+    }
+    let mut cur = &mut root;
+    for seg in pointer {
+        cur = cur
+            .as_object_mut()
+            .ok_or_else(|| format!("`{seg}` parent is not an object"))?
+            .entry(seg.to_string())
+            .or_insert_with(|| serde_json::json!({}));
+    }
+    cur.as_object_mut()
+        .ok_or_else(|| "target is not an object".to_string())?
+        .insert(key.to_string(), value.clone());
+    serde_json::to_string_pretty(&root).map_err(|e| e.to_string())
+}
+
+/// True if `pointer`/`key` exists in the JSON document.
+pub fn json_has(doc: &str, pointer: &[&str], key: &str) -> bool {
+    let root: serde_json::Value = match serde_json::from_str(doc) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let mut cur = &root;
+    for seg in pointer {
+        match cur.get(seg) {
+            Some(v) => cur = v,
+            None => return false,
+        }
+    }
+    cur.get(key).is_some()
+}
+
+/// Remove `pointer`/`key` from the JSON document; returns new string. No-op if absent.
+pub fn json_remove(doc: &str, pointer: &[&str], key: &str) -> Result<String, String> {
+    let mut root: serde_json::Value = if doc.trim().is_empty() {
+        return Ok(doc.to_string());
+    } else {
+        serde_json::from_str(doc).map_err(|e| e.to_string())?
+    };
+    let mut cur = &mut root;
+    for seg in pointer {
+        match cur.as_object_mut().and_then(|o| o.get_mut(*seg)) {
+            Some(v) => cur = v,
+            None => return serde_json::to_string_pretty(&root).map_err(|e| e.to_string()),
+        }
+    }
+    if let Some(o) = cur.as_object_mut() {
+        o.remove(key);
+    }
+    serde_json::to_string_pretty(&root).map_err(|e| e.to_string())
+}
+
+pub const BLOCK_START: &str = "<!-- mnemos:start -->";
+pub const BLOCK_END: &str = "<!-- mnemos:end -->";
+
+/// Insert or replace the marked block containing `body` in `doc`. The block is
+/// delimited by BLOCK_START/BLOCK_END so it can be detected and removed cleanly.
+///
+/// Malformed-document policy (single marker present, or markers in reversed order):
+///   - A well-formed pair (`start.is_some() && end.is_some() && start_idx < end_idx`)
+///     triggers an in-place replace.
+///   - NEITHER marker present → append a fresh block (normal first-write path).
+///   - Any other case (exactly one marker, or end before start) is malformed.  To
+///     avoid creating a second `BLOCK_START` or producing corrupted output we first
+///     strip any lone `BLOCK_START` or `BLOCK_END` lines from the document, then
+///     append a fresh, well-formed block.
+pub fn marked_block_apply(doc: &str, body: &str) -> String {
+    let block = format!("{BLOCK_START}\n{}\n{BLOCK_END}", body.trim_end());
+    let start_idx = doc.find(BLOCK_START);
+    let end_idx = doc.find(BLOCK_END);
+
+    match (start_idx, end_idx) {
+        // Well-formed pair in correct order — replace in-place.
+        (Some(s), Some(e)) if s < e => {
+            let end = e + BLOCK_END.len();
+            let mut out = String::with_capacity(doc.len());
+            out.push_str(&doc[..s]);
+            out.push_str(&block);
+            out.push_str(&doc[end..]);
+            out
+        }
+        // Neither marker present — first-write append.
+        (None, None) => {
+            let sep = if doc.is_empty() || doc.ends_with('\n') {
+                ""
+            } else {
+                "\n"
+            };
+            format!("{doc}{sep}\n{block}\n")
+        }
+        // Malformed: exactly one marker, or end before start.  Strip any lone
+        // marker lines to avoid duplicates, then append a clean block.
+        _ => {
+            let cleaned: String = doc
+                .lines()
+                .filter(|l| *l != BLOCK_START && *l != BLOCK_END)
+                .collect::<Vec<_>>()
+                .join("\n");
+            // Re-add the trailing newline that `lines()` strips.
+            let cleaned = if doc.ends_with('\n') {
+                format!("{cleaned}\n")
+            } else {
+                cleaned
+            };
+            let sep = if cleaned.is_empty() || cleaned.ends_with('\n') {
+                ""
+            } else {
+                "\n"
+            };
+            format!("{cleaned}{sep}\n{block}\n")
+        }
+    }
+}
+
+/// True if the marked block is present AND well-formed (start before end).
+pub fn marked_block_present(doc: &str) -> bool {
+    match (doc.find(BLOCK_START), doc.find(BLOCK_END)) {
+        (Some(s), Some(e)) => s < e,
+        _ => false,
+    }
+}
+
+/// Remove the marked block. No-op if absent or malformed. Preserves surrounding content.
+///
+/// Only removes when both markers are found AND start appears before end; a
+/// malformed document (single marker, or reversed order) is returned unchanged
+/// to avoid emitting corrupted slices.
+pub fn marked_block_remove(doc: &str) -> String {
+    match (doc.find(BLOCK_START), doc.find(BLOCK_END)) {
+        (Some(s), Some(e)) if s < e => {
+            let end = (e + BLOCK_END.len()).min(doc.len());
+            let mut out = String::new();
+            out.push_str(doc[..s].trim_end_matches('\n'));
+            out.push_str(&doc[end..]);
+            out
+        }
+        _ => doc.to_string(),
+    }
+}
+
+/// Insert the table parsed from `value_toml` at `table_path`/`key` in a TOML
+/// document. Creates intermediate tables. Idempotent (replaces the key).
+pub fn toml_merge(
+    doc: &str,
+    table_path: &[&str],
+    key: &str,
+    value_toml: &str,
+) -> Result<String, String> {
+    let mut root: toml::Value = if doc.trim().is_empty() {
+        toml::Value::Table(toml::map::Map::new())
+    } else {
+        doc.parse().map_err(|e: toml::de::Error| e.to_string())?
+    };
+    if !root.is_table() {
+        return Err("config root is not a TOML table".into());
+    }
+    let mut cur = &mut root;
+    for seg in table_path {
+        cur = cur
+            .as_table_mut()
+            .ok_or_else(|| format!("`{seg}` parent is not a table"))?
+            .entry(seg.to_string())
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    }
+    let entry: toml::Value = value_toml
+        .parse()
+        .map_err(|e: toml::de::Error| e.to_string())?;
+    cur.as_table_mut()
+        .ok_or_else(|| "target is not a table".to_string())?
+        .insert(key.to_string(), entry);
+    toml::to_string_pretty(&root).map_err(|e| e.to_string())
+}
+
+/// True if `table_path`/`key` exists in the TOML document.
+pub fn toml_has(doc: &str, table_path: &[&str], key: &str) -> bool {
+    let root: toml::Value = match doc.parse() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let mut cur = &root;
+    for seg in table_path {
+        match cur.get(seg) {
+            Some(v) => cur = v,
+            None => return false,
+        }
+    }
+    cur.get(key).is_some()
+}
+
+/// Remove `table_path`/`key` from the TOML document. No-op if absent.
+pub fn toml_remove(doc: &str, table_path: &[&str], key: &str) -> Result<String, String> {
+    if doc.trim().is_empty() {
+        return Ok(doc.to_string());
+    }
+    let mut root: toml::Value = doc.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let mut cur = &mut root;
+    for seg in table_path {
+        match cur.as_table_mut().and_then(|t| t.get_mut(*seg)) {
+            Some(v) => cur = v,
+            None => return toml::to_string_pretty(&root).map_err(|e| e.to_string()),
+        }
+    }
+    if let Some(t) = cur.as_table_mut() {
+        t.remove(key);
+    }
+    toml::to_string_pretty(&root).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn json_merge_inserts_nested_and_is_idempotent() {
+        let v = json!({"command":"mnemos-mcp-stdio"});
+        let once = json_merge("{}", &["mcp", "servers"], "mnemos", &v).unwrap();
+        assert!(json_has(&once, &["mcp", "servers"], "mnemos"));
+        let twice = json_merge(&once, &["mcp", "servers"], "mnemos", &v).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&twice).unwrap();
+        assert_eq!(parsed["mcp"]["servers"].as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn json_merge_preserves_existing_keys() {
+        let start = r#"{"mcpServers":{"other":{"command":"x"}}}"#;
+        let out = json_merge(
+            start,
+            &["mcpServers"],
+            "mnemos",
+            &json!({"command":"mnemos-mcp-stdio"}),
+        )
+        .unwrap();
+        assert!(json_has(&out, &["mcpServers"], "other"));
+        assert!(json_has(&out, &["mcpServers"], "mnemos"));
+    }
+
+    #[test]
+    fn json_remove_strips_only_mnemos() {
+        let start = r#"{"mcpServers":{"other":{},"mnemos":{}}}"#;
+        let out = json_remove(start, &["mcpServers"], "mnemos").unwrap();
+        assert!(!json_has(&out, &["mcpServers"], "mnemos"));
+        assert!(json_has(&out, &["mcpServers"], "other"));
+    }
+
+    #[test]
+    fn backup_and_atomic_write_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("c.json");
+        std::fs::write(&f, "{}").unwrap();
+        backup(&f).unwrap();
+        assert!(f.with_extension("json.mnemos.bak").exists());
+        atomic_write(&f, "{\"a\":1}").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "{\"a\":1}");
+    }
+
+    #[test]
+    fn marked_block_apply_is_idempotent_and_removable() {
+        let original = "# My CLAUDE.md\n\nmy own notes\n";
+        let once = marked_block_apply(original, "hint body");
+        assert!(marked_block_present(&once));
+        assert!(once.contains("my own notes"), "preserves user content");
+        let twice = marked_block_apply(&once, "hint body");
+        assert_eq!(once.matches(BLOCK_START).count(), 1);
+        assert_eq!(twice.matches(BLOCK_START).count(), 1, "no duplicate block");
+        let removed = marked_block_remove(&twice);
+        assert!(!marked_block_present(&removed));
+        assert!(
+            removed.contains("my own notes"),
+            "user content survives removal"
+        );
+    }
+
+    #[test]
+    fn toml_merge_inserts_nested_table_idempotently_and_preserves_keys() {
+        let start = "model = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"x\"\n";
+        let once = toml_merge(
+            start,
+            &["mcp_servers"],
+            "mnemos",
+            "command = \"mnemos-mcp-stdio\"\nargs = []",
+        )
+        .unwrap();
+        assert!(toml_has(&once, &["mcp_servers"], "mnemos"));
+        assert!(
+            toml_has(&once, &["mcp_servers"], "other"),
+            "keeps other server"
+        );
+        assert!(once.contains("model = \"gpt\""), "keeps top-level key");
+        // idempotent
+        let twice = toml_merge(
+            &once,
+            &["mcp_servers"],
+            "mnemos",
+            "command = \"mnemos-mcp-stdio\"\nargs = []",
+        )
+        .unwrap();
+        let parsed: toml::Value = twice.parse().unwrap();
+        assert_eq!(parsed["mcp_servers"].as_table().unwrap().len(), 2);
+        // removable
+        let removed = toml_remove(&twice, &["mcp_servers"], "mnemos").unwrap();
+        assert!(!toml_has(&removed, &["mcp_servers"], "mnemos"));
+        assert!(toml_has(&removed, &["mcp_servers"], "other"));
+    }
+
+    #[test]
+    fn marked_block_handles_malformed_single_marker() {
+        // --- only BLOCK_START present (no end) ---
+        let only_start = format!("# header\n{BLOCK_START}\nsome content\n");
+
+        // marked_block_present must be false — a lone start is not a valid block.
+        assert!(
+            !marked_block_present(&only_start),
+            "lone start marker must not count as present"
+        );
+
+        // marked_block_remove must return the document unchanged.
+        assert_eq!(
+            marked_block_remove(&only_start),
+            only_start,
+            "remove on lone-start doc must be a no-op"
+        );
+
+        // marked_block_apply must not produce two BLOCK_START occurrences.
+        let applied = marked_block_apply(&only_start, "new body");
+        assert_eq!(
+            applied.matches(BLOCK_START).count(),
+            1,
+            "apply on lone-start doc must not duplicate BLOCK_START"
+        );
+        assert!(
+            applied.contains(BLOCK_END),
+            "apply on lone-start doc must produce a closing BLOCK_END"
+        );
+        assert!(marked_block_present(&applied), "result must be well-formed");
+
+        // --- BLOCK_END before BLOCK_START (reversed order) ---
+        let reversed = format!("# header\n{BLOCK_END}\nmiddle\n{BLOCK_START}\nfooter\n");
+
+        // marked_block_present must be false — end before start is not valid.
+        assert!(
+            !marked_block_present(&reversed),
+            "reversed markers must not count as present"
+        );
+
+        // marked_block_remove must return the document unchanged.
+        assert_eq!(
+            marked_block_remove(&reversed),
+            reversed,
+            "remove on reversed-marker doc must be a no-op"
+        );
+    }
+}
