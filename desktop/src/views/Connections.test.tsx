@@ -15,12 +15,20 @@ vi.mock("../api/client", () => ({
 const base = {
   id: "claude-code", display_name: "Claude Code", kind: "detectable" as const,
   deprecated: null, installed: true, connected: "none" as const,
+  autonomy_status: "not_installed" as const, requires_service: true,
   manual_snippet: null, edits: [{ path: "~/.claude.json", present: false }],
 };
 
 const connected = {
   ...base,
   connected: "full" as const,
+  autonomy_status: "connected" as const,
+};
+
+const autonomous = {
+  ...base,
+  connected: "full" as const,
+  autonomy_status: "autonomous" as const,
 };
 
 describe("Connections", () => {
@@ -34,7 +42,8 @@ describe("Connections", () => {
   it("lists detected tools with status", async () => {
     render(<Connections />);
     expect(await screen.findByText("Claude Code")).toBeInTheDocument();
-    expect(screen.getByText(/installed/i)).toBeInTheDocument();
+    // statusLabel returns "Installed" when kind=detectable, installed=true, connected=none
+    expect(screen.getAllByText(/installed/i).length).toBeGreaterThan(0);
   });
 
   it("previews then connects on confirm", async () => {
@@ -77,5 +86,26 @@ describe("Connections", () => {
     await waitFor(() =>
       expect(client.disconnectConnector).toHaveBeenCalledWith("claude-code"),
     );
+  });
+
+  it("shows 'Not installed' label for autonomy_status not_installed", async () => {
+    vi.mocked(client.listConnectors).mockResolvedValue([{ ...base, autonomy_status: "not_installed" }]);
+    render(<Connections />);
+    await screen.findByText("Claude Code");
+    expect(screen.getByText(/not installed/i)).toBeInTheDocument();
+  });
+
+  it("shows 'Connected' badge for autonomy_status connected", async () => {
+    vi.mocked(client.listConnectors).mockResolvedValue([connected]);
+    render(<Connections />);
+    await screen.findByText("Claude Code");
+    expect(screen.getByText(/MCP connected/i)).toBeInTheDocument();
+  });
+
+  it("shows 'Fully autonomous' badge for autonomy_status autonomous", async () => {
+    vi.mocked(client.listConnectors).mockResolvedValue([autonomous]);
+    render(<Connections />);
+    await screen.findByText("Claude Code");
+    expect(screen.getByText(/fully autonomous/i)).toBeInTheDocument();
   });
 });

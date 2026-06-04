@@ -1,22 +1,38 @@
 import { useState } from "react";
 import { client } from "../api/client";
+import { enableService } from "../api/tauri";
 import { Button, Card } from "../design/primitives";
 import { Connections } from "./Connections";
 
-type Step = 0 | 1 | 2;
+// 0: vault intro, 1: embedder, 2: background service, 3: connect tools
+type Step = 0 | 1 | 2 | 3;
 
 export function FirstRun({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<Step>(0);
+  const [serviceState, setServiceState] = useState<"idle" | "enabling" | "done" | "skipped">(
+    "idle",
+  );
 
   const finish = async () => {
     await client.completeFirstRun();
     onClose();
   };
 
+  const handleEnableService = async () => {
+    setServiceState("enabling");
+    try {
+      await enableService();
+      setServiceState("done");
+    } catch {
+      // Non-fatal: user can do it manually; proceed anyway
+      setServiceState("skipped");
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <Card className="w-[40rem] p-6 space-y-4">
-        <div className="label">Welcome · step {step + 1} of 3</div>
+        <div className="label">Welcome · step {step + 1} of 4</div>
         {step === 0 && (
           <>
             <h1 className="display text-2xl">Set up your memory vault</h1>
@@ -54,6 +70,53 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
         )}
         {step === 2 && (
           <>
+            <h1 className="display text-xl">Enable background memory</h1>
+            <p className="text-text-muted font-body">
+              Mnemos can run as a background service so every connected tool gets persistent memory
+              automatically — even outside active terminal sessions.
+            </p>
+            <p className="text-text-muted font-body text-sm">
+              This installs a systemd user unit via <span className="mono">mnemos service enable</span>.
+              You can disable it anytime with <span className="mono">mnemos service disable</span>.
+            </p>
+            {serviceState === "idle" && (
+              <Button onClick={() => void handleEnableService()}>
+                Enable background service
+              </Button>
+            )}
+            {serviceState === "enabling" && (
+              <span className="label" aria-busy="true">Enabling…</span>
+            )}
+            {serviceState === "done" && (
+              <span className="label text-accent">
+                ✓ Background service enabled — Mnemos now runs in the background automatically.
+              </span>
+            )}
+            {serviceState === "skipped" && (
+              <span className="label text-text-muted">
+                Could not enable the service automatically. You can run{" "}
+                <span className="mono">mnemos service enable</span> in a terminal.
+              </span>
+            )}
+            <div className="flex justify-between">
+              <button className="label text-text-muted" onClick={() => setStep(1)}>
+                Back
+              </button>
+              <div className="flex gap-2">
+                {serviceState === "idle" && (
+                  <button className="label text-text-muted" onClick={() => setStep(3)}>
+                    Skip
+                  </button>
+                )}
+                {(serviceState === "done" || serviceState === "skipped") && (
+                  <Button onClick={() => setStep(3)}>Continue</Button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+        {step === 3 && (
+          <>
             <h1 className="display text-xl">Connect your AI tools</h1>
             <p className="text-text-muted font-body">
               The Mnemos daemon is running with the bundled embedder. Connect your AI tools below to
@@ -61,7 +124,7 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
             </p>
             <Connections />
             <div className="flex justify-between">
-              <button className="label text-text-muted" onClick={() => setStep(1)}>
+              <button className="label text-text-muted" onClick={() => setStep(2)}>
                 Back
               </button>
               <Button onClick={finish}>Finish setup</Button>

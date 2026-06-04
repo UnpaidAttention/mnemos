@@ -29,6 +29,7 @@ fn main() {
             commands::pick_vault_dir,
             commands::daemon_status,
             commands::move_vault,
+            commands::enable_service,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

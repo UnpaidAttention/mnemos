@@ -33,3 +33,8 @@ export function daemonStatus(): Promise<DaemonStatus | null> {
 export function moveVault(newPath: string): Promise<{ moved_to: string } | null> {
   return invokeSafe<{ moved_to: string }>("move_vault", { newPath });
 }
+
+/** Enables the mnemos background service so hooks fire outside CLI sessions. */
+export function enableService(): Promise<{ enabled: boolean } | null> {
+  return invokeSafe<{ enabled: boolean }>("enable_service");
+}

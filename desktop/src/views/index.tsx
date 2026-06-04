@@ -12,3 +12,5 @@ export { Settings } from "./Settings";
 export { Doctor } from "./Doctor";
 export { EmbedRebuild } from "./EmbedRebuild";
 export { Connections } from "./Connections";
+export { Knowledge } from "./Knowledge";
+export { AutonomySettings } from "./AutonomySettings";

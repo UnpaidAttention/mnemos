@@ -4,6 +4,7 @@ import type {
 import { getToken } from "./token";
 
 export interface ConnectorEdit { path: string; present: boolean }
+export type AutonomyStatus = "autonomous" | "connected" | "not_installed";
 export interface Connector {
   id: string;
   display_name: string;
@@ -11,8 +12,26 @@ export interface Connector {
   deprecated: string | null;
   installed: boolean;
   connected: "full" | "partial" | "none";
+  autonomy_status: AutonomyStatus;
+  requires_service: boolean;
   manual_snippet: { target: string; snippet: string } | null;
   edits: ConnectorEdit[];
+}
+
+export interface AutonomyConfig {
+  capture: boolean;
+  retention: "distill-and-prune" | "keep-raw";
+  recall_budget_chars: number;
+}
+
+export interface Correction {
+  id: string;
+  title: string;
+  body: string;
+  created_at: string;
+  tags: string[];
+  tier: string;
+  type: string;
 }
 export interface ConnectorPreview {
   id: string;
@@ -174,6 +193,32 @@ export class MnemosClient {
   }
   async completeFirstRun() {
     return this.req<{ completed: true }>("POST", "/v1/first-run/complete");
+  }
+
+  async getAutonomyConfig(): Promise<AutonomyConfig> {
+    const cfg = await this.req<{ autonomy?: Partial<AutonomyConfig> }>("GET", "/v1/config");
+    const a = cfg.autonomy ?? {};
+    return {
+      capture: a.capture ?? true,
+      retention: (a.retention as AutonomyConfig["retention"]) ?? "distill-and-prune",
+      recall_budget_chars: a.recall_budget_chars ?? 1200,
+    };
+  }
+
+  putAutonomyConfig(autonomy: AutonomyConfig) {
+    return this.req<{ saved: boolean; path: string; restart_required_for: string[] }>(
+      "PUT", "/v1/config", { autonomy },
+    );
+  }
+
+  async listCorrections(opts: { hardened?: boolean; limit?: number } = {}): Promise<import("./types").Memory[]> {
+    const p = new URLSearchParams();
+    if (opts.hardened) p.set("hardened", "true");
+    if (opts.limit !== undefined) p.set("limit", String(opts.limit));
+    const qs = p.toString();
+    return (await this.req<{ corrections: import("./types").Memory[] }>(
+      "GET", `/v1/corrections${qs ? `?${qs}` : ""}`,
+    )).corrections;
   }
 
   async listConnectors(): Promise<Connector[]> {

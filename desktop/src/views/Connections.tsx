@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { client, type Connector, type ConnectorPreview } from "../api/client";
+import { client, type AutonomyStatus, type Connector, type ConnectorPreview } from "../api/client";
 import { Button, Card } from "../design/primitives";
 
 type PreviewState = { connectorId: string; preview: ConnectorPreview };
@@ -10,6 +10,26 @@ function statusLabel(c: Connector): string {
   if (c.kind === "manual") return "Available";
   if (c.kind === "detectable" && !c.installed) return "Not installed";
   return "Installed";
+}
+
+const AUTONOMY_LABEL: Record<AutonomyStatus, string> = {
+  autonomous: "Fully autonomous",
+  connected: "MCP connected",
+  not_installed: "Not installed",
+};
+
+const AUTONOMY_CLASS: Record<AutonomyStatus, string> = {
+  autonomous: "text-accent",
+  connected: "text-tier-semantic",
+  not_installed: "text-text-muted",
+};
+
+function AutonomyBadge({ status }: { status: AutonomyStatus }) {
+  return (
+    <span className={`label ${AUTONOMY_CLASS[status]}`}>
+      {AUTONOMY_LABEL[status]}
+    </span>
+  );
 }
 
 export function Connections() {
@@ -113,6 +133,19 @@ export function Connections() {
             <div className="space-y-1">
               <div className="display text-base">{c.display_name}</div>
               <span className="label text-text-muted">{statusLabel(c)}</span>
+              {c.autonomy_status && (
+                <AutonomyBadge status={c.autonomy_status} />
+              )}
+              {c.autonomy_status === "autonomous" && (
+                <div className="font-body text-xs text-accent mt-0.5">
+                  Running in background — every connected tool gets memory automatically.
+                </div>
+              )}
+              {c.autonomy_status === "connected" && (
+                <div className="font-body text-xs text-text-muted mt-0.5">
+                  MCP only. Re-connect to enable full background capture.
+                </div>
+              )}
               {c.deprecated && (
                 <div className="label text-tier-procedural">
                   Deprecated: {c.deprecated}

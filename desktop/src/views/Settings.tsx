@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { client } from "../api/client";
 import { VaultIO } from "../components/VaultIO";
 import { StorageSettings } from "./StorageSettings";
+import { AutonomySettings } from "./AutonomySettings";
 import { Button, Card, Skeleton } from "../design/primitives";
 import { Connections } from "./Connections";
 
@@ -183,6 +184,7 @@ export function Settings() {
         </div>
       </div>
       <StorageSettings />
+      <AutonomySettings />
       <Card className="p-4">
         <details open className="space-y-3">
           <summary className="display text-base cursor-pointer">AI Tool Connections</summary>

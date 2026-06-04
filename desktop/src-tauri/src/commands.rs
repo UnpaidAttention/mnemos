@@ -2,6 +2,7 @@ use crate::{config_io, daemon, vault_move};
 use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_shell::ShellExt;
 
 #[derive(Serialize)]
 pub struct MoveResult {
@@ -18,6 +19,25 @@ pub async fn pick_vault_dir(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 pub async fn daemon_status(app: AppHandle) -> Result<daemon::DaemonStatus, String> {
     Ok(daemon::status(&app).await)
+}
+
+/// Run `mnemos service enable` to install the background service so hooks fire
+/// outside active CLI sessions. Returns `{ enabled: true }` on success.
+#[tauri::command]
+pub async fn enable_service(app: AppHandle) -> Result<serde_json::Value, String> {
+    let output = app
+        .shell()
+        .command("mnemos")
+        .args(["service", "enable"])
+        .output()
+        .await
+        .map_err(|e| format!("failed to launch mnemos: {e}"))?;
+    if output.status.success() {
+        Ok(serde_json::json!({ "enabled": true }))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("mnemos service enable failed: {stderr}"))
+    }
 }
 
 /// Orchestrate a vault move: validate → stop → write config → move →
