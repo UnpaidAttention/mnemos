@@ -39,9 +39,15 @@ async fn main() -> Result<()> {
     match args.command.unwrap_or(Cmd::Serve) {
         Cmd::Serve => serve_cmd(cfg).await,
         Cmd::PrintConfig => {
+            // Print the config with secrets masked so the command is safe to
+            // paste into logs or bug reports. We go via JSON → pretty-print
+            // because `ConfigView` borrows from `cfg` and the TOML serialiser
+            // accepts any `Serialize`.
+            use mnemos_daemon::routes::config::ConfigView;
+            let view = ConfigView::from_config(&cfg);
             println!(
                 "{}",
-                toml::to_string_pretty(&cfg).unwrap_or_else(|e| e.to_string())
+                serde_json::to_string_pretty(&view).unwrap_or_else(|e| e.to_string())
             );
             Ok(())
         }

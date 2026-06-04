@@ -59,6 +59,82 @@ async fn get_and_put_config_round_trip() {
     assert!(on_disk.contains("port = 7423"));
 }
 
+/// P0-7: GET /v1/config must NOT return secret values.
+///
+/// Verifies that `openai.api_key` and `sync.turso.auth_token` are masked in
+/// the response — the real values must never appear — and that the sentinel
+/// `"(not set)"` / `"(set)"` strings are present so callers can tell whether
+/// a secret is configured.
+#[tokio::test]
+async fn get_config_masks_secrets() {
+    let vault_tmp = Box::leak(Box::new(TempDir::new().unwrap()));
+    let vault = Vault::open(Paths::with_root(vault_tmp.path()))
+        .await
+        .unwrap();
+
+    // Build a config that has real-looking secret values.
+    let mut cfg = Config::default();
+    cfg.openai.api_key = "sk-realkey1234567890".to_string();
+    cfg.sync.turso.auth_token = "turso-secret-token-xyz".to_string();
+
+    let (app, state) = build_app(cfg, vault).await.unwrap();
+
+    let (status, body) = call(app, "GET", "/v1/config", Some(&state.token), "").await;
+    assert_eq!(status, StatusCode::OK, "GET body={body}");
+
+    // The real secret values MUST NOT appear anywhere in the response body.
+    assert!(
+        !body.contains("sk-realkey1234567890"),
+        "openai.api_key leaked in GET /v1/config: {body}"
+    );
+    assert!(
+        !body.contains("turso-secret-token-xyz"),
+        "sync.turso.auth_token leaked in GET /v1/config: {body}"
+    );
+
+    // The response MUST include the sentinel values so callers know whether
+    // secrets are set.
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        v["openai"]["api_key"].as_str(),
+        Some("(set)"),
+        "openai.api_key should be masked as '(set)': {body}"
+    );
+    assert_eq!(
+        v["sync"]["turso"]["auth_token"].as_str(),
+        Some("(set)"),
+        "sync.turso.auth_token should be masked as '(set)': {body}"
+    );
+}
+
+/// P0-7 companion: when secrets are empty, the GET response shows "(not set)".
+#[tokio::test]
+async fn get_config_shows_not_set_for_empty_secrets() {
+    let vault_tmp = Box::leak(Box::new(TempDir::new().unwrap()));
+    let vault = Vault::open(Paths::with_root(vault_tmp.path()))
+        .await
+        .unwrap();
+
+    // Default config has empty secrets.
+    let cfg = Config::default();
+    let (app, state) = build_app(cfg, vault).await.unwrap();
+
+    let (status, body) = call(app, "GET", "/v1/config", Some(&state.token), "").await;
+    assert_eq!(status, StatusCode::OK, "GET body={body}");
+
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        v["openai"]["api_key"].as_str(),
+        Some("(not set)"),
+        "empty api_key should show '(not set)': {body}"
+    );
+    assert_eq!(
+        v["sync"]["turso"]["auth_token"].as_str(),
+        Some("(not set)"),
+        "empty auth_token should show '(not set)': {body}"
+    );
+}
+
 async fn call(
     app: axum::Router,
     method: &str,
