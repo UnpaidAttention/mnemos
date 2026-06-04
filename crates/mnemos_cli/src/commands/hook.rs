@@ -34,7 +34,7 @@ const WORKING_SET_BYTE_CAP: usize = 8_000;
 ///
 /// Always returns `ExitCode::SUCCESS` (fail-open guarantee).
 pub async fn run(event: &str) -> ExitCode {
-    let input = read_stdin_json();
+    let input = read_stdin_json().await;
     let out = match event {
         "session-start" => session_start(input).await,
         "user-prompt" => user_prompt(input).await, // TODO(B3)
@@ -144,12 +144,18 @@ pub fn working_set_hook_json(text: &str) -> Option<String> {
 // ── Private I/O helpers ───────────────────────────────────────────────────────
 
 /// Read all of stdin and parse as JSON. Returns `Value::Null` on any error.
-fn read_stdin_json() -> Value {
-    let mut buf = String::new();
-    if std::io::stdin().read_to_string(&mut buf).is_err() {
-        return Value::Null;
-    }
-    serde_json::from_str(&buf).unwrap_or(Value::Null)
+///
+/// Uses `spawn_blocking` so the read never stalls the async executor.
+async fn read_stdin_json() -> Value {
+    let result = tokio::task::spawn_blocking(|| {
+        let mut buf = String::new();
+        if std::io::stdin().read_to_string(&mut buf).is_err() {
+            return Value::Null;
+        }
+        serde_json::from_str(&buf).unwrap_or(Value::Null)
+    })
+    .await;
+    result.unwrap_or(Value::Null)
 }
 
 /// Load the daemon bearer token from the standard path. Returns `None` on error.

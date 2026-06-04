@@ -1,9 +1,9 @@
 //! `GET /v1/working` — returns the working set (working-tier memories +
 //! hardened reflection rules), optionally scoped to a workspace.
 //!
-//! Reuses the same builder logic as the MCP `mnemos://working` resource
-//! (see `mcp::resources::build_working_set`) to guarantee a single source of
-//! truth. The workspace query param is the only extension over the MCP path.
+//! Exposes `build_working_set` as the single canonical implementation shared
+//! with the MCP `mnemos://working` resource (`mcp::resources`). The workspace
+//! query param is the only extension over the MCP path.
 
 use axum::{extract::Query, extract::State, routing::get, Json, Router};
 use mnemos_core::storage::memory_ops::ListFilter;
