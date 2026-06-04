@@ -131,6 +131,20 @@ mod tests {
 
     #[tokio::test]
     async fn embed_rebuild_in_process_smoke() {
+        // This test exercises the IN-PROCESS rebuild path, which `run()`
+        // intentionally refuses when a daemon is alive (libsql is single-writer;
+        // the daemon owns the DB connection). The guard is global, not
+        // vault-scoped, so any running mnemosd — even one serving a different
+        // vault — makes the in-process path unreachable. Skip rather than fail
+        // when a daemon is up (mirrors the env-gated live-service tests). CI
+        // has no daemon, so this still runs there.
+        if daemon_is_running() {
+            eprintln!(
+                "skipping embed_rebuild_in_process_smoke: a mnemosd is running, \
+                 so the in-process rebuild path is (correctly) refused"
+            );
+            return;
+        }
         let tmp = TempDir::new().unwrap();
         let opts = EmbedRebuildOpts {
             vault: Some(tmp.path().to_path_buf()),
