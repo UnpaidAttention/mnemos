@@ -159,8 +159,13 @@ pub fn json_array_append(
         .entry(last.to_string())
         .or_insert_with(|| serde_json::json!([]));
     if !arr.is_array() {
-        *arr = serde_json::json!([]);
+        return Err(format!(
+            "`{last}` exists but is not a JSON array; refusing to overwrite"
+        ));
     }
+    // invariant: the entry was either just created as `json!([])` by
+    // `or_insert_with` above, or it passed the `is_array()` check — so
+    // `as_array_mut()` is infallible here.
     let arr = arr.as_array_mut().unwrap();
     // Idempotency: skip if any element already has our command.
     if arr.iter().any(|el| element_has_command(el, match_command)) {
@@ -220,6 +225,8 @@ pub fn json_array_remove(
         }
         // Prune empty array key.
         if arr_val.as_array().map(|a| a.is_empty()).unwrap_or(false) {
+            // invariant: `cur` was reached via `as_object_mut()` navigation
+            // above, so it is always an object here.
             cur.as_object_mut().unwrap().remove(leaf);
         }
     }
@@ -684,6 +691,73 @@ mod tests {
         assert!(
             parsed["hooks"].get("SessionStart").is_none(),
             "empty array key must be pruned"
+        );
+    }
+
+    // Fix 1: leaf is a non-array scalar — must Err, must not mutate.
+    #[test]
+    fn json_array_append_returns_err_when_leaf_is_non_array_scalar() {
+        // `hooks.SessionStart` is a string, not an array.
+        let original = r#"{"hooks":{"SessionStart":"oops"}}"#;
+        let result = json_array_append(
+            original,
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start",
+            &session_start_hook(),
+        );
+        assert!(
+            result.is_err(),
+            "must return Err when leaf exists as a non-array value"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("SessionStart"),
+            "error message should name the offending key; got: {err}"
+        );
+        assert!(
+            err.contains("not a JSON array"),
+            "error message should say 'not a JSON array'; got: {err}"
+        );
+        // Crucially: the original content must be untouched (the apply path
+        // must not have written anything before we returned the Err).
+        // We verify this by re-parsing: the key must still be the string "oops".
+        let reparsed: serde_json::Value = serde_json::from_str(original).unwrap();
+        assert_eq!(
+            reparsed["hooks"]["SessionStart"].as_str(),
+            Some("oops"),
+            "original value must be untouched after Err return"
+        );
+    }
+
+    // Fix 4: malformed JSON input — all three array helpers must return Err cleanly.
+    #[test]
+    fn json_array_helpers_return_err_on_malformed_json() {
+        let bad = "{not json";
+        let hook = session_start_hook();
+        let cmd = "mnemos hook session-start";
+        let ptr: &[&str] = &["hooks", "SessionStart"];
+
+        let append_result = json_array_append(bad, ptr, cmd, &hook);
+        assert!(
+            append_result.is_err(),
+            "json_array_append must Err on malformed input"
+        );
+
+        // json_array_has returns bool — false on parse error, no panic.
+        let has_result = std::panic::catch_unwind(|| json_array_has(bad, ptr, cmd));
+        assert!(
+            has_result.is_ok(),
+            "json_array_has must not panic on malformed input"
+        );
+        assert!(
+            !has_result.unwrap(),
+            "json_array_has must return false on malformed input"
+        );
+
+        let remove_result = json_array_remove(bad, ptr, cmd);
+        assert!(
+            remove_result.is_err(),
+            "json_array_remove must Err on malformed input"
         );
     }
 }

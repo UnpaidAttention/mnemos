@@ -94,10 +94,6 @@ pub struct ToolConnector {
     /// the desktop wizard which handles `mnemos service enable` on behalf of
     /// the user.
     pub requires_service: bool,
-    /// Number of hook-type edits among `edits`. Used to compute
-    /// `autonomy_status`: Autonomous requires all hook edits present (in
-    /// addition to non-hook edits).
-    pub hook_edit_count: usize,
 }
 
 impl ConfigEdit {
@@ -191,13 +187,17 @@ impl ToolConnector {
 
     /// Compute the autonomy status for this connector.
     ///
-    /// - `Autonomous`: all edits present (MCP + all hooks in place).
-    /// - `Connected`: at least the non-hook edits are present, but one or more
-    ///   hook edits are missing.
-    /// - `NotInstalled`: no edits present.
+    /// Contract:
+    /// - `Autonomous`: ALL edits present (MCP entry + CLAUDE.md block + all hooks).
+    ///   The connector is fully self-operating.
+    /// - `Connected`: at least one edit present but not all. Typical case:
+    ///   MCP entry wired but hook edits not yet applied.
+    /// - `NotInstalled`: no edits present at all.
     ///
-    /// If the connector has no hook edits (hook_edit_count == 0),
-    /// `Connected::Full` maps to `Autonomous` (no hooks = nothing extra needed).
+    /// This is a pure count of present/total edits — no distinction between
+    /// hook edits and other edit types is made here. The desktop wizard uses
+    /// this status to decide whether to prompt the user for the extra
+    /// `mnemos service enable` step.
     pub fn autonomy_status(&self) -> AutonomyStatus {
         if self.edits.is_empty() {
             return AutonomyStatus::NotInstalled;
@@ -209,7 +209,7 @@ impl ToolConnector {
         } else if present_count == total {
             AutonomyStatus::Autonomous
         } else {
-            // Some edits present but not all — could be only MCP with no hooks yet.
+            // Some edits present but not all — e.g. MCP entry wired but hooks absent.
             AutonomyStatus::Connected
         }
     }
@@ -244,7 +244,6 @@ mod tests {
             }],
             manual_snippet: None,
             requires_service: false,
-            hook_edit_count: 0,
         };
         assert_eq!(c.connected(), Connected::None);
         std::fs::write(&f, c.edits[0].rendered().unwrap()).unwrap();

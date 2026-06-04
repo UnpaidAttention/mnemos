@@ -9,7 +9,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use crate::connectors::{descriptors, edits, AutonomyStatus, Connected};
+use crate::connectors::{descriptors, edits, Connected};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -26,14 +26,6 @@ fn connected_str(c: Connected) -> &'static str {
         Connected::Full => "full",
         Connected::Partial => "partial",
         Connected::None => "none",
-    }
-}
-
-fn autonomy_str(a: AutonomyStatus) -> &'static str {
-    match a {
-        AutonomyStatus::Autonomous => "autonomous",
-        AutonomyStatus::Connected => "connected",
-        AutonomyStatus::NotInstalled => "not_installed",
     }
 }
 
@@ -55,7 +47,7 @@ async fn list(State(_): State<AppState>) -> Result<Json<Value>, ApiError> {
                 "deprecated": c.deprecated,
                 "installed": c.installed(),
                 "connected": connected_str(c.connected()),
-                "autonomy_status": autonomy_str(c.autonomy_status()),
+                "autonomy_status": serde_json::to_value(c.autonomy_status()).unwrap_or(Value::Null),
                 "requires_service": c.requires_service,
                 "manual_snippet": c.manual_snippet.map(|(t, s)| json!({"target": t, "snippet": s})),
                 "edits": c.edits.iter().map(|e| json!({
@@ -132,7 +124,7 @@ async fn connect(
     Ok(Json(json!({
         "id": id,
         "connected": connected_str(c.connected()),
-        "autonomy_status": autonomy_str(c.autonomy_status()),
+        "autonomy_status": serde_json::to_value(c.autonomy_status()).unwrap_or(Value::Null),
         // When true, the caller (desktop wizard) should also run
         // `mnemos service enable` so hooks fire outside CLI sessions.
         "requires_service": c.requires_service,
@@ -145,15 +137,62 @@ async fn disconnect(
 ) -> Result<Json<Value>, ApiError> {
     let c = descriptors::by_id(&id)
         .ok_or_else(|| ApiError::not_found(format!("unknown connector {id}")))?;
+    let mut applied: Vec<std::path::PathBuf> = Vec::new();
     for e in &c.edits {
-        if !e.path().exists() {
+        let path = e.path();
+        if !path.exists() {
             continue;
         }
         let removed = e.removed().map_err(ApiError::bad_request)?;
-        edits::backup(&e.path()).map_err(ApiError::internal)?;
-        edits::atomic_write(&e.path(), &removed).map_err(ApiError::internal)?;
+        let res = (|| -> Result<(), String> {
+            edits::backup(&path)?;
+            edits::atomic_write(&path, &removed)
+        })();
+        if let Err(err) = res {
+            // Rollback: restore every file we already rewrote from its backup.
+            for p in &applied {
+                let bak = bak_path(p);
+                if bak.exists() {
+                    let _ = std::fs::copy(&bak, p);
+                }
+            }
+            let fname = path
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            return Err(ApiError::internal(format!(
+                "disconnect {id} failed at {fname}: {err}"
+            )));
+        }
+        applied.push(path);
     }
     Ok(Json(
         json!({ "id": id, "connected": connected_str(c.connected()) }),
     ))
+}
+
+// Fix 6: verify AutonomyStatus serialises to the expected snake_case strings so
+// that replacing `autonomy_str()` with `serde_json::to_value()` is behaviour-
+// preserving.  The desktop wizard and any existing API consumers depend on
+// these exact string values.
+#[cfg(test)]
+mod tests {
+    use crate::connectors::AutonomyStatus;
+
+    #[test]
+    fn autonomy_status_serialises_to_expected_snake_case_strings() {
+        let cases = [
+            (AutonomyStatus::Autonomous, "autonomous"),
+            (AutonomyStatus::Connected, "connected"),
+            (AutonomyStatus::NotInstalled, "not_installed"),
+        ];
+        for (variant, expected) in cases {
+            let v = serde_json::to_value(variant).expect("serialisation must not fail");
+            assert_eq!(
+                v.as_str(),
+                Some(expected),
+                "AutonomyStatus::{variant:?} must serialise to \"{expected}\""
+            );
+        }
+    }
 }

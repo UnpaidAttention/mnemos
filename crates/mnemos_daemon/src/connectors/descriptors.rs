@@ -107,7 +107,6 @@ pub fn registry() -> Vec<ToolConnector> {
             ],
             manual_snippet: None,
             requires_service: true,
-            hook_edit_count: 3,
         },
         ToolConnector {
             id: "codex",
@@ -131,7 +130,6 @@ pub fn registry() -> Vec<ToolConnector> {
             ],
             manual_snippet: None,
             requires_service: false,
-            hook_edit_count: 0,
         },
         ToolConnector {
             id: "antigravity-cli",
@@ -149,7 +147,6 @@ pub fn registry() -> Vec<ToolConnector> {
             }],
             manual_snippet: None,
             requires_service: false,
-            hook_edit_count: 0,
         },
         ToolConnector {
             id: "gemini-cli",
@@ -167,7 +164,6 @@ pub fn registry() -> Vec<ToolConnector> {
             }],
             manual_snippet: None,
             requires_service: false,
-            hook_edit_count: 0,
         },
         manual(
             "generic-mcp",
@@ -211,7 +207,6 @@ fn manual(
         edits: vec![],
         manual_snippet: Some((target_hint, snippet)),
         requires_service: false,
-        hook_edit_count: 0,
     }
 }
 
@@ -231,7 +226,6 @@ mod tests {
         let claude = r.iter().find(|c| c.id == "claude-code").unwrap();
         assert_eq!(claude.edits.len(), 5, "MCP + CLAUDE.md hint + 3 hooks");
         assert!(claude.requires_service, "claude-code needs daemon service");
-        assert_eq!(claude.hook_edit_count, 3);
         // Verify the hook edits are JsonArrayAppend
         assert!(matches!(
             claude.edits[2].strategy,
@@ -251,7 +245,6 @@ mod tests {
             "Codex uses TOML"
         );
         assert!(!codex.requires_service);
-        assert_eq!(codex.hook_edit_count, 0);
         assert!(r
             .iter()
             .find(|c| c.id == "gemini-cli")
@@ -349,13 +342,12 @@ mod tests {
             ],
             manual_snippet: None,
             requires_service: true,
-            hook_edit_count: 3,
         }
     }
 
     #[test]
     fn autonomy_status_not_installed_when_no_edits_present() {
-        let _guard = AUTONOMY_ENV_MUTEX.lock().unwrap();
+        let _guard = AUTONOMY_ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let mcp_f = dir.path().join("claude.json");
         let md_f = dir.path().join("CLAUDE.md");
@@ -372,7 +364,7 @@ mod tests {
 
     #[test]
     fn autonomy_status_connected_when_only_mcp_present() {
-        let _guard = AUTONOMY_ENV_MUTEX.lock().unwrap();
+        let _guard = AUTONOMY_ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let mcp_f = dir.path().join("claude.json");
         let md_f = dir.path().join("CLAUDE.md");
@@ -396,7 +388,7 @@ mod tests {
 
     #[test]
     fn autonomy_status_autonomous_when_all_edits_present() {
-        let _guard = AUTONOMY_ENV_MUTEX.lock().unwrap();
+        let _guard = AUTONOMY_ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let mcp_f = dir.path().join("claude.json");
         let md_f = dir.path().join("CLAUDE.md");
