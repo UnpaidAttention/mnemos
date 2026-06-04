@@ -85,4 +85,15 @@ describe("AutonomySettings", () => {
     expect(options).toContain("distill-and-prune");
     expect(options).toContain("keep-raw");
   });
+
+  it("shows error alert instead of skeleton when getAutonomyConfig rejects", async () => {
+    vi.mocked(client.getAutonomyConfig).mockRejectedValue(new Error("daemon offline"));
+    renderWithQuery(<AutonomySettings />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toBeInTheDocument();
+    expect(alert).toHaveTextContent(/daemon offline/i);
+    // skeleton (no checkbox/combobox) must not be present
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
 });

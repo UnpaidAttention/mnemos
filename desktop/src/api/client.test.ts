@@ -1,3 +1,4 @@
+import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { handlers } from "../test/handlers";
 import { MnemosClient } from "./client";
@@ -23,4 +24,15 @@ test("search returns hits with explain ranks", async () => {
 
 test("a non-OK response throws ApiError with status", async () => {
   await expect(client.getMemory("missing")).rejects.toMatchObject({ status: 404 });
+});
+
+test("getAutonomyConfig normalizes an unrecognised retention value to distill-and-prune", async () => {
+  server.use(
+    http.get("http://localhost:7423/v1/config", () =>
+      HttpResponse.json({ autonomy: { capture: true, retention: "totally-invalid", recall_budget_chars: 800 } }),
+    ),
+  );
+  const cfg = await client.getAutonomyConfig();
+  expect(cfg.retention).toBe("distill-and-prune");
+  expect(cfg.recall_budget_chars).toBe(800);
 });

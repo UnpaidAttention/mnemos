@@ -34,7 +34,11 @@ export function moveVault(newPath: string): Promise<{ moved_to: string } | null>
   return invokeSafe<{ moved_to: string }>("move_vault", { newPath });
 }
 
-/** Enables the mnemos background service so hooks fire outside CLI sessions. */
+/**
+ * Enables the mnemos background service so hooks fire outside CLI sessions.
+ * Returns null when the Tauri runtime is absent (browser/test environment),
+ * NOT as a signal that the service was enabled.
+ */
 export function enableService(): Promise<{ enabled: boolean } | null> {
   return invokeSafe<{ enabled: boolean }>("enable_service");
 }

@@ -3,6 +3,8 @@ import type {
 } from "./types";
 import { getToken } from "./token";
 
+const VALID_RETENTION_VALUES = ["distill-and-prune", "keep-raw"] as const;
+
 export interface ConnectorEdit { path: string; present: boolean }
 export type AutonomyStatus = "autonomous" | "connected" | "not_installed";
 export interface Connector {
@@ -12,8 +14,8 @@ export interface Connector {
   deprecated: string | null;
   installed: boolean;
   connected: "full" | "partial" | "none";
-  autonomy_status: AutonomyStatus;
-  requires_service: boolean;
+  autonomy_status?: AutonomyStatus;
+  requires_service?: boolean;
   manual_snippet: { target: string; snippet: string } | null;
   edits: ConnectorEdit[];
 }
@@ -24,15 +26,6 @@ export interface AutonomyConfig {
   recall_budget_chars: number;
 }
 
-export interface Correction {
-  id: string;
-  title: string;
-  body: string;
-  created_at: string;
-  tags: string[];
-  tier: string;
-  type: string;
-}
 export interface ConnectorPreview {
   id: string;
   edits: { path: string; before: string; after: string; already_present: boolean }[];
@@ -196,12 +189,17 @@ export class MnemosClient {
   }
 
   async getAutonomyConfig(): Promise<AutonomyConfig> {
-    const cfg = await this.req<{ autonomy?: Partial<AutonomyConfig> }>("GET", "/v1/config");
+    const cfg = await this.req<{ autonomy?: Partial<Record<string, unknown>> }>("GET", "/v1/config");
     const a = cfg.autonomy ?? {};
+    const rawRetention = a.retention;
+    const retention: AutonomyConfig["retention"] =
+      VALID_RETENTION_VALUES.includes(rawRetention as AutonomyConfig["retention"])
+        ? (rawRetention as AutonomyConfig["retention"])
+        : "distill-and-prune";
     return {
-      capture: a.capture ?? true,
-      retention: (a.retention as AutonomyConfig["retention"]) ?? "distill-and-prune",
-      recall_budget_chars: a.recall_budget_chars ?? 1200,
+      capture: typeof a.capture === "boolean" ? a.capture : true,
+      retention,
+      recall_budget_chars: typeof a.recall_budget_chars === "number" ? a.recall_budget_chars : 1200,
     };
   }
 
@@ -211,12 +209,12 @@ export class MnemosClient {
     );
   }
 
-  async listCorrections(opts: { hardened?: boolean; limit?: number } = {}): Promise<import("./types").Memory[]> {
+  async listCorrections(opts: { hardened?: boolean; limit?: number } = {}): Promise<Memory[]> {
     const p = new URLSearchParams();
     if (opts.hardened) p.set("hardened", "true");
     if (opts.limit !== undefined) p.set("limit", String(opts.limit));
     const qs = p.toString();
-    return (await this.req<{ corrections: import("./types").Memory[] }>(
+    return (await this.req<{ corrections: Memory[] }>(
       "GET", `/v1/corrections${qs ? `?${qs}` : ""}`,
     )).corrections;
   }

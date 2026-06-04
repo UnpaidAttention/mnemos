@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { client, type AutonomyConfig } from "../api/client";
 import { Button, Card, Skeleton } from "../design/primitives";
 
@@ -6,12 +6,40 @@ type SaveState = "idle" | "saving" | "saved" | "error";
 
 export function AutonomySettings() {
   const [cfg, setCfg] = useState<AutonomyConfig | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const mounted = useRef(true);
 
   useEffect(() => {
-    void client.getAutonomyConfig().then(setCfg);
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
   }, []);
+
+  useEffect(() => {
+    client
+      .getAutonomyConfig()
+      .then((c) => {
+        if (mounted.current) setCfg(c);
+      })
+      .catch((e: unknown) => {
+        if (mounted.current) {
+          setLoadError(e instanceof Error ? e.message : "Failed to load autonomy settings");
+        }
+      });
+  }, []);
+
+  if (loadError) {
+    return (
+      <Card className="p-4">
+        <p role="alert" className="label text-tier-procedural">
+          {loadError}
+        </p>
+      </Card>
+    );
+  }
 
   if (!cfg) {
     return (
@@ -114,6 +142,7 @@ export function AutonomySettings() {
               setCfg({ ...cfg, recall_budget_chars: Number(e.target.value) });
               setSaveState("idle");
             }}
+            aria-label="Recall budget (chars)"
           />
           <span className="label">
             Max characters of recall context injected per prompt (~{Math.round(cfg.recall_budget_chars / 4)} tokens).

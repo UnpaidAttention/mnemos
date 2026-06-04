@@ -103,15 +103,20 @@ export function Knowledge() {
 
   const loading = memories === null && corrections === null && hardened === null && !error;
 
-  return (
-    <div className="p-6 max-w-3xl space-y-4">
-      <h1 className="display text-xl">Knowledge</h1>
-
-      {error && (
+  if (error) {
+    return (
+      <div className="p-6 max-w-3xl space-y-4">
+        <h1 className="display text-xl">Knowledge</h1>
         <p role="alert" className="label text-tier-procedural">
           {error}
         </p>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-3xl space-y-4">
+      <h1 className="display text-xl">Knowledge</h1>
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-border">
