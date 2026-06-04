@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
             json,
         } => commands::export::run(vault, output, json).await,
         Cmd::Import { vault, input, json } => commands::import::run(vault, input, json).await,
+        Cmd::Service(a) => commands::service::run(args.vault, args.json, a),
         Cmd::EmbedRebuild(a) => {
             // Auto-detect default model + dim per target if not supplied.
             let (default_model, default_dim) = match a.target.as_str() {

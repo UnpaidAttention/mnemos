@@ -1,0 +1,11 @@
+[Unit]
+Description=Mnemos memory daemon
+After=default.target
+
+[Service]
+ExecStart=/usr/bin/mnemos-daemon
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

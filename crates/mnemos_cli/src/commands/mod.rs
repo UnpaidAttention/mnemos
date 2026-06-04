@@ -11,6 +11,7 @@ pub mod list;
 pub mod rebuild;
 pub mod recall;
 pub mod remember;
+pub mod service;
 pub mod status;
 pub mod sync;
 

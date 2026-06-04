@@ -68,6 +68,8 @@ pub enum Cmd {
     },
     /// Re-embed every memory in the vault with a different embedder.
     EmbedRebuild(EmbedRebuildArgs),
+    /// systemd user service management.
+    Service(ServiceArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -185,4 +187,20 @@ pub enum DaemonAction {
         #[arg(long, default_value_t = 100)]
         lines: usize,
     },
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ServiceArgs {
+    #[command(subcommand)]
+    pub action: ServiceAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ServiceAction {
+    /// Install the mnemosd systemd user unit to ~/.config/systemd/user/.
+    Install,
+    /// Run `systemctl --user enable --now mnemosd` (non-fatal if systemd absent).
+    Enable,
+    /// Show whether the systemd unit is active (falls back to /health probe).
+    Status,
 }
