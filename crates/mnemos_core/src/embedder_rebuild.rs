@@ -82,6 +82,12 @@ pub async fn rebuild(vault: &Vault, opts: RebuildOptions) -> Result<RebuildStatu
     // 1. Ensure the shadow table exists. Idempotent — resumes from prior runs.
     ensure_shadow_table(storage).await?;
 
+    // 1a. Purge any rows that were produced by a DIFFERENT model/kind than the
+    //     current target.  Without this, a repeated rebuild (A → B → A or A → B
+    //     with a crash mid-B) would treat stale model-A vectors as valid and
+    //     silently install wrong-model embeddings into the live index (P0-5).
+    purge_stale_shadow_rows(storage, &opts).await?;
+
     // 2. List active memories in deterministic order.
     let memory_ids = list_active_memory_ids(storage).await?;
     let total = memory_ids.len();
@@ -163,6 +169,21 @@ async fn ensure_shadow_table(storage: &Storage) -> Result<()> {
             created_at TEXT NOT NULL
         )",
         (),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Delete shadow rows whose embedder kind or model does not match the rebuild
+/// target.  This prevents a repeated rebuild (e.g. model A → model B, then
+/// B → A again, or a crash mid-B followed by a re-run for B) from reusing
+/// vectors produced by the wrong model (P0-5).
+async fn purge_stale_shadow_rows(storage: &Storage, opts: &RebuildOptions) -> Result<()> {
+    let (conn, _g) = storage.write_conn().await?;
+    conn.execute(
+        "DELETE FROM memory_embeddings_v2 \
+         WHERE embedder_kind != ? OR embedder_model != ?",
+        params![opts.target_kind.clone(), opts.target_model.clone()],
     )
     .await?;
     Ok(())

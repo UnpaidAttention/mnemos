@@ -624,7 +624,15 @@ fn auto_title(body: &str) -> String {
     } else if line.len() <= 80 {
         line.into()
     } else {
-        format!("{}…", &line[..77])
+        // Cut at a char boundary at or before byte 77.  A raw byte slice
+        // would panic mid-codepoint for non-ASCII input (P0-4).
+        let cut = line
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= 77)
+            .last()
+            .unwrap_or(0);
+        format!("{}…", &line[..cut])
     }
 }
 
@@ -658,4 +666,68 @@ fn opts_actor() -> &'static str {
 /// Parse a markdown file via the vault (convenience re-export).
 pub fn parse_file(text: &str) -> Result<(Memory, String)> {
     parse_frontmatter(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── auto_title ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn auto_title_empty_body() {
+        assert_eq!(auto_title(""), "Untitled memory");
+    }
+
+    #[test]
+    fn auto_title_short_ascii() {
+        assert_eq!(auto_title("hello world"), "hello world");
+    }
+
+    #[test]
+    fn auto_title_exactly_80_ascii_chars() {
+        let body = "a".repeat(80);
+        assert_eq!(auto_title(&body), body);
+    }
+
+    /// Non-ASCII body whose first line exceeds 80 bytes must not panic and
+    /// must produce a title that is valid UTF-8 ending on a char boundary.
+    /// (Regression test for P0-4: raw `&line[..77]` panics on multibyte chars.)
+    #[test]
+    fn auto_title_non_ascii_long_first_line_does_not_panic() {
+        // Each Japanese character is 3 UTF-8 bytes.
+        // 30 chars × 3 bytes = 90 bytes — well over the 80-byte threshold.
+        let body = "日本語のテキストサンプル日本語のテキストサンプル日本語のテキスト";
+        let title = auto_title(body);
+        // Must be valid UTF-8 (would panic on invalid slice otherwise).
+        assert!(std::str::from_utf8(title.as_bytes()).is_ok());
+        // Must end with the ellipsis marker.
+        assert!(
+            title.ends_with('…'),
+            "expected title to end with '…', got: {title:?}"
+        );
+    }
+
+    #[test]
+    fn auto_title_emoji_long_first_line_does_not_panic() {
+        // Each emoji is 4 UTF-8 bytes.  25 emoji = 100 bytes > 80 threshold.
+        let body = "🦀".repeat(25);
+        let title = auto_title(&body);
+        assert!(std::str::from_utf8(title.as_bytes()).is_ok());
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn auto_title_mixed_ascii_and_non_ascii_long() {
+        // Accented characters are 2 bytes each.  Build a string > 80 bytes
+        // that has a multibyte char straddling byte 77.
+        // 'é' = 0xC3 0xA9 (2 bytes).  Place one at byte position 76-77
+        // so the old raw slice would cut inside it.
+        //   76 × 'a' + 'é' + 'a'…  = 76 + 2 + remainder bytes
+        let body = format!("{}é{}", "a".repeat(76), "a".repeat(10));
+        assert!(body.len() > 80); // confirm precondition
+        let title = auto_title(&body);
+        assert!(std::str::from_utf8(title.as_bytes()).is_ok());
+        assert!(title.ends_with('…'));
+    }
 }
