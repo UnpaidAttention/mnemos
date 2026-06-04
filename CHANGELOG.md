@@ -10,6 +10,17 @@ All notable changes to this project are recorded here.
 > — gives you `mnemos remember` + `mnemos recall` end-to-end with no
 > Ollama install, no API key, no internet after the download.
 
+### Added — desktop app & learning (landed before first publish)
+- **UI storage-location picker.** Move your vault to a new directory from
+  Settings → Storage; the desktop app supervises the daemon and restarts it
+  at the new path (atomic, backed-up, with rollback).
+- **AI-tool auto-connect wizard.** Detects installed tools (Claude Code,
+  Codex, Antigravity CLI; Gemini CLI marked deprecated) and writes their MCP
+  config + a session-start hint with a preview-diff + one click.
+- **Correction-learning.** New `correct` MCP tool + `/v1/corrections`: capture
+  wrong→right→why; recurring corrections harden into rules surfaced at session
+  start; session-end mining extracts corrections automatically.
+
 ### Added
 - **Bundled embedder.** llama.cpp's `llama-server` ships in
   `/usr/lib/mnemos/`; daemon spawns + manages it as a child process,

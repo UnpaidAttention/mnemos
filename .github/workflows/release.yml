@@ -51,7 +51,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
-            librsvg2-dev libappindicator3-dev patchelf libssl-dev
+            librsvg2-dev libappindicator3-dev patchelf libssl-dev \
+            libfuse2
+          # libfuse2: linuxdeploy + its appimage plugin are themselves AppImages
+          # and need FUSE to mount during the AppImage bundle step. ubuntu-22.04
+          # runners don't ship it. (APPIMAGE_EXTRACT_AND_RUN below is a fallback.)
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -71,7 +75,7 @@ jobs:
 
       - name: Build desktop bundle
         working-directory: desktop
-        run: pnpm tauri build --bundles deb,rpm,appimage
+        run: pnpm tauri build --verbose --bundles deb,rpm,appimage
         env:
           # Required because tauri.conf.json sets a real updater pubkey +
           # createUpdaterArtifacts: true. Without the private key, the build
