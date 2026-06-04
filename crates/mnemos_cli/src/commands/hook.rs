@@ -148,6 +148,12 @@ async fn user_prompt(input: Value) -> Option<String> {
 /// Handle the `SessionEnd` hook: read the transcript, ingest it into the
 /// daemon as a session + chunks, then post `end`. Fail-open: any failure logs
 /// to stderr and returns `None`. Never produces `additionalContext` output.
+///
+/// Idempotency contract: a session is recorded as captured once it is
+/// successfully started on the daemon (`POST /v1/sessions` returned Ok).
+/// Chunk POSTs and `/end` are best-effort — failures are logged to stderr
+/// and not retried. "Recorded" therefore means start succeeded; it does not
+/// guarantee every chunk landed or that `/end` completed.
 async fn session_end(input: Value) -> Option<String> {
     if let Err(e) = do_session_end(&input).await {
         eprintln!("mnemos hook session-end: {e:#}");
@@ -157,6 +163,12 @@ async fn session_end(input: Value) -> Option<String> {
 
 /// All real work for `session_end`. Returns `Ok(())` on success.
 /// Any `Err` is swallowed by `session_end` → fail-open guarantee.
+///
+/// Idempotency contract: a session is recorded as captured once it is
+/// successfully started on the daemon (`POST /v1/sessions` returned Ok).
+/// Chunk POSTs and `/end` are best-effort — failures are logged to stderr
+/// and not retried. "Recorded" therefore means start succeeded; it does not
+/// guarantee every chunk landed or that `/end` completed.
 async fn do_session_end(input: &Value) -> anyhow::Result<()> {
     use anyhow::Context as _;
 
@@ -207,14 +219,19 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
     // ── 5. POST /v1/sessions ──────────────────────────────────────────────
     let daemon_session_id = post_start_session(&token, cwd.as_deref()).await?;
 
-    // ── 6. POST chunks (best-effort per chunk) ────────────────────────────
+    // ── 6. POST chunks with bounded concurrency (best-effort per chunk) ───
     post_chunks(&token, &daemon_session_id, &turns).await;
 
-    // ── 7. POST /v1/sessions/{id}/end ─────────────────────────────────────
-    post_end_session(&token, &daemon_session_id).await?;
-
-    // ── 8. Record successful capture for idempotency ──────────────────────
+    // ── 7. Record capture now that start succeeded (idempotency boundary) ─
+    // We record here — before /end — so that if /end fails, the next hook
+    // fire does NOT create a duplicate daemon session. Missing /end or
+    // missing chunks are best-effort and not worth re-capturing.
     record_captured(&state_path, session_id);
+
+    // ── 8. POST /v1/sessions/{id}/end (best-effort, non-fatal) ───────────
+    if let Err(e) = post_end_session(&token, &daemon_session_id).await {
+        eprintln!("mnemos hook session-end: /end failed (session {daemon_session_id}): {e:#}");
+    }
 
     Ok(())
 }
@@ -318,38 +335,51 @@ async fn post_start_session(token: &str, workspace: Option<&str>) -> anyhow::Res
 /// `POST /v1/sessions/{daemon_session_id}/chunks` for every turn (best-effort).
 ///
 /// Builds chunk request bodies from `Vec<Turn>` using the verified field names:
-/// `{ body, speaker?, ordinal? }`.
+/// `{ body, speaker?, ordinal? }`. Chunk POSTs are issued with bounded
+/// concurrency (up to 8 in-flight at once) so long transcripts do not stall
+/// the process for an extended time. Ordinals are carried in each chunk body,
+/// so completion order does not affect correctness. A failed chunk is logged
+/// to stderr and skipped — it never aborts the batch.
 async fn post_chunks(token: &str, daemon_session_id: &str, turns: &[crate::transcript::Turn]) {
+    use futures::StreamExt as _;
+
     let Some(client) = make_client() else {
         eprintln!("mnemos hook session-end: could not build HTTP client for chunks");
         return;
     };
     let url = format!("{DAEMON_URL}/v1/sessions/{daemon_session_id}/chunks");
-    for turn in turns {
-        let body = build_chunk_body(turn);
-        match client
-            .post(&url)
-            .bearer_auth(token)
-            .json(&body)
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {}
-            Ok(resp) => {
-                eprintln!(
-                    "mnemos hook session-end: chunk ordinal {} failed: {}",
-                    turn.ordinal,
-                    resp.status()
-                );
+
+    futures::stream::iter(turns)
+        .map(|turn| {
+            let client = client.clone();
+            let url = url.clone();
+            let token = token.to_owned();
+            let body = build_chunk_body(turn);
+            let ordinal = turn.ordinal;
+            async move {
+                match client
+                    .post(&url)
+                    .bearer_auth(&token)
+                    .json(&body)
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.status().is_success() => {}
+                    Ok(resp) => {
+                        eprintln!(
+                            "mnemos hook session-end: chunk ordinal {ordinal} failed: {}",
+                            resp.status()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("mnemos hook session-end: chunk ordinal {ordinal} error: {e}");
+                    }
+                }
             }
-            Err(e) => {
-                eprintln!(
-                    "mnemos hook session-end: chunk ordinal {} error: {e}",
-                    turn.ordinal
-                );
-            }
-        }
-    }
+        })
+        .buffer_unordered(8)
+        .collect::<()>()
+        .await;
 }
 
 /// Build the JSON body for a single chunk POST.
