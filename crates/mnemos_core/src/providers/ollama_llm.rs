@@ -109,6 +109,14 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires a running Ollama with the model pulled"]
     async fn completes_live() {
+        // Opt-in: requires a running Ollama. Without the env this no-ops so
+        // `cargo test --include-ignored` stays green in CI (which has no
+        // Ollama), matching the MNEMOS_TEST_LLAMA_SERVER gate on the bundled
+        // embedder integration tests.
+        if std::env::var("MNEMOS_TEST_OLLAMA").is_err() {
+            eprintln!("skipping completes_live: set MNEMOS_TEST_OLLAMA=1 with a running Ollama");
+            return;
+        }
         use crate::providers::CompletionRequest;
         let llm = OllamaLlm::new(cfg()).unwrap();
         let req = CompletionRequest::new(
