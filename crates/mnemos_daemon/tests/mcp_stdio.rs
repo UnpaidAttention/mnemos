@@ -36,34 +36,25 @@ async fn stdio_subprocess_forwards_initialize_to_daemon() {
     let stdout = child.stdout.take().unwrap();
     let mut reader = BufReader::new(stdout);
 
-    // Send an initialize request with Content-Length framing.
+    // Send an initialize request as newline-delimited JSON (MCP stdio framing).
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#;
-    let frame = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-    stdin.write_all(frame.as_bytes()).await.unwrap();
+    stdin
+        .write_all(format!("{body}\n").as_bytes())
+        .await
+        .unwrap();
     stdin.flush().await.unwrap();
 
-    // Read one response frame.
-    let mut header = String::new();
-    while !header.ends_with("\r\n\r\n") {
-        let mut byte = [0u8; 1];
-        tokio::time::timeout(std::time::Duration::from_secs(3), {
-            use tokio::io::AsyncReadExt;
-            reader.read_exact(&mut byte)
-        })
-        .await
-        .expect("response within 3s")
-        .unwrap();
-        header.push(byte[0] as char);
-    }
-    let len: usize = header
-        .lines()
-        .find_map(|l| l.strip_prefix("Content-Length: "))
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap();
-    let mut payload = vec![0u8; len];
-    use tokio::io::AsyncReadExt;
-    reader.read_exact(&mut payload).await.unwrap();
-    let resp: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    // Read one newline-delimited response line.
+    use tokio::io::AsyncBufReadExt;
+    let mut line = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        reader.read_line(&mut line),
+    )
+    .await
+    .expect("response within 5s")
+    .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(resp["id"], 1);
     assert!(resp["result"]["serverInfo"]["name"].is_string());
 
