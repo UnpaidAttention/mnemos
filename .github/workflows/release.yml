@@ -184,7 +184,9 @@ jobs:
           # uses inputs.tag.
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${TAG#v}"
-          LIN_FILE=$(ls release/*.AppImage.tar.gz 2>/dev/null | head -1)
+          # `|| true`: with no AppImage (updater deferred) `ls` exits non-zero,
+          # which trips pipefail+errexit before the skip branch below.
+          LIN_FILE=$(ls release/*.AppImage.tar.gz 2>/dev/null | head -1 || true)
           if [[ -z "$LIN_FILE" ]]; then
             echo "no AppImage.tar.gz found; skipping latest.json generation"
             echo "(set TAURI_SIGNING_PRIVATE_KEY in secrets to enable signed updater artifacts)"
