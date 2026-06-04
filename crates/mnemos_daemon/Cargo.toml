@@ -117,6 +117,13 @@ assets = [
 
 [package.metadata.generate-rpm]
 name = "mnemos-daemon"
+# The package vendors its own llama.cpp shared libraries under /usr/lib/mnemos
+# (resolved at runtime via the /usr/bin/mnemos-llama-server LD_LIBRARY_PATH
+# wrapper). Without this, cargo-generate-rpm's automatic dependency scanner
+# emits external `Requires:` for those bundled sonames (libllama.so.0 etc.),
+# which no system package provides — making the rpm uninstallable. Disable
+# auto-req: this package is self-contained (Rust binary + glibc + vendored libs).
+auto-req = "no"
 assets = [
     { source = "target/release/mnemosd", dest = "/usr/bin/mnemos-daemon", mode = "755" },
     { source = "README.md", dest = "/usr/share/doc/mnemos-daemon/README", mode = "644", doc = true },
