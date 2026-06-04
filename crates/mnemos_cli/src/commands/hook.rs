@@ -6,8 +6,9 @@
 //! Claude Code session must NEVER be broken by a Mnemos problem.
 //!
 //! ## Hook event subcommands
-//! - `session-start` (B2): inject working-set as `additionalContext`.
-//! - `user-prompt`   (B3): reserved stub — TODO(B3).
+//! - `session-start` (B2): inject the user's working set as `additionalContext`.
+//! - `user-prompt`   (B3): recall memories relevant to the current prompt and
+//!   inject them as `additionalContext`.
 //! - `session-end`   (B4): reserved stub — TODO(B4).
 //!
 //! ## Input
@@ -214,6 +215,17 @@ fn load_token() -> Option<String> {
     mnemos_daemon::auth::load_token(&path).ok()
 }
 
+/// Build the HTTP client used for all daemon calls from hooks.
+///
+/// Returns `None` on failure (fail-open). Uses a 5-second timeout so a slow
+/// or unresponsive daemon can never stall the Claude Code session.
+fn make_client() -> Option<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .ok()
+}
+
 /// Fetch the working set from `GET /v1/working` and render it as plain text.
 /// Returns `None` on any network or parse error (fail-open).
 async fn fetch_working_set(token: &str, workspace: Option<&str>) -> Option<String> {
@@ -221,10 +233,7 @@ async fn fetch_working_set(token: &str, workspace: Option<&str>) -> Option<Strin
     if let Some(ws) = workspace {
         url.push_str(&format!("?workspace={}", urlencoding::encode(ws)));
     }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .ok()?;
+    let client = make_client()?;
     let resp = client.get(&url).bearer_auth(token).send().await.ok()?;
     if !resp.status().is_success() {
         eprintln!(
@@ -291,11 +300,23 @@ pub fn user_prompt_hook_json(text: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
+    // Cap size to match the working-set byte budget, keeping the injected
+    // context inside a reasonable token limit. Truncate on a UTF-8 char
+    // boundary so we never produce an invalid string slice.
+    let capped = if trimmed.len() > WORKING_SET_BYTE_CAP {
+        let mut end = WORKING_SET_BYTE_CAP;
+        while !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        &trimmed[..end]
+    } else {
+        trimmed
+    };
     Some(
         serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
-                "additionalContext": trimmed,
+                "additionalContext": capped,
             }
         })
         .to_string(),
@@ -357,15 +378,14 @@ fn render_recall_hits(hits: &[&RecallHit]) -> String {
 /// Returns `None` on any network or parse error (fail-open).
 async fn fetch_recall(token: &str, query: &str, workspace: Option<&str>) -> Option<Vec<RecallHit>> {
     let url = format!("{DAEMON_URL}/v1/memories/search");
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .ok()?;
-    let body = serde_json::json!({
-        "query": query,
-        "k": RECALL_K,
-        "workspace": workspace,
-    });
+    let client = make_client()?;
+    let mut body = serde_json::Map::new();
+    body.insert("query".into(), serde_json::json!(query));
+    body.insert("k".into(), serde_json::json!(RECALL_K));
+    if let Some(ws) = workspace {
+        body.insert("workspace".into(), serde_json::json!(ws));
+    }
+    let body = serde_json::Value::Object(body);
     let resp = client
         .post(&url)
         .bearer_auth(token)
