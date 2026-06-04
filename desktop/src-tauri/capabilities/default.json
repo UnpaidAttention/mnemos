@@ -6,6 +6,11 @@
   "permissions": [
     "core:default",
     "updater:default",
-    "process:default"
+    "process:default",
+    "dialog:allow-open",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [{ "name": "mnemos", "sidecar": true, "args": true }]
+    }
   ]
 }
