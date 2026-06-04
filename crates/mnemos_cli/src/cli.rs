@@ -70,6 +70,11 @@ pub enum Cmd {
     EmbedRebuild(EmbedRebuildArgs),
     /// systemd user service management.
     Service(ServiceArgs),
+    /// Claude Code hook integration (session-start / user-prompt / session-end).
+    Hook {
+        /// Hook event name: session-start | user-prompt | session-end
+        event: String,
+    },
 }
 
 #[derive(clap::Args, Debug)]

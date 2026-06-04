@@ -6,6 +6,7 @@ pub mod embed_rebuild;
 pub mod export;
 pub mod forget;
 pub mod get;
+pub mod hook;
 pub mod import;
 pub mod list;
 pub mod rebuild;

@@ -11,8 +11,9 @@ use serde_json::{json, Value};
 
 use crate::state::AppState;
 
-/// Maximum number of hardened correction rules surfaced in `mnemos://working`.
-const HARDENED_CAP: usize = 10;
+/// Maximum number of hardened correction rules surfaced in `mnemos://working`
+/// and `GET /v1/working`. Shared with `routes::working`.
+pub const HARDENED_CAP: usize = 10;
 
 pub fn list_descriptors() -> Vec<Value> {
     vec![

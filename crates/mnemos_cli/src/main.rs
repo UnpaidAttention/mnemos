@@ -12,6 +12,16 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> Result<()> {
     init_tracing();
     let args = Cli::parse();
+    // Hook is fail-open and always exits 0; handle it before the Result-returning
+    // match so we can return ExitCode::SUCCESS unconditionally.
+    if let Cmd::Hook { event } = &args.command {
+        let code = commands::hook::run(event).await;
+        std::process::exit(if code == std::process::ExitCode::SUCCESS {
+            0
+        } else {
+            1
+        });
+    }
     match args.command {
         Cmd::Remember(a) => commands::remember::run(args.vault, args.json, a).await,
         Cmd::Recall(a) => commands::recall::run(args.vault, args.json, a).await,
@@ -55,6 +65,8 @@ async fn main() -> Result<()> {
             };
             commands::embed_rebuild::run(opts).await
         }
+        // Hook is handled above via early exit — this arm is unreachable.
+        Cmd::Hook { .. } => unreachable!("Hook dispatched before match"),
     }
 }
 
