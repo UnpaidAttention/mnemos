@@ -9,7 +9,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use crate::connectors::{descriptors, edits, Connected};
+use crate::connectors::{descriptors, edits, AutonomyStatus, Connected};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -26,6 +26,14 @@ fn connected_str(c: Connected) -> &'static str {
         Connected::Full => "full",
         Connected::Partial => "partial",
         Connected::None => "none",
+    }
+}
+
+fn autonomy_str(a: AutonomyStatus) -> &'static str {
+    match a {
+        AutonomyStatus::Autonomous => "autonomous",
+        AutonomyStatus::Connected => "connected",
+        AutonomyStatus::NotInstalled => "not_installed",
     }
 }
 
@@ -47,6 +55,8 @@ async fn list(State(_): State<AppState>) -> Result<Json<Value>, ApiError> {
                 "deprecated": c.deprecated,
                 "installed": c.installed(),
                 "connected": connected_str(c.connected()),
+                "autonomy_status": autonomy_str(c.autonomy_status()),
+                "requires_service": c.requires_service,
                 "manual_snippet": c.manual_snippet.map(|(t, s)| json!({"target": t, "snippet": s})),
                 "edits": c.edits.iter().map(|e| json!({
                     "path": e.path().to_string_lossy(),
@@ -119,9 +129,14 @@ async fn connect(
         }
         applied.push(path);
     }
-    Ok(Json(
-        json!({ "id": id, "connected": connected_str(c.connected()) }),
-    ))
+    Ok(Json(json!({
+        "id": id,
+        "connected": connected_str(c.connected()),
+        "autonomy_status": autonomy_str(c.autonomy_status()),
+        // When true, the caller (desktop wizard) should also run
+        // `mnemos service enable` so hooks fire outside CLI sessions.
+        "requires_service": c.requires_service,
+    })))
 }
 
 async fn disconnect(

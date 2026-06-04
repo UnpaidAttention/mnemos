@@ -118,6 +118,126 @@ pub fn json_remove(doc: &str, pointer: &[&str], key: &str) -> Result<String, Str
     serde_json::to_string_pretty(&root).map_err(|e| e.to_string())
 }
 
+// ---- JsonArrayAppend helpers ------------------------------------------------
+
+/// Append `value` to the array at `pointer` in a JSON document, creating
+/// intermediate objects as needed. Idempotent: skips if an existing element
+/// has `.hooks[].command == match_command`.
+pub fn json_array_append(
+    doc: &str,
+    pointer: &[&str],
+    match_command: &str,
+    value: &serde_json::Value,
+) -> Result<String, String> {
+    let mut root: serde_json::Value = if doc.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(doc).map_err(|e| e.to_string())?
+    };
+    if !root.is_object() {
+        return Err("config root is not a JSON object".into());
+    }
+    // Navigate / create the pointer path, ensuring intermediate nodes are objects.
+    let mut cur = &mut root;
+    let last = pointer.last().copied().unwrap_or("");
+    let parents = if pointer.is_empty() {
+        &[] as &[&str]
+    } else {
+        &pointer[..pointer.len() - 1]
+    };
+    for seg in parents {
+        cur = cur
+            .as_object_mut()
+            .ok_or_else(|| format!("`{seg}` parent is not an object"))?
+            .entry(seg.to_string())
+            .or_insert_with(|| serde_json::json!({}));
+    }
+    // The leaf must be an array (create it if absent).
+    let arr = cur
+        .as_object_mut()
+        .ok_or_else(|| "target parent is not an object".to_string())?
+        .entry(last.to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    if !arr.is_array() {
+        *arr = serde_json::json!([]);
+    }
+    let arr = arr.as_array_mut().unwrap();
+    // Idempotency: skip if any element already has our command.
+    if arr.iter().any(|el| element_has_command(el, match_command)) {
+        return serde_json::to_string_pretty(&root).map_err(|e| e.to_string());
+    }
+    arr.push(value.clone());
+    serde_json::to_string_pretty(&root).map_err(|e| e.to_string())
+}
+
+/// True iff `pointer` path contains an array that has an element whose
+/// `.hooks[].command == match_command`.
+pub fn json_array_has(doc: &str, pointer: &[&str], match_command: &str) -> bool {
+    let root: serde_json::Value = match serde_json::from_str(doc) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let mut cur = &root;
+    for seg in pointer {
+        match cur.get(seg) {
+            Some(v) => cur = v,
+            None => return false,
+        }
+    }
+    cur.as_array()
+        .map(|arr| arr.iter().any(|el| element_has_command(el, match_command)))
+        .unwrap_or(false)
+}
+
+/// Remove the element(s) whose `.hooks[].command == match_command` from the
+/// array at `pointer`. Prunes the array (and parent key) if it becomes empty.
+pub fn json_array_remove(
+    doc: &str,
+    pointer: &[&str],
+    match_command: &str,
+) -> Result<String, String> {
+    let mut root: serde_json::Value = if doc.trim().is_empty() {
+        return Ok(doc.to_string());
+    } else {
+        serde_json::from_str(doc).map_err(|e| e.to_string())?
+    };
+    // Navigate to the parent of the leaf.
+    let (parents, leaf) = if pointer.is_empty() {
+        return serde_json::to_string_pretty(&root).map_err(|e| e.to_string());
+    } else {
+        (&pointer[..pointer.len() - 1], pointer[pointer.len() - 1])
+    };
+    let mut cur = &mut root;
+    for seg in parents {
+        match cur.as_object_mut().and_then(|o| o.get_mut(*seg)) {
+            Some(v) => cur = v,
+            None => return serde_json::to_string_pretty(&root).map_err(|e| e.to_string()),
+        }
+    }
+    if let Some(arr_val) = cur.as_object_mut().and_then(|o| o.get_mut(leaf)) {
+        if let Some(arr) = arr_val.as_array_mut() {
+            arr.retain(|el| !element_has_command(el, match_command));
+        }
+        // Prune empty array key.
+        if arr_val.as_array().map(|a| a.is_empty()).unwrap_or(false) {
+            cur.as_object_mut().unwrap().remove(leaf);
+        }
+    }
+    serde_json::to_string_pretty(&root).map_err(|e| e.to_string())
+}
+
+/// Helper: does element `el` have a hook entry with `command == cmd`?
+/// Matches the Claude Code hooks shape: `{"matcher":"","hooks":[{"type":"command","command":"..."}]}`
+fn element_has_command(el: &serde_json::Value, cmd: &str) -> bool {
+    if let Some(hooks) = el.get("hooks").and_then(|h| h.as_array()) {
+        hooks
+            .iter()
+            .any(|h| h.get("command").and_then(|c| c.as_str()) == Some(cmd))
+    } else {
+        false
+    }
+}
+
 pub const BLOCK_START: &str = "<!-- mnemos:start -->";
 pub const BLOCK_END: &str = "<!-- mnemos:end -->";
 
@@ -416,6 +536,154 @@ mod tests {
             marked_block_remove(&reversed),
             reversed,
             "remove on reversed-marker doc must be a no-op"
+        );
+    }
+
+    // ---- JsonArrayAppend tests -----------------------------------------------
+
+    fn session_start_hook() -> serde_json::Value {
+        json!({
+            "matcher": "",
+            "hooks": [{"type": "command", "command": "mnemos hook session-start"}]
+        })
+    }
+
+    #[test]
+    fn json_array_append_creates_entry_in_empty_doc() {
+        let out = json_array_append(
+            "{}",
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start",
+            &session_start_hook(),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let arr = parsed["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(
+            arr[0]["hooks"][0]["command"].as_str().unwrap(),
+            "mnemos hook session-start"
+        );
+    }
+
+    #[test]
+    fn json_array_append_is_idempotent() {
+        let once = json_array_append(
+            "{}",
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start",
+            &session_start_hook(),
+        )
+        .unwrap();
+        let twice = json_array_append(
+            &once,
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start",
+            &session_start_hook(),
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&twice).unwrap();
+        assert_eq!(
+            parsed["hooks"]["SessionStart"].as_array().unwrap().len(),
+            1,
+            "apply twice must not duplicate entry"
+        );
+    }
+
+    #[test]
+    fn json_array_has_detects_presence() {
+        let doc = json_array_append(
+            "{}",
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start",
+            &session_start_hook(),
+        )
+        .unwrap();
+        assert!(json_array_has(
+            &doc,
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start"
+        ));
+        assert!(!json_array_has(
+            &doc,
+            &["hooks", "SessionStart"],
+            "mnemos hook user-prompt"
+        ));
+        assert!(!json_array_has(
+            "{}",
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start"
+        ));
+    }
+
+    #[test]
+    fn json_array_remove_deletes_only_our_entry_and_leaves_user_hooks() {
+        // Start with one user hook + one mnemos hook in the same array.
+        let user_hook = json!({
+            "matcher": "",
+            "hooks": [{"type": "command", "command": "echo hello"}]
+        });
+        let doc_with_user =
+            json_array_append("{}", &["hooks", "SessionStart"], "echo hello", &user_hook).unwrap();
+        let doc_with_both = json_array_append(
+            &doc_with_user,
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start",
+            &session_start_hook(),
+        )
+        .unwrap();
+        // Verify both are present.
+        assert!(json_array_has(
+            &doc_with_both,
+            &["hooks", "SessionStart"],
+            "echo hello"
+        ));
+        assert!(json_array_has(
+            &doc_with_both,
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start"
+        ));
+        // Remove only the mnemos hook.
+        let removed = json_array_remove(
+            &doc_with_both,
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start",
+        )
+        .unwrap();
+        assert!(
+            !json_array_has(
+                &removed,
+                &["hooks", "SessionStart"],
+                "mnemos hook session-start"
+            ),
+            "mnemos hook must be gone"
+        );
+        assert!(
+            json_array_has(&removed, &["hooks", "SessionStart"], "echo hello"),
+            "user hook must survive"
+        );
+    }
+
+    #[test]
+    fn json_array_remove_prunes_empty_array_key() {
+        let doc = json_array_append(
+            "{}",
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start",
+            &session_start_hook(),
+        )
+        .unwrap();
+        let removed = json_array_remove(
+            &doc,
+            &["hooks", "SessionStart"],
+            "mnemos hook session-start",
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&removed).unwrap();
+        // Array key should be pruned when empty.
+        assert!(
+            parsed["hooks"].get("SessionStart").is_none(),
+            "empty array key must be pruned"
         );
     }
 }

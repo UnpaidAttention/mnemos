@@ -22,6 +22,28 @@ pub enum Connected {
     None,
 }
 
+/// Autonomy level for a connected tool.
+///
+/// - `Autonomous`: MCP entry + all hook edits present (the connector fully
+///   auto-injects recall and captures transcripts without user action).
+/// - `Connected`: MCP entry present, but one or more hook edits are missing.
+/// - `NotInstalled`: no edits are present (tool not configured).
+///
+/// Service-active check: whether the mnemos daemon service is enabled via
+/// systemd is tracked separately in the API response as `requires_service` on
+/// the connector descriptor. The daemon cannot shell out to `systemctl` from
+/// inside an HTTP handler without a subprocess, so we keep the concepts
+/// orthogonal: `AutonomyStatus` answers "are all the file edits in place?";
+/// the caller (desktop wizard) handles service enablement when
+/// `requires_service == true` and the service is not yet active.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutonomyStatus {
+    Autonomous,
+    Connected,
+    NotInstalled,
+}
+
 /// One file edit a connector performs.
 pub struct ConfigEdit {
     /// Resolves the target file path (HOME-relative). Fn pointer for testability.
@@ -44,6 +66,14 @@ pub enum EditStrategy {
         key: &'static str,
         value_toml: &'static str,
     },
+    /// Append an object to the JSON array at `pointer` path, idempotently.
+    /// Idempotency key: an element is considered "ours" iff it contains a hook
+    /// entry whose `command` field equals `match_command`.
+    JsonArrayAppend {
+        pointer: &'static [&'static str],
+        match_command: &'static str,
+        value_json: &'static str,
+    },
 }
 
 pub struct ToolConnector {
@@ -58,6 +88,16 @@ pub struct ToolConnector {
     pub edits: Vec<ConfigEdit>,
     /// For Manual tiles (and fallback display): (target_hint, snippet).
     pub manual_snippet: Option<(&'static str, &'static str)>,
+    /// True if this connector also needs the mnemos daemon service to be
+    /// enabled (e.g. claude-code hooks fire even outside `mnemos` CLI sessions).
+    /// The daemon itself does not enable the service — it returns this flag to
+    /// the desktop wizard which handles `mnemos service enable` on behalf of
+    /// the user.
+    pub requires_service: bool,
+    /// Number of hook-type edits among `edits`. Used to compute
+    /// `autonomy_status`: Autonomous requires all hook edits present (in
+    /// addition to non-hook edits).
+    pub hook_edit_count: usize,
 }
 
 impl ConfigEdit {
@@ -77,6 +117,11 @@ impl ConfigEdit {
             EditStrategy::TomlMerge {
                 table_path, key, ..
             } => edits::toml_has(&doc, table_path, key),
+            EditStrategy::JsonArrayAppend {
+                pointer,
+                match_command,
+                ..
+            } => edits::json_array_has(&doc, pointer, match_command),
         }
     }
     /// Compute the post-apply contents without writing.
@@ -98,6 +143,15 @@ impl ConfigEdit {
                 key,
                 value_toml,
             } => edits::toml_merge(&doc, table_path, key, value_toml),
+            EditStrategy::JsonArrayAppend {
+                pointer,
+                match_command,
+                value_json,
+            } => {
+                let v: serde_json::Value =
+                    serde_json::from_str(value_json).map_err(|e| e.to_string())?;
+                edits::json_array_append(&doc, pointer, match_command, &v)
+            }
         }
     }
     pub fn removed(&self) -> Result<String, String> {
@@ -108,6 +162,11 @@ impl ConfigEdit {
             EditStrategy::TomlMerge {
                 table_path, key, ..
             } => edits::toml_remove(&doc, table_path, key),
+            EditStrategy::JsonArrayAppend {
+                pointer,
+                match_command,
+                ..
+            } => edits::json_array_remove(&doc, pointer, match_command),
         }
     }
 }
@@ -127,6 +186,31 @@ impl ToolConnector {
             Connected::Full
         } else {
             Connected::Partial
+        }
+    }
+
+    /// Compute the autonomy status for this connector.
+    ///
+    /// - `Autonomous`: all edits present (MCP + all hooks in place).
+    /// - `Connected`: at least the non-hook edits are present, but one or more
+    ///   hook edits are missing.
+    /// - `NotInstalled`: no edits present.
+    ///
+    /// If the connector has no hook edits (hook_edit_count == 0),
+    /// `Connected::Full` maps to `Autonomous` (no hooks = nothing extra needed).
+    pub fn autonomy_status(&self) -> AutonomyStatus {
+        if self.edits.is_empty() {
+            return AutonomyStatus::NotInstalled;
+        }
+        let present_count = self.edits.iter().filter(|e| e.is_present()).count();
+        let total = self.edits.len();
+        if present_count == 0 {
+            AutonomyStatus::NotInstalled
+        } else if present_count == total {
+            AutonomyStatus::Autonomous
+        } else {
+            // Some edits present but not all — could be only MCP with no hooks yet.
+            AutonomyStatus::Connected
         }
     }
 }
@@ -159,6 +243,8 @@ mod tests {
                 },
             }],
             manual_snippet: None,
+            requires_service: false,
+            hook_edit_count: 0,
         };
         assert_eq!(c.connected(), Connected::None);
         std::fs::write(&f, c.edits[0].rendered().unwrap()).unwrap();
