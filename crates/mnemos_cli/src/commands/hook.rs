@@ -145,10 +145,241 @@ async fn user_prompt(input: Value) -> Option<String> {
     user_prompt_hook_json(&text)
 }
 
-/// Stub for the `SessionEnd` hook — implemented in task B4.
-// TODO(B4)
-async fn session_end(_input: Value) -> Option<String> {
+/// Handle the `SessionEnd` hook: read the transcript, ingest it into the
+/// daemon as a session + chunks, then post `end`. Fail-open: any failure logs
+/// to stderr and returns `None`. Never produces `additionalContext` output.
+async fn session_end(input: Value) -> Option<String> {
+    if let Err(e) = do_session_end(&input).await {
+        eprintln!("mnemos hook session-end: {e:#}");
+    }
     None
+}
+
+/// All real work for `session_end`. Returns `Ok(())` on success.
+/// Any `Err` is swallowed by `session_end` → fail-open guarantee.
+async fn do_session_end(input: &Value) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+
+    // ── 1. Extract required fields from hook payload ──────────────────────
+    let transcript_path = input
+        .get("transcript_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing transcript_path in hook payload — skipping"))?;
+
+    let cwd = input
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let session_id = input
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing session_id in hook payload — skipping"))?;
+
+    // ── 2. Idempotency: skip if already captured ──────────────────────────
+    let state_path = idempotency_state_path()?;
+    if already_captured(&state_path, session_id) {
+        eprintln!("mnemos hook session-end: session {session_id} already captured — skipping");
+        return Ok(());
+    }
+
+    // ── 3. Ensure daemon is available ─────────────────────────────────────
+    let up = crate::daemon_ctl::ensure_daemon(Duration::from_secs(5)).await;
+    if !up {
+        return Err(anyhow::anyhow!(
+            "daemon not available — transcript not captured"
+        ));
+    }
+
+    let token = load_token().ok_or_else(|| anyhow::anyhow!("could not load bearer token"))?;
+
+    // ── 4. Read and parse transcript ──────────────────────────────────────
+    let contents = std::fs::read_to_string(transcript_path)
+        .with_context(|| format!("failed to read transcript at {transcript_path}"))?;
+
+    let turns = crate::transcript::parse_transcript(&contents);
+    if turns.is_empty() {
+        // Nothing to capture; still record as processed so we don't re-read.
+        record_captured(&state_path, session_id);
+        return Ok(());
+    }
+
+    // ── 5. POST /v1/sessions ──────────────────────────────────────────────
+    let daemon_session_id = post_start_session(&token, cwd.as_deref()).await?;
+
+    // ── 6. POST chunks (best-effort per chunk) ────────────────────────────
+    post_chunks(&token, &daemon_session_id, &turns).await;
+
+    // ── 7. POST /v1/sessions/{id}/end ─────────────────────────────────────
+    post_end_session(&token, &daemon_session_id).await?;
+
+    // ── 8. Record successful capture for idempotency ──────────────────────
+    record_captured(&state_path, session_id);
+
+    Ok(())
+}
+
+// ── Idempotency helpers ───────────────────────────────────────────────────────
+
+/// Resolve the idempotency state file path.
+///
+/// Uses `~/.local/state/mnemos/captured-sessions` on Linux/macOS.
+/// Falls back to `$HOME/.local/state/mnemos/captured-sessions` if `dirs` fails.
+fn idempotency_state_path() -> anyhow::Result<std::path::PathBuf> {
+    use directories::BaseDirs;
+    let base = BaseDirs::new()
+        .and_then(|bd| bd.state_dir().map(|p| p.to_path_buf()))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".local").join("state"))
+        })
+        .ok_or_else(|| anyhow::anyhow!("cannot determine state directory"))?;
+    Ok(base.join("mnemos").join("captured-sessions"))
+}
+
+/// Returns `true` if `session_id` is already present in the state file.
+/// Any FS error → `false` (fail-open: prefer re-capture over losing data).
+pub(crate) fn already_captured(state_path: &std::path::Path, session_id: &str) -> bool {
+    let Ok(contents) = std::fs::read_to_string(state_path) else {
+        return false;
+    };
+    contents.lines().any(|l| l.trim() == session_id)
+}
+
+/// Appends `session_id` to the state file (one id per line).
+/// Creates parent directories as needed.
+/// Any FS error is logged to stderr and silently ignored (fail-open).
+pub(crate) fn record_captured(state_path: &std::path::Path, session_id: &str) {
+    if let Some(parent) = state_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!(
+                "mnemos hook session-end: could not create state dir {}: {e}",
+                parent.display()
+            );
+            return;
+        }
+    }
+    use std::io::Write as _;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(state_path);
+    match file {
+        Ok(mut f) => {
+            if let Err(e) = writeln!(f, "{session_id}") {
+                eprintln!("mnemos hook session-end: failed to record session id: {e}");
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "mnemos hook session-end: could not open state file {}: {e}",
+                state_path.display()
+            );
+        }
+    }
+}
+
+// ── Session API helpers ───────────────────────────────────────────────────────
+
+/// `POST /v1/sessions` → returns the daemon-assigned session id (`{"id": "..."}`).
+async fn post_start_session(token: &str, workspace: Option<&str>) -> anyhow::Result<String> {
+    let client = make_client().ok_or_else(|| anyhow::anyhow!("failed to build HTTP client"))?;
+    let mut body = serde_json::Map::new();
+    body.insert("source_tool".into(), serde_json::json!("claude-code"));
+    if let Some(ws) = workspace {
+        body.insert("workspace".into(), serde_json::json!(ws));
+    }
+    let resp = client
+        .post(format!("{DAEMON_URL}/v1/sessions"))
+        .bearer_auth(token)
+        .json(&serde_json::Value::Object(body))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("POST /v1/sessions failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "POST /v1/sessions returned {}",
+            resp.status()
+        ));
+    }
+    let parsed: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to parse session start response: {e}"))?;
+    let id = parsed
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("session start response missing `id` field"))?
+        .to_string();
+    Ok(id)
+}
+
+/// `POST /v1/sessions/{daemon_session_id}/chunks` for every turn (best-effort).
+///
+/// Builds chunk request bodies from `Vec<Turn>` using the verified field names:
+/// `{ body, speaker?, ordinal? }`.
+async fn post_chunks(token: &str, daemon_session_id: &str, turns: &[crate::transcript::Turn]) {
+    let Some(client) = make_client() else {
+        eprintln!("mnemos hook session-end: could not build HTTP client for chunks");
+        return;
+    };
+    let url = format!("{DAEMON_URL}/v1/sessions/{daemon_session_id}/chunks");
+    for turn in turns {
+        let body = build_chunk_body(turn);
+        match client
+            .post(&url)
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {}
+            Ok(resp) => {
+                eprintln!(
+                    "mnemos hook session-end: chunk ordinal {} failed: {}",
+                    turn.ordinal,
+                    resp.status()
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "mnemos hook session-end: chunk ordinal {} error: {e}",
+                    turn.ordinal
+                );
+            }
+        }
+    }
+}
+
+/// Build the JSON body for a single chunk POST.
+/// Extracted as a pure function so it can be unit-tested without a daemon.
+pub(crate) fn build_chunk_body(turn: &crate::transcript::Turn) -> serde_json::Value {
+    serde_json::json!({
+        "body":    turn.body,
+        "speaker": turn.speaker,
+        "ordinal": turn.ordinal,
+    })
+}
+
+/// `POST /v1/sessions/{id}/end` — signals the daemon to distil the session.
+async fn post_end_session(token: &str, daemon_session_id: &str) -> anyhow::Result<()> {
+    let client = make_client().ok_or_else(|| anyhow::anyhow!("failed to build HTTP client"))?;
+    let url = format!("{DAEMON_URL}/v1/sessions/{daemon_session_id}/end");
+    let resp = client
+        .post(&url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("POST /v1/sessions/{daemon_session_id}/end failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "POST /v1/sessions/{daemon_session_id}/end returned {}",
+            resp.status()
+        ));
+    }
+    Ok(())
 }
 
 // ── Pure helpers (unit-testable without daemon) ───────────────────────────────
@@ -720,5 +951,194 @@ mod tests {
         // If the daemon was down, we get None. If it was up, we may get
         // None (empty vault) or Some (populated vault). Both are correct.
         let _ = result; // no panic is the assertion
+    }
+
+    // ── idempotency helpers: pure FS logic ────────────────────────────────────
+
+    /// `already_captured` returns false for an unknown id when the state file
+    /// does not yet exist.
+    #[test]
+    fn already_captured_returns_false_when_file_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("captured-sessions");
+        assert!(!already_captured(&path, "session-abc"));
+    }
+
+    /// After `record_captured`, `already_captured` returns true for that id.
+    #[test]
+    fn record_then_already_captured_returns_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("captured-sessions");
+        record_captured(&path, "session-xyz");
+        assert!(already_captured(&path, "session-xyz"));
+    }
+
+    /// An id that was NOT recorded is still unknown even after another id was.
+    #[test]
+    fn already_captured_is_false_for_different_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("captured-sessions");
+        record_captured(&path, "session-aaa");
+        assert!(!already_captured(&path, "session-bbb"));
+    }
+
+    /// Recording the same id twice does not corrupt the file (no duplicate,
+    /// idempotent reads still return true).
+    #[test]
+    fn record_twice_is_idempotent_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("captured-sessions");
+        record_captured(&path, "session-dup");
+        record_captured(&path, "session-dup");
+        assert!(already_captured(&path, "session-dup"));
+        // The file should contain the id (may appear twice — that is allowed;
+        // `already_captured` only needs to find at least one occurrence).
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.lines().any(|l| l.trim() == "session-dup"));
+    }
+
+    /// Multiple distinct ids round-trip correctly through the state file.
+    #[test]
+    fn multiple_ids_all_found_after_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("captured-sessions");
+        let ids = ["sess-1", "sess-2", "sess-3"];
+        for id in &ids {
+            record_captured(&path, id);
+        }
+        for id in &ids {
+            assert!(
+                already_captured(&path, id),
+                "expected {id} to be found in state file"
+            );
+        }
+    }
+
+    /// `record_captured` creates parent directories as needed.
+    #[test]
+    fn record_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("nested")
+            .join("deep")
+            .join("captured-sessions");
+        // Parent does not exist yet — record_captured must create it.
+        record_captured(&path, "sess-nested");
+        assert!(path.exists(), "state file should exist after record");
+        assert!(already_captured(&path, "sess-nested"));
+    }
+
+    // ── session_end: missing/empty transcript_path → None ─────────────────────
+
+    /// `session_end` with a null input (no transcript_path) returns None
+    /// without panicking.
+    #[tokio::test]
+    async fn session_end_returns_none_when_input_is_null() {
+        let result = session_end(Value::Null).await;
+        assert!(result.is_none(), "session_end must always return None");
+    }
+
+    /// `session_end` with a missing `transcript_path` field returns None.
+    #[tokio::test]
+    async fn session_end_returns_none_when_transcript_path_missing() {
+        let input = serde_json::json!({
+            "session_id": "sess-123",
+            "cwd": "/tmp/project"
+        });
+        let result = session_end(input).await;
+        assert!(result.is_none());
+    }
+
+    /// `session_end` with a `transcript_path` that does not exist on disk
+    /// returns None (fail-open on unreadable transcript).
+    #[tokio::test]
+    async fn session_end_returns_none_when_transcript_file_missing() {
+        let input = serde_json::json!({
+            "session_id": "sess-456",
+            "transcript_path": "/nonexistent/path/transcript.jsonl",
+            "cwd": "/tmp"
+        });
+        let result = session_end(input).await;
+        assert!(result.is_none());
+    }
+
+    // ── build_chunk_body: pure Turn → JSON mapping ────────────────────────────
+
+    /// Chunk body contains the correct field names and values from a Turn.
+    #[test]
+    fn build_chunk_body_has_correct_field_names() {
+        use crate::transcript::Turn;
+        let turn = Turn {
+            speaker: "user".into(),
+            body: "hello world".into(),
+            ordinal: 3,
+        };
+        let body = build_chunk_body(&turn);
+        assert_eq!(body["body"].as_str(), Some("hello world"), "body field");
+        assert_eq!(body["speaker"].as_str(), Some("user"), "speaker field");
+        assert_eq!(body["ordinal"].as_u64(), Some(3), "ordinal field");
+    }
+
+    /// Chunk body for an assistant turn sets speaker correctly.
+    #[test]
+    fn build_chunk_body_assistant_speaker() {
+        use crate::transcript::Turn;
+        let turn = Turn {
+            speaker: "assistant".into(),
+            body: "I can help with that.".into(),
+            ordinal: 7,
+        };
+        let body = build_chunk_body(&turn);
+        assert_eq!(body["speaker"].as_str(), Some("assistant"));
+        assert_eq!(body["ordinal"].as_u64(), Some(7));
+    }
+
+    /// Ordinal zero is preserved (not treated as missing/null).
+    #[test]
+    fn build_chunk_body_ordinal_zero_is_preserved() {
+        use crate::transcript::Turn;
+        let turn = Turn {
+            speaker: "user".into(),
+            body: "first message".into(),
+            ordinal: 0,
+        };
+        let body = build_chunk_body(&turn);
+        assert_eq!(body["ordinal"].as_u64(), Some(0));
+    }
+
+    /// The chunk body is valid JSON (can be round-tripped through serde_json).
+    #[test]
+    fn build_chunk_body_is_valid_json_object() {
+        use crate::transcript::Turn;
+        let turn = Turn {
+            speaker: "user".into(),
+            body: "test".into(),
+            ordinal: 1,
+        };
+        let body = build_chunk_body(&turn);
+        // Serialise + deserialise round-trip.
+        let serialised = serde_json::to_string(&body).expect("must serialise");
+        let parsed: Value = serde_json::from_str(&serialised).expect("must parse");
+        assert_eq!(parsed["body"].as_str(), Some("test"));
+    }
+
+    /// Multiple turns produce chunk bodies with strictly increasing ordinals.
+    #[test]
+    fn build_chunk_bodies_have_increasing_ordinals() {
+        use crate::transcript::Turn;
+        let turns: Vec<Turn> = (0u32..5)
+            .map(|i| Turn {
+                speaker: "user".into(),
+                body: format!("msg {i}"),
+                ordinal: i,
+            })
+            .collect();
+        let ordinals: Vec<u64> = turns
+            .iter()
+            .map(|t| build_chunk_body(t)["ordinal"].as_u64().unwrap())
+            .collect();
+        let expected: Vec<u64> = (0..5).collect();
+        assert_eq!(ordinals, expected, "ordinals must be 0..4 in order");
     }
 }
