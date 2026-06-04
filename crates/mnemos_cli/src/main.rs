@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+pub mod daemon_ctl;
 
 use anyhow::Result;
 use clap::Parser;
