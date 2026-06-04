@@ -498,7 +498,7 @@ pub(crate) fn redact(body: &str) -> Option<String> {
                 .iter()
                 .take_while(|&&b| matches!(b, b'0'..=b'9' | b'A'..=b'Z'))
                 .count();
-            if run == AKIA_SUFFIX_LEN {
+            if run >= AKIA_SUFFIX_LEN {
                 return None;
             }
             j = j + offset + 1;
@@ -1296,6 +1296,18 @@ mod tests {
         assert!(
             redact(text).is_none(),
             "body containing an AWS access key ID must return None"
+        );
+    }
+
+    /// An AWS access key ID with MORE than 16 uppercase-alphanum chars after
+    /// AKIA is also dropped (fail-safe: >=16 triggers redaction).
+    #[test]
+    fn redact_aws_access_key_id_long_suffix_returns_none() {
+        // "AKIAIOSFODNN7EXAMPLELONG" — AKIA + 20 uppercase chars.
+        let text = "AKIAIOSFODNN7EXAMPLELONG";
+        assert!(
+            redact(text).is_none(),
+            "AKIA followed by 20 uppercase chars must be redacted (>= 16 trigger)"
         );
     }
 

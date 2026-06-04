@@ -6,15 +6,21 @@
 //! a session.
 
 use crate::error::Result;
-use crate::storage::vec_ops::delete_chunk_vec;
 use crate::storage::Storage;
 use libsql::params;
 
 /// Delete all chunks that belong to `session_id`, including their vector
-/// embeddings from `chunk_vec`.
+/// embeddings from `chunk_vec`, atomically within a single transaction.
 ///
-/// Returns the number of chunks deleted.  If the session has no chunks, or
-/// `session_id` is unknown, the function returns `Ok(0)`.
+/// Returns the number of chunk rows deleted.  If the session has no chunks,
+/// or `session_id` is unknown, the function returns `Ok(0)`.
+///
+/// # Atomicity guarantee
+///
+/// Both the `chunk_vec` vector rows and the `chunks` rows are deleted inside
+/// **one libsql transaction on one write connection**.  Either both deletes
+/// commit together or neither does — there is no window where vectors are
+/// gone but chunk rows remain (orphaned chunks) or vice-versa.
 ///
 /// # Retention contract
 ///
@@ -23,40 +29,52 @@ use libsql::params;
 /// chunks.  The session row itself, distilled memories, correction records,
 /// and `memory_chunks` provenance links are left completely untouched.
 pub async fn delete_session_chunks(storage: &Storage, session_id: &str) -> Result<usize> {
-    // 1. Collect the chunk ids for this session.
-    let conn = storage.conn()?;
+    // Acquire the serialised write connection before opening the transaction so
+    // no other writer can interleave.
+    let (conn, _guard) = storage.write_conn().await?;
+
+    // Count the chunks up-front so we can return a meaningful count even though
+    // libsql's execute() does not expose affected-row counts in local mode.
     let mut rows = conn
         .query(
-            "SELECT id FROM chunks WHERE session_id = ?1",
+            "SELECT COUNT(*) FROM chunks WHERE session_id = ?1",
             params![session_id.to_string()],
         )
         .await?;
-    let mut chunk_ids: Vec<String> = Vec::new();
-    while let Some(row) = rows.next().await? {
-        chunk_ids.push(row.get(0)?);
-    }
+    let count: i64 = rows
+        .next()
+        .await?
+        .map(|r| r.get::<i64>(0).unwrap_or(0))
+        .unwrap_or(0);
     drop(rows);
 
-    if chunk_ids.is_empty() {
+    if count == 0 {
         return Ok(0);
     }
 
-    // 2. Delete each chunk's vector embedding from the vec0 table.
-    //    These are best-effort: a missing vec row (e.g. chunk was never
-    //    embedded) is not an error — delete_chunk_vec is idempotent.
-    for cid in &chunk_ids {
-        delete_chunk_vec(storage, cid).await?;
-    }
+    // Open a transaction.  On any error the transaction is dropped without
+    // commit, which causes libsql to roll back — so it is all-deleted or
+    // none-deleted with no orphan rows possible.
+    let tx = conn.transaction().await?;
 
-    // 3. Bulk-delete the chunk rows.
-    let (conn, _guard) = storage.write_conn().await?;
-    conn.execute(
+    // Delete vector embeddings first (vec0 table).  A missing row (chunk was
+    // never embedded) is fine — DELETE is a no-op for absent rows.
+    tx.execute(
+        "DELETE FROM chunk_vec WHERE chunk_id IN (SELECT id FROM chunks WHERE session_id = ?1)",
+        params![session_id.to_string()],
+    )
+    .await?;
+
+    // Delete the chunk rows themselves.
+    tx.execute(
         "DELETE FROM chunks WHERE session_id = ?1",
         params![session_id.to_string()],
     )
     .await?;
 
-    Ok(chunk_ids.len())
+    tx.commit().await?;
+
+    Ok(count as usize)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -247,6 +265,75 @@ mod tests {
         let deleted = delete_session_chunks(storage, "sess-novec").await.unwrap();
         assert_eq!(deleted, 1);
         assert_eq!(count_chunks(storage, "sess-novec").await, 0);
+    }
+
+    /// After a successful delete, BOTH chunks AND their chunk_vec rows are
+    /// gone for the target session, while a different session's chunks and
+    /// vectors remain completely untouched (cross-session isolation).
+    ///
+    /// This verifies the atomicity contract at the structural level: the
+    /// single-transaction implementation leaves the DB in a consistent state
+    /// with no orphaned rows.
+    #[tokio::test]
+    async fn atomic_delete_removes_both_chunks_and_vecs_leaves_other_session_intact() {
+        let tmp = TempDir::new().unwrap();
+        let v = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
+        let storage = v.storage();
+
+        // Set up target session with a chunk + vector.
+        insert_session(storage, "sess-target-atomic").await.unwrap();
+        insert_chunk(storage, "chunk-ta1", "sess-target-atomic")
+            .await
+            .unwrap();
+        let embedding: Vec<f32> = vec![0.1_f32; 768];
+        crate::storage::vec_ops::insert_chunk_vec(storage, "chunk-ta1", &embedding)
+            .await
+            .unwrap();
+
+        // Set up a bystander session with its own chunk + vector.
+        insert_session(storage, "sess-bystander").await.unwrap();
+        insert_chunk(storage, "chunk-by1", "sess-bystander")
+            .await
+            .unwrap();
+        crate::storage::vec_ops::insert_chunk_vec(storage, "chunk-by1", &embedding)
+            .await
+            .unwrap();
+
+        // Preconditions: both sessions have 1 chunk and 1 vec row each.
+        assert_eq!(count_chunks(storage, "sess-target-atomic").await, 1);
+        assert_eq!(count_chunk_vec(storage, "chunk-ta1").await, 1);
+        assert_eq!(count_chunks(storage, "sess-bystander").await, 1);
+        assert_eq!(count_chunk_vec(storage, "chunk-by1").await, 1);
+
+        // Delete only the target session.
+        let deleted = delete_session_chunks(storage, "sess-target-atomic")
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1, "should report 1 chunk deleted");
+
+        // Target session: both chunk row AND vec row must be gone.
+        assert_eq!(
+            count_chunks(storage, "sess-target-atomic").await,
+            0,
+            "chunk row must be deleted"
+        );
+        assert_eq!(
+            count_chunk_vec(storage, "chunk-ta1").await,
+            0,
+            "chunk_vec row must be deleted in the same transaction"
+        );
+
+        // Bystander session: must be completely untouched.
+        assert_eq!(
+            count_chunks(storage, "sess-bystander").await,
+            1,
+            "bystander chunk must be untouched"
+        );
+        assert_eq!(
+            count_chunk_vec(storage, "chunk-by1").await,
+            1,
+            "bystander vec must be untouched"
+        );
     }
 
     /// The session row itself is untouched after deleting its chunks.
