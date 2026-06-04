@@ -335,11 +335,13 @@ async fn post_start_session(token: &str, workspace: Option<&str>) -> anyhow::Res
 /// `POST /v1/sessions/{daemon_session_id}/chunks` for every turn (best-effort).
 ///
 /// Builds chunk request bodies from `Vec<Turn>` using the verified field names:
-/// `{ body, speaker?, ordinal? }`. Chunk POSTs are issued with bounded
-/// concurrency (up to 8 in-flight at once) so long transcripts do not stall
-/// the process for an extended time. Ordinals are carried in each chunk body,
-/// so completion order does not affect correctness. A failed chunk is logged
-/// to stderr and skipped — it never aborts the batch.
+/// `{ body, speaker?, ordinal? }`. Each turn's body is first passed through
+/// [`redact`]; turns whose bodies appear to contain a secret are silently
+/// dropped (not POSTed) and a count is logged to stderr. Chunk POSTs are
+/// issued with bounded concurrency (up to 8 in-flight at once) so long
+/// transcripts do not stall the process for an extended time. Ordinals are
+/// carried in each chunk body, so completion order does not affect correctness.
+/// A failed chunk is logged to stderr and skipped — it never aborts the batch.
 async fn post_chunks(token: &str, daemon_session_id: &str, turns: &[crate::transcript::Turn]) {
     use futures::StreamExt as _;
 
@@ -349,7 +351,26 @@ async fn post_chunks(token: &str, daemon_session_id: &str, turns: &[crate::trans
     };
     let url = format!("{DAEMON_URL}/v1/sessions/{daemon_session_id}/chunks");
 
-    futures::stream::iter(turns)
+    let mut skipped = 0usize;
+    let safe_turns: Vec<_> = turns
+        .iter()
+        .filter(|turn| {
+            if redact(&turn.body).is_none() {
+                skipped += 1;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    if skipped > 0 {
+        eprintln!(
+            "mnemos hook session-end: skipped {skipped} chunk(s) — body contained a secret pattern"
+        );
+    }
+
+    futures::stream::iter(safe_turns)
         .map(|turn| {
             let client = client.clone();
             let url = url.clone();
@@ -413,6 +434,81 @@ async fn post_end_session(token: &str, daemon_session_id: &str) -> anyhow::Resul
 }
 
 // ── Pure helpers (unit-testable without daemon) ───────────────────────────────
+
+/// Returns `None` if `body` appears to contain a secret, so the caller can
+/// drop the chunk without POSTing it. Returns `Some(body.to_string())`
+/// otherwise (including the empty-string case).
+///
+/// This is a conservative, best-effort guard — it catches obvious shapes only:
+///
+/// * **OpenAI-style key** — `sk-` followed by 20 or more `[A-Za-z0-9]` chars.
+/// * **AWS access key ID** — `AKIA` followed by exactly 16 `[0-9A-Z]` chars.
+/// * **PEM private key header** — substring `-----BEGIN` appears AND later
+///   `PRIVATE KEY-----` appears (covers RSA, EC, OPENSSH, etc.).
+///
+/// The function is allocation-light and panic-free. It does NOT use the `regex`
+/// crate (not a dependency of `mnemos_cli`).
+pub(crate) fn redact(body: &str) -> Option<String> {
+    // ── PEM private-key header ────────────────────────────────────────────────
+    if body.contains("-----BEGIN") && body.contains("PRIVATE KEY-----") {
+        return None;
+    }
+
+    let bytes = body.as_bytes();
+    let len = bytes.len();
+
+    // ── OpenAI-style key: "sk-" + 20+ [A-Za-z0-9] ────────────────────────────
+    const SK_PREFIX: &[u8] = b"sk-";
+    const SK_MIN_SUFFIX: usize = 20;
+
+    let mut i = 0usize;
+    while i + SK_PREFIX.len() <= len {
+        // Find the next "sk-" occurrence starting from `i`.
+        if let Some(offset) = bytes[i..]
+            .windows(SK_PREFIX.len())
+            .position(|w| w == SK_PREFIX)
+        {
+            let key_start = i + offset + SK_PREFIX.len();
+            let run = bytes[key_start..]
+                .iter()
+                .take_while(|&&b| b.is_ascii_alphanumeric())
+                .count();
+            if run >= SK_MIN_SUFFIX {
+                return None;
+            }
+            // Advance past the prefix we just checked.
+            i = i + offset + 1;
+        } else {
+            break;
+        }
+    }
+
+    // ── AWS access key ID: "AKIA" + exactly 16 [0-9A-Z] ─────────────────────
+    const AKIA_PREFIX: &[u8] = b"AKIA";
+    const AKIA_SUFFIX_LEN: usize = 16;
+
+    let mut j = 0usize;
+    while j + AKIA_PREFIX.len() <= len {
+        if let Some(offset) = bytes[j..]
+            .windows(AKIA_PREFIX.len())
+            .position(|w| w == AKIA_PREFIX)
+        {
+            let key_start = j + offset + AKIA_PREFIX.len();
+            let run = bytes[key_start..]
+                .iter()
+                .take_while(|&&b| matches!(b, b'0'..=b'9' | b'A'..=b'Z'))
+                .count();
+            if run == AKIA_SUFFIX_LEN {
+                return None;
+            }
+            j = j + offset + 1;
+        } else {
+            break;
+        }
+    }
+
+    Some(body.to_string())
+}
 
 /// Build the hook JSON payload for a non-empty working-set text.
 ///
@@ -1170,5 +1266,63 @@ mod tests {
             .collect();
         let expected: Vec<u64> = (0..5).collect();
         assert_eq!(ordinals, expected, "ordinals must be 0..4 in order");
+    }
+
+    // ── redact: pure secret-detection guard ──────────────────────────────────
+
+    /// Normal prose passes through unchanged.
+    #[test]
+    fn redact_normal_prose_returns_some_unchanged() {
+        let text = "Today we discussed the project roadmap and timelines.";
+        let result = redact(text);
+        assert_eq!(result, Some(text.to_string()));
+    }
+
+    /// An OpenAI-style key (sk- + 20+ alphanum chars) causes the chunk to be dropped.
+    #[test]
+    fn redact_openai_key_returns_none() {
+        let text = "my key is sk-abcdefghijklmnopqrstuvwxyz123456";
+        assert!(
+            redact(text).is_none(),
+            "body containing an OpenAI-style key must return None"
+        );
+    }
+
+    /// An AWS access key ID (AKIA + exactly 16 [0-9A-Z] chars) is dropped.
+    #[test]
+    fn redact_aws_access_key_id_returns_none() {
+        // "AKIAIOSFODNN7EXAMPLE" — canonical example from AWS docs.
+        let text = "AKIAIOSFODNN7EXAMPLE";
+        assert!(
+            redact(text).is_none(),
+            "body containing an AWS access key ID must return None"
+        );
+    }
+
+    /// A PEM block containing a private key header is dropped.
+    #[test]
+    fn redact_pem_private_key_returns_none() {
+        let text =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
+        assert!(
+            redact(text).is_none(),
+            "body containing a PEM private key header must return None"
+        );
+    }
+
+    /// "sk-8" — prefix present but only 1 trailing char — must NOT be redacted (false-positive guard).
+    #[test]
+    fn redact_short_sk_prefix_is_not_redacted() {
+        let text = "take the sk-8 bus";
+        assert!(
+            redact(text).is_some(),
+            "sk- with fewer than 20 trailing chars must not be redacted"
+        );
+    }
+
+    /// Empty string passes through as Some("").
+    #[test]
+    fn redact_empty_string_returns_some_empty() {
+        assert_eq!(redact(""), Some(String::new()));
     }
 }

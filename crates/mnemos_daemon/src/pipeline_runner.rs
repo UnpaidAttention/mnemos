@@ -13,6 +13,7 @@ use mnemos_core::pipeline::reflect::{harden_corrections, mine_corrections, refle
 use mnemos_core::pipeline::resolve::resolve_and_apply;
 use mnemos_core::pipeline::ResolveOp;
 use mnemos_core::providers::LlmProvider;
+use mnemos_core::storage::chunk_ops::delete_session_chunks;
 use mnemos_core::storage::reflection_ops::{bump_salience, reset_salience};
 use mnemos_core::types::{Chunk, Provenance};
 use tokio::sync::broadcast::error::RecvError;
@@ -78,6 +79,7 @@ async fn process_session(state: &AppState, session_id: &str) {
             });
             maybe_reflect(state, llm.as_ref(), n).await;
             maybe_mine_and_harden(state, llm.as_ref(), session_id).await;
+            maybe_prune_chunks(state, session_id).await;
         }
         Err(e) => {
             tracing::error!(session_id = %session_id, error = %e, "pipeline failed");
@@ -214,6 +216,33 @@ async fn maybe_mine_and_harden(state: &AppState, llm: &dyn LlmProvider, session_
     }
     if let Err(e) = harden_corrections(&state.vault, llm, 3).await {
         tracing::warn!(error = %e, "correction hardening failed");
+    }
+}
+
+/// If `config.autonomy.retention == "distill-and-prune"`, delete the raw
+/// chunks for `session_id` now that the pipeline + correction passes are done.
+///
+/// Errors are logged and swallowed — distillation already succeeded and a
+/// prune failure must never surface as a pipeline failure.
+async fn maybe_prune_chunks(state: &AppState, session_id: &str) {
+    if state.config.autonomy.retention != "distill-and-prune" {
+        return;
+    }
+    match delete_session_chunks(state.vault.storage(), session_id).await {
+        Ok(n) => {
+            tracing::info!(
+                session_id = %session_id,
+                chunks_pruned = n,
+                "distill-and-prune: raw chunks deleted"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %e,
+                "distill-and-prune: failed to delete chunks (non-fatal)"
+            );
+        }
     }
 }
 

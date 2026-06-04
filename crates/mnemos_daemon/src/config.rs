@@ -22,6 +22,7 @@ pub struct Config {
     pub reflection: ReflectionConfig,
     pub community: CommunityConfig,
     pub sync: SyncConfig,
+    pub autonomy: AutonomyConfig,
 }
 
 /// Cross-cutting OpenAI credentials shared by the OpenAI embedder and LLM
@@ -438,5 +439,105 @@ fn expand_tilde(p: &Path) -> Result<PathBuf> {
         Ok(home.join(rest))
     } else {
         Ok(p.to_path_buf())
+    }
+}
+
+// ── Autonomy ──────────────────────────────────────────────────────────────────
+
+/// Configuration for the autonomy layer (capture, retention, recall budget).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutonomyConfig {
+    /// Whether the session-end hook captures transcripts at all.
+    /// Defaults to `true`.
+    pub capture: bool,
+    /// Raw-chunk retention policy after the pipeline has distilled a session.
+    ///
+    /// - `"distill-and-prune"` (default): delete raw chunks after distillation.
+    /// - `"keep-raw"`: retain raw chunks indefinitely.
+    pub retention: String,
+    /// Maximum characters of recall context injected by the `user-prompt` hook.
+    /// Defaults to 1200 (~300 tokens at 4 chars/token).
+    pub recall_budget_chars: usize,
+}
+
+impl Default for AutonomyConfig {
+    fn default() -> Self {
+        Self {
+            capture: true,
+            retention: "distill-and-prune".to_string(),
+            recall_budget_chars: 1200,
+        }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A config TOML that does not contain an `[autonomy]` section must
+    /// deserialize with the `AutonomyConfig` defaults.
+    #[test]
+    fn autonomy_defaults_when_section_absent() {
+        let toml = r#"
+[daemon]
+port = 7423
+"#;
+        let cfg: Config = toml::from_str(toml).expect("must parse");
+        assert!(cfg.autonomy.capture, "capture defaults to true");
+        assert_eq!(
+            cfg.autonomy.retention, "distill-and-prune",
+            "retention defaults to distill-and-prune"
+        );
+        assert_eq!(
+            cfg.autonomy.recall_budget_chars, 1200,
+            "recall_budget_chars defaults to 1200"
+        );
+    }
+
+    /// Values present in `[autonomy]` override the defaults.
+    #[test]
+    fn autonomy_section_overrides_defaults() {
+        let toml = r#"
+[autonomy]
+retention = "keep-raw"
+capture = false
+recall_budget_chars = 600
+"#;
+        let cfg: Config = toml::from_str(toml).expect("must parse");
+        assert!(!cfg.autonomy.capture, "capture should be false");
+        assert_eq!(cfg.autonomy.retention, "keep-raw");
+        assert_eq!(cfg.autonomy.recall_budget_chars, 600);
+    }
+
+    /// A partial `[autonomy]` section only overrides the keys that are present;
+    /// unspecified keys still use their defaults.
+    #[test]
+    fn autonomy_partial_section_merges_with_defaults() {
+        let toml = r#"
+[autonomy]
+retention = "keep-raw"
+"#;
+        let cfg: Config = toml::from_str(toml).expect("must parse");
+        assert!(
+            cfg.autonomy.capture,
+            "unspecified capture should default to true"
+        );
+        assert_eq!(cfg.autonomy.retention, "keep-raw");
+        assert_eq!(
+            cfg.autonomy.recall_budget_chars, 1200,
+            "unspecified recall_budget_chars should default to 1200"
+        );
+    }
+
+    /// The default Config (via Default::default()) also uses AutonomyConfig defaults.
+    #[test]
+    fn config_default_has_autonomy_defaults() {
+        let cfg = Config::default();
+        assert!(cfg.autonomy.capture);
+        assert_eq!(cfg.autonomy.retention, "distill-and-prune");
+        assert_eq!(cfg.autonomy.recall_budget_chars, 1200);
     }
 }
