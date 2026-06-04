@@ -5,7 +5,9 @@ use mnemos_core::Tier;
 use mnemos_daemon::{build_app, config::Config};
 use tempfile::TempDir;
 
-async fn fixture_with_working_mem() -> (axum::Router, String) {
+/// Seed a vault with a Working-tier identity memory and (optionally) a
+/// hardened Reflection-tier rule, then build the test app.
+async fn fixture_vault(add_hardened: bool) -> (axum::Router, String) {
     let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
     let paths = Paths::with_root(tmp.path());
     let vault = Vault::open(paths).await.unwrap();
@@ -21,8 +23,28 @@ async fn fixture_with_working_mem() -> (axum::Router, String) {
         )
         .await
         .unwrap();
+    if add_hardened {
+        vault
+            .remember(
+                "always use snake_case for variable names",
+                RememberOpts {
+                    title: Some("snake_case rule".into()),
+                    tier: Tier::Reflection,
+                    kind: MemoryType::Reflection,
+                    tags: vec!["mnemos:hardened".into()],
+                    importance: Some(0.9),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
     let (app, state) = build_app(Config::default(), vault).await.unwrap();
     (app, state.token)
+}
+
+async fn fixture_with_working_mem() -> (axum::Router, String) {
+    fixture_vault(false).await
 }
 
 #[tokio::test]
@@ -76,6 +98,68 @@ async fn mcp_prompts_get_context_for_returns_messages() {
     assert_eq!(msgs[0]["role"], "system");
     let text = msgs[0]["content"]["text"].as_str().unwrap();
     assert!(text.contains("user is Shaun"));
+}
+
+/// A hardened Reflection-tier rule must appear in the `hardened_rules` array
+/// of the `mnemos://working` resource payload.
+#[tokio::test]
+async fn working_resource_includes_hardened_rules() {
+    let (app, token) = fixture_vault(true).await;
+    let body = r#"{"jsonrpc":"2.0","id":10,"method":"resources/read","params":{"uri":"mnemos://working"}}"#;
+    let (status, b) = call(app, "POST", "/mcp", Some(&token), body).await;
+    assert_eq!(status, 200, "unexpected status; body: {b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    let contents = v["result"]["contents"].as_array().unwrap();
+    let first_text = contents[0]["text"].as_str().unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(first_text).unwrap();
+
+    let rules = parsed["hardened_rules"]
+        .as_array()
+        .expect("hardened_rules field must be present when hardened memories exist");
+    assert!(
+        !rules.is_empty(),
+        "hardened_rules must contain at least one entry"
+    );
+    assert!(
+        rules
+            .iter()
+            .any(|r| r["title"].as_str() == Some("snake_case rule")),
+        "seeded hardened rule title must appear in hardened_rules"
+    );
+    // Tags must confirm the mnemos:hardened tag is present.
+    let rule = rules
+        .iter()
+        .find(|r| r["title"].as_str() == Some("snake_case rule"))
+        .unwrap();
+    let tags: Vec<&str> = rule["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t.as_str())
+        .collect();
+    assert!(
+        tags.contains(&"mnemos:hardened"),
+        "returned rule must carry the mnemos:hardened tag"
+    );
+}
+
+/// When no hardened rules exist the field must be absent (not an empty array).
+#[tokio::test]
+async fn working_resource_omits_hardened_rules_when_none_exist() {
+    let (app, token) = fixture_vault(false).await;
+    let body = r#"{"jsonrpc":"2.0","id":11,"method":"resources/read","params":{"uri":"mnemos://working"}}"#;
+    let (status, b) = call(app, "POST", "/mcp", Some(&token), body).await;
+    assert_eq!(status, 200, "unexpected status; body: {b}");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    let contents = v["result"]["contents"].as_array().unwrap();
+    let first_text = contents[0]["text"].as_str().unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(first_text).unwrap();
+
+    assert!(
+        parsed.get("hardened_rules").is_none(),
+        "hardened_rules key must be absent when no hardened memories exist; \
+         got: {parsed}"
+    );
 }
 
 async fn call(

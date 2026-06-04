@@ -23,6 +23,11 @@ use serde_json::json;
 ///   `{"relations":[{"source":"A","relation":"REL","target":"B"}]}`
 /// * `TASK=reflect`   → one reflection per `REFLECT:<kind>|<text>` occurrence →
 ///   `{"reflections":[{"kind":"<kind>","text":"<text>"}]}`
+/// * `TASK=harden`    → first `RULE:<text>` occurrence →
+///   `{"rule":"<text>"}`
+/// * `TASK=mine-corrections` → one correction per
+///   `CORRECTION:<wrong>|<right>|<why>|<trigger>` occurrence →
+///   `{"corrections":[{"wrong":"...","right":"...","why":"...","trigger":"..."}]}`
 /// * `TASK=community` → echoes entity list as a deterministic community summary →
 ///   `{"title":"Community summary","summary":"<content>"}`
 /// * no recognised marker → echoes the joined user content verbatim.
@@ -84,6 +89,43 @@ impl LlmProvider for MockLlm {
                 .filter(|v| !v["text"].as_str().unwrap_or("").is_empty())
                 .collect();
             json!({ "reflections": reflections }).to_string()
+        } else if req.system.contains("TASK=harden") {
+            // One hardened rule per `RULE:<text>` occurrence (first match wins).
+            let rule_text = content
+                .lines()
+                .find_map(|l| {
+                    l.find("RULE:")
+                        .map(|i| l[i + "RULE:".len()..].trim().to_string())
+                })
+                .unwrap_or_default();
+            json!({ "rule": rule_text }).to_string()
+        } else if req.system.contains("TASK=mine-corrections") {
+            // One correction per `CORRECTION:<wrong>|<right>|<why>|<trigger>` occurrence.
+            let corrections: Vec<_> = content
+                .lines()
+                .filter_map(|l| l.find("CORRECTION:").map(|i| &l[i + "CORRECTION:".len()..]))
+                .filter_map(|rest| {
+                    let parts: Vec<&str> = rest.trim().splitn(4, '|').collect();
+                    if parts.len() == 4 {
+                        let (wrong, right, why, trigger) = (
+                            parts[0].trim(),
+                            parts[1].trim(),
+                            parts[2].trim(),
+                            parts[3].trim(),
+                        );
+                        if !why.is_empty() {
+                            return Some(json!({
+                                "wrong": wrong,
+                                "right": right,
+                                "why": why,
+                                "trigger": trigger,
+                            }));
+                        }
+                    }
+                    None
+                })
+                .collect();
+            json!({ "corrections": corrections }).to_string()
         } else if req.system.contains("TASK=community") {
             // Deterministic summary: echo the entity list back.
             json!({ "title": "Community summary", "summary": content.trim() }).to_string()

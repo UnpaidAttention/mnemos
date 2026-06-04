@@ -5,6 +5,7 @@
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all)]
 
+pub mod correction;
 pub mod doctor;
 pub mod embedder_rebuild;
 pub mod error;

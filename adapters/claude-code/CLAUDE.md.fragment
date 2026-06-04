@@ -9,7 +9,13 @@ Available tools:
 - `recall(query, k=5, explain?)` — retrieve relevant memories.
 - `forget(memory_id, reason?)` — soft-invalidate.
 - `get_memory(memory_id)` / `list_memories(...)` — browse.
+- `correct(wrong, right, why, trigger?)` — record a correction after you got
+  something wrong and were corrected, so the mistake isn't repeated.
 
 When the user states a durable preference, project context, or rule that's
 not obvious from the codebase, call `remember(...)` with `tier=procedural`
 (rules) or `tier=working` (identity/project) so it persists across sessions.
+
+When the user corrects you and explains *why*, call `correct(wrong, right, why,
+trigger)` — Mnemos stores the lesson and surfaces recurring ones as hardened
+rules at the start of future sessions.

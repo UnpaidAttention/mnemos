@@ -7,7 +7,8 @@ use crate::pipeline::decay::{decay_pass, DecayConfig, DecayStats};
 use crate::providers::Embedder;
 use crate::storage::audit::write_audit;
 use crate::storage::memory_ops::{
-    add_memory_link, get_memory, insert_memory, list_memories, soft_invalidate, ListFilter,
+    add_memory_link, get_memory, insert_memory, list_memories, soft_invalidate, supersede_memory,
+    ListFilter,
 };
 use crate::storage::vault_meta::{get_embedder_meta, set_embedder_meta, EmbedderMeta};
 use crate::storage::vec_ops::{delete_memory_vec, insert_memory_vec};
@@ -407,6 +408,118 @@ impl Vault {
         Ok(id)
     }
 
+    /// Store a [`Correction`][crate::correction::Correction] as a Procedural-tier memory.
+    ///
+    /// Steps:
+    /// 1. Validate the correction (`why` must be substantive; `right` must not
+    ///    weaponize a safeguard).
+    /// 2. Search for a near-duplicate correction and, if found, reinforce its
+    ///    access count rather than inserting a second entry.  When no embedder
+    ///    is configured the dedup search is skipped (returns `Ok(None)`).
+    /// 3. Create a new `Procedural / Correction` memory via [`remember`][Vault::remember].
+    /// 4. If `supersedes` is given, mark that memory invalid and link it.
+    ///
+    /// Returns the ID of the memory that represents this correction (either the
+    /// existing reinforced one or the newly created one).
+    pub async fn remember_correction(
+        &self,
+        correction: crate::correction::Correction,
+        supersedes: Option<String>,
+    ) -> Result<String> {
+        correction
+            .validate()
+            .map_err(|e| MnemosError::Validation(e.to_string()))?;
+
+        if let Some(existing_id) = self.find_duplicate_correction(&correction).await? {
+            self.reinforce_correction(&existing_id).await?;
+            return Ok(existing_id);
+        }
+
+        let mut tags = correction.trigger_tags();
+        tags.push("correction".to_string());
+        let id = self
+            .remember(
+                &correction.to_body(),
+                RememberOpts {
+                    title: Some(truncate_title(&correction.right)),
+                    tier: Tier::Procedural,
+                    kind: MemoryType::Correction,
+                    tags,
+                    importance: Some(0.8),
+                    workspace: None,
+                    source_tool: None,
+                    provenance: vec![],
+                },
+            )
+            .await?;
+
+        if let Some(old_id) = supersedes {
+            // Best-effort: if the old memory is already invalid or gone, ignore the error.
+            let _ = supersede_memory(&self.storage, &old_id, &id, Utc::now()).await;
+        }
+
+        Ok(id)
+    }
+
+    /// Search for an existing `Correction` memory whose semantic content is
+    /// close enough to `c` that inserting a duplicate would be wasteful.
+    ///
+    /// Requires an embedder.  When none is configured this returns `Ok(None)`
+    /// immediately so the caller proceeds to create a fresh entry.
+    async fn find_duplicate_correction(
+        &self,
+        c: &crate::correction::Correction,
+    ) -> Result<Option<String>> {
+        // No embedder → no vector search → skip dedup.
+        if self.embedder.is_none() {
+            return Ok(None);
+        }
+
+        let query = format!("{} {}", c.trigger.as_deref().unwrap_or(""), c.right);
+
+        // Dense recall via retrieval layer.  A recall error (e.g. no vectors
+        // yet) is treated as "no duplicate found" rather than a hard failure.
+        let opts = crate::retrieval::RecallOpts {
+            k: 5,
+            ..Default::default()
+        };
+        let hits = match crate::retrieval::dense::dense_recall(
+            &self.storage,
+            self.embedder.as_ref().unwrap().as_ref(),
+            &query,
+            opts,
+        )
+        .await
+        {
+            Ok(h) => h,
+            Err(_) => return Ok(None),
+        };
+
+        const DUP_THRESHOLD: f64 = 0.9;
+        for hit in hits {
+            if hit.memory.kind == MemoryType::Correction && hit.score >= DUP_THRESHOLD {
+                return Ok(Some(hit.memory.id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Bump `access_count` and `last_accessed` on an existing correction memory
+    /// to signal reinforcement (the correction has been seen again).
+    async fn reinforce_correction(&self, id: &str) -> Result<()> {
+        let now = Utc::now();
+        let (conn, _guard) = self.storage.write_conn().await?;
+        conn.execute(
+            "UPDATE memories
+                SET access_count = access_count + 1,
+                    last_accessed = ?
+              WHERE id = ?",
+            libsql::params![now.to_rfc3339(), id.to_string()],
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Run a decay pass and invalidate any memories that fell below the floor.
     /// Invalidation goes through `forget` so the change is persisted to disk.
     pub async fn run_decay(&self, cfg: &DecayConfig) -> Result<DecayStats> {
@@ -512,6 +625,25 @@ fn auto_title(body: &str) -> String {
         line.into()
     } else {
         format!("{}…", &line[..77])
+    }
+}
+
+/// Produce a short title from `s` (trimmed).  If longer than 72 chars, the
+/// result is truncated to 71 chars followed by `…`.
+fn truncate_title(s: &str) -> String {
+    let trimmed = s.trim();
+    if trimmed.len() <= 72 {
+        trimmed.into()
+    } else {
+        // Cut at a char boundary at or before byte 71 (right may contain
+        // non-ASCII text; a raw byte slice would panic mid-codepoint).
+        let cut = trimmed
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= 71)
+            .last()
+            .unwrap_or(0);
+        format!("{}…", &trimmed[..cut])
     }
 }
 

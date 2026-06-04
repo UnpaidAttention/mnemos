@@ -9,7 +9,7 @@ use libsql::params;
 use mnemos_core::pipeline::entities::link_entities;
 use mnemos_core::pipeline::extract::extract_facts;
 use mnemos_core::pipeline::graph::update_graph;
-use mnemos_core::pipeline::reflect::reflect;
+use mnemos_core::pipeline::reflect::{harden_corrections, mine_corrections, reflect};
 use mnemos_core::pipeline::resolve::resolve_and_apply;
 use mnemos_core::pipeline::ResolveOp;
 use mnemos_core::providers::LlmProvider;
@@ -77,6 +77,7 @@ async fn process_session(state: &AppState, session_id: &str) {
                 facts_added: n,
             });
             maybe_reflect(state, llm.as_ref(), n).await;
+            maybe_mine_and_harden(state, llm.as_ref(), session_id).await;
         }
         Err(e) => {
             tracing::error!(session_id = %session_id, error = %e, "pipeline failed");
@@ -201,6 +202,18 @@ async fn maybe_reflect(state: &AppState, llm: &dyn LlmProvider, added: usize) {
             });
         }
         Err(e) => tracing::warn!(error = %e, "reflection pass failed"),
+    }
+}
+
+/// Run the correction-mining pass followed by the hardening pass for a
+/// session that just completed. Both are fire-and-forget: errors are logged
+/// and the caller is never blocked.
+async fn maybe_mine_and_harden(state: &AppState, llm: &dyn LlmProvider, session_id: &str) {
+    if let Err(e) = mine_corrections(&state.vault, llm, session_id).await {
+        tracing::warn!(session_id = %session_id, error = %e, "correction mining failed");
+    }
+    if let Err(e) = harden_corrections(&state.vault, llm, 3).await {
+        tracing::warn!(error = %e, "correction hardening failed");
     }
 }
 

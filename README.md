@@ -194,7 +194,9 @@ Recall is now graph-aware, and the system distills what it learns.
 | `POST` | `/v1/maintenance/communities` | Run community detection + summarization |
 | `POST` | `/v1/memories/search` (`"graph": bool`, `"global": bool`) | Graph-fused recall; global community-summary recall |
 
-New MCP tools: `reflect`, `list_reflections`; `recall` gains `graph` and `global` args.
+New MCP tools: `reflect`, `list_reflections`, `correct` (capture a wrong→right→why
+correction; recurring ones harden into rules surfaced at session start); `recall`
+gains `graph` and `global` args. REST: `POST`/`GET /v1/corrections`.
 
 ### Config
 
