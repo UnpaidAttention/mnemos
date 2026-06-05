@@ -106,6 +106,39 @@ impl BundledHandle {
     }
 }
 
+/// Spawn a single `llama-server` child, routing stdout+stderr to `log_path`
+/// opened in append mode.
+///
+/// Extracted so both the initial spawn and the watchdog-restart branch use
+/// identical arguments and log routing — preventing post-restart output from
+/// being silently dropped to `/dev/null` (P1-11).
+fn spawn_child(cfg: &BundledEmbedderConfig, log_path: &std::path::Path) -> Result<Child> {
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .with_context(|| format!("open log {}", log_path.display()))?;
+    let log_err = log.try_clone().context("clone log fd")?;
+    Command::new(&cfg.binary)
+        .arg("--model")
+        .arg(&cfg.model)
+        .arg("--host")
+        .arg(&cfg.host)
+        .arg("--port")
+        .arg(cfg.port.to_string())
+        .arg("--embedding")
+        .arg("--pooling")
+        .arg("mean")
+        .arg("--ctx-size")
+        .arg("8192")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err))
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("spawn {}", cfg.binary.display()))
+}
+
 /// Spawn `llama-server` and wait for its `/health` endpoint to come up.
 ///
 /// On success, returns a [`BundledHandle`] and a detached background task
@@ -125,35 +158,12 @@ pub async fn spawn(cfg: BundledEmbedderConfig) -> Result<BundledHandle> {
         );
     }
 
-    let log_path = log_path()?;
-    if let Some(parent) = log_path.parent() {
+    let initial_log_path = log_path()?;
+    if let Some(parent) = initial_log_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .with_context(|| format!("open {}", log_path.display()))?;
-    let log_err = log.try_clone()?;
 
-    let child = Command::new(&cfg.binary)
-        .arg("--model")
-        .arg(&cfg.model)
-        .arg("--host")
-        .arg(&cfg.host)
-        .arg("--port")
-        .arg(cfg.port.to_string())
-        .arg("--embedding")
-        .arg("--pooling")
-        .arg("mean")
-        .arg("--ctx-size")
-        .arg("8192")
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log_err))
-        .kill_on_drop(true)
-        .spawn()
-        .with_context(|| format!("spawn {}", cfg.binary.display()))?;
+    let child = spawn_child(&cfg, &initial_log_path)?;
 
     let child = Arc::new(Mutex::new(Some(child)));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
@@ -185,7 +195,7 @@ pub async fn spawn(cfg: BundledEmbedderConfig) -> Result<BundledHandle> {
         }
         anyhow::bail!(
             "llama-server did not become healthy within 5s; check {}",
-            log_path.display()
+            initial_log_path.display()
         );
     }
 
@@ -223,26 +233,20 @@ pub async fn spawn(cfg: BundledEmbedderConfig) -> Result<BundledHandle> {
                             backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(60));
                             consecutive_fails = 0;
                             // Restart: kill old child, spawn new one.
+                            // Re-open the log file in append mode so
+                            // post-restart output is captured rather than
+                            // silently dropped to /dev/null (P1-11).
                             let mut guard = child_for_health.lock().await;
                             if let Some(mut c) = guard.take() {
                                 let _ = c.start_kill();
                                 let _ = c.wait().await;
                             }
-                            let new_child = Command::new(&cfg_for_health.binary)
-                                .arg("--model").arg(&cfg_for_health.model)
-                                .arg("--host").arg(&cfg_for_health.host)
-                                .arg("--port").arg(cfg_for_health.port.to_string())
-                                .arg("--embedding")
-                                .arg("--pooling").arg("mean")
-                                .arg("--ctx-size").arg("8192")
-                                .stdin(Stdio::null())
-                                .stdout(Stdio::null())
-                                .stderr(Stdio::null())
-                                .kill_on_drop(true)
-                                .spawn();
-                            match new_child {
-                                Ok(c) => *guard = Some(c),
-                                Err(e) => tracing::error!("llama-server restart failed: {e}"),
+                            match log_path() {
+                                Ok(restart_log) => match spawn_child(&cfg_for_health, &restart_log) {
+                                    Ok(c) => *guard = Some(c),
+                                    Err(e) => tracing::error!("llama-server restart failed: {e}"),
+                                },
+                                Err(e) => tracing::error!("llama-server restart: cannot resolve log path: {e}"),
                             }
                         }
                     }

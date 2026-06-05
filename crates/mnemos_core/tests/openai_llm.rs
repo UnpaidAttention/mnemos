@@ -31,6 +31,7 @@ async fn openai_llm_chat_completion() {
         base_url: server.uri(),
         api_key: "sk-test".into(),
         model: "gpt-4o-mini".into(),
+        timeout_secs: 60,
     };
     let l = OpenAiLlm::new(&cfg).unwrap();
     let req = CompletionRequest::new("You are a helpful assistant.", "hello");
@@ -45,6 +46,7 @@ async fn openai_llm_rejects_empty_api_key() {
         base_url: "http://localhost:9999".into(),
         api_key: String::new(),
         model: "gpt-4o-mini".into(),
+        timeout_secs: 60,
     };
     assert!(OpenAiLlm::new(&cfg).is_err());
 }
@@ -62,6 +64,7 @@ async fn openai_llm_surfaces_http_errors() {
         base_url: server.uri(),
         api_key: "sk-test".into(),
         model: "gpt-4o-mini".into(),
+        timeout_secs: 60,
     };
     let l = OpenAiLlm::new(&cfg).unwrap();
     let req = CompletionRequest::new("system", "user");

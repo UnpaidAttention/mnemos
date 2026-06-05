@@ -18,6 +18,14 @@ pub struct OpenAiLlmConfig {
     pub api_key: String,
     /// Chat model name (e.g. `"gpt-4o-mini"`).
     pub model: String,
+    /// HTTP request timeout in seconds (P1-14).  Mirrors [`OllamaLlmConfig`].
+    /// Defaults to 60; clamped to a minimum of 1.
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_timeout_secs() -> u64 {
+    60
 }
 
 impl Default for OpenAiLlmConfig {
@@ -26,6 +34,7 @@ impl Default for OpenAiLlmConfig {
             base_url: "https://api.openai.com".into(),
             api_key: String::new(),
             model: "gpt-4o-mini".into(),
+            timeout_secs: default_timeout_secs(),
         }
     }
 }
@@ -44,6 +53,7 @@ pub fn config_from_env() -> Result<OpenAiLlmConfig> {
         base_url,
         api_key,
         model,
+        timeout_secs: default_timeout_secs(),
     })
 }
 
@@ -57,12 +67,15 @@ pub struct OpenAiLlm {
 impl OpenAiLlm {
     /// Build a new client. Returns an error if `cfg.api_key` is empty or the
     /// HTTP client cannot be constructed.
+    ///
+    /// The HTTP timeout honours `cfg.timeout_secs`, clamped to a minimum of
+    /// 1 second, mirroring the pattern used by [`OllamaLlm`] (P1-14).
     pub fn new(cfg: &OpenAiLlmConfig) -> Result<Self> {
         if cfg.api_key.is_empty() {
             return Err(MnemosError::Internal("OpenAI API key is empty".into()));
         }
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(cfg.timeout_secs.max(1)))
             .build()
             .map_err(|e| MnemosError::Internal(format!("reqwest build: {e}")))?;
         Ok(Self {
@@ -163,6 +176,13 @@ mod tests {
         assert!(cfg.api_key.is_empty());
     }
 
+    /// Default timeout is 60s (P1-14).
+    #[test]
+    fn default_timeout_is_60s() {
+        let cfg = OpenAiLlmConfig::default();
+        assert_eq!(cfg.timeout_secs, 60);
+    }
+
     #[test]
     fn new_rejects_empty_api_key() {
         let cfg = OpenAiLlmConfig::default();
@@ -175,7 +195,52 @@ mod tests {
             base_url: "http://localhost".into(),
             api_key: "sk-x".into(),
             model: "gpt-4o-mini".into(),
+            timeout_secs: 60,
         };
         assert_eq!(OpenAiLlm::new(&cfg).unwrap().model_id(), "gpt-4o-mini");
+    }
+
+    /// Custom timeout_secs is respected; the client must build without error
+    /// (P1-14).
+    #[test]
+    fn custom_timeout_accepted() {
+        let cfg = OpenAiLlmConfig {
+            base_url: "http://localhost".into(),
+            api_key: "sk-x".into(),
+            model: "gpt-4o-mini".into(),
+            timeout_secs: 120,
+        };
+        let llm = OpenAiLlm::new(&cfg).unwrap();
+        assert_eq!(llm.cfg.timeout_secs, 120);
+    }
+
+    /// Zero timeout_secs is clamped to 1 (P1-14).
+    #[test]
+    fn zero_timeout_clamped_to_one() {
+        let cfg = OpenAiLlmConfig {
+            base_url: "http://localhost".into(),
+            api_key: "sk-x".into(),
+            model: "gpt-4o-mini".into(),
+            timeout_secs: 0,
+        };
+        // Should build successfully (clamped to 1s internally).
+        assert!(OpenAiLlm::new(&cfg).is_ok());
+    }
+
+    /// timeout_secs deserialises from JSON (P1-14).
+    #[test]
+    fn timeout_secs_deserialises() {
+        let json = r#"{"base_url":"https://api.openai.com","api_key":"sk-x","model":"gpt-4o-mini","timeout_secs":30}"#;
+        let cfg: OpenAiLlmConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.timeout_secs, 30);
+    }
+
+    /// timeout_secs defaults to 60 when absent from JSON (P1-14).
+    #[test]
+    fn timeout_secs_defaults_when_absent() {
+        let json =
+            r#"{"base_url":"https://api.openai.com","api_key":"sk-x","model":"gpt-4o-mini"}"#;
+        let cfg: OpenAiLlmConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.timeout_secs, 60);
     }
 }

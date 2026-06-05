@@ -20,6 +20,7 @@ use axum::{
 use mnemos_core::embedder_rebuild::{rebuild, RebuildOptions, RebuildStatus};
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::atomic::Ordering;
 
 use crate::error::ApiError;
 use crate::events::Event;
@@ -68,6 +69,15 @@ async fn start(
         actor: "daemon".into(),
     };
 
+    // Increment the generation counter and capture this run's generation
+    // *before* spawning.  The background task will only write its final
+    // status when the counter still matches, preventing an aborted or
+    // double-started rebuild from overwriting a later run's status (P1-12).
+    let this_gen = state
+        .rebuild_generation
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1);
+
     // Flip status → Running before spawning so /status reflects the kickoff
     // even before the worker task starts.
     {
@@ -88,6 +98,7 @@ async fn start(
     // with an acknowledgement; callers poll /status for completion.
     let vault = state.vault.clone();
     let status_handle = state.rebuild_status.clone();
+    let gen_handle = state.rebuild_generation.clone();
     let events = state.events.clone();
     tokio::spawn(async move {
         match rebuild(&vault, opts).await {
@@ -101,23 +112,32 @@ async fn start(
                     } => (*processed, *skipped, *total),
                     _ => (0, 0, 0),
                 };
-                *status_handle.lock().await = s;
-                events.publish(Event::EmbedRebuildCompleted {
-                    processed,
-                    skipped,
-                    total,
-                });
+                // Only write the final status if this task's generation still
+                // matches the current generation — if /abort fired or a new
+                // rebuild started we must not clobber its status (P1-12).
+                let mut guard = status_handle.lock().await;
+                if gen_handle.load(Ordering::SeqCst) == this_gen {
+                    *guard = s;
+                    events.publish(Event::EmbedRebuildCompleted {
+                        processed,
+                        skipped,
+                        total,
+                    });
+                }
             }
             Err(e) => {
                 let err = e.to_string();
-                *status_handle.lock().await = RebuildStatus::Failed {
-                    error: err.clone(),
-                    processed: 0,
-                };
-                events.publish(Event::EmbedRebuildFailed {
-                    error: err,
-                    processed: 0,
-                });
+                let mut guard = status_handle.lock().await;
+                if gen_handle.load(Ordering::SeqCst) == this_gen {
+                    *guard = RebuildStatus::Failed {
+                        error: err.clone(),
+                        processed: 0,
+                    };
+                    events.publish(Event::EmbedRebuildFailed {
+                        error: err,
+                        processed: 0,
+                    });
+                }
             }
         }
     });
@@ -125,13 +145,16 @@ async fn start(
     Ok(Json(serde_json::json!({ "started": true })))
 }
 
-/// Best-effort abort: flips status to `Failed("aborted")` so future
-/// `/status` calls report aborted state. The in-flight task continues to
-/// completion — there is no cancellation channel in v0.8.0. The shadow
-/// table preserves partial work for a subsequent resume.
+/// Best-effort abort: flips status to `Failed("aborted")` and advances the
+/// generation counter so the in-flight background task will not overwrite the
+/// aborted status when it completes (P1-12).  The shadow table preserves
+/// partial work for a subsequent resume.
 async fn abort(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let mut s = state.rebuild_status.lock().await;
     if matches!(*s, RebuildStatus::Running { .. }) {
+        // Advance generation so the running task's generation no longer matches
+        // and will not write Completed/Failed over this Aborted status.
+        state.rebuild_generation.fetch_add(1, Ordering::SeqCst);
         *s = RebuildStatus::Failed {
             error: "aborted".into(),
             processed: 0,

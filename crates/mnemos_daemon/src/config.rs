@@ -444,6 +444,19 @@ fn expand_tilde(p: &Path) -> Result<PathBuf> {
 
 // ── Autonomy ──────────────────────────────────────────────────────────────────
 
+/// Raw-chunk retention policy after the pipeline has distilled a session.
+///
+/// An invalid value in `config.toml` is a hard parse error at startup (P1-13).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RetentionPolicy {
+    /// Delete raw chunks after successful distillation (default).
+    #[default]
+    DistillAndPrune,
+    /// Retain raw chunks indefinitely.
+    KeepRaw,
+}
+
 /// Configuration for the autonomy layer (capture, retention, recall budget).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -463,7 +476,9 @@ pub struct AutonomyConfig {
     ///
     /// - `"distill-and-prune"` (default): delete raw chunks after distillation.
     /// - `"keep-raw"`: retain raw chunks indefinitely.
-    pub retention: String,
+    ///
+    /// Invalid values are a hard parse error at startup (P1-13).
+    pub retention: RetentionPolicy,
     /// Maximum characters of recall context injected by the `user-prompt` hook.
     /// Defaults to 1200 (~300 tokens at 4 chars/token).
     pub recall_budget_chars: usize,
@@ -473,7 +488,7 @@ impl Default for AutonomyConfig {
     fn default() -> Self {
         Self {
             capture: true,
-            retention: "distill-and-prune".to_string(),
+            retention: RetentionPolicy::default(),
             recall_budget_chars: 1200,
         }
     }
@@ -496,7 +511,8 @@ port = 7423
         let cfg: Config = toml::from_str(toml).expect("must parse");
         assert!(cfg.autonomy.capture, "capture defaults to true");
         assert_eq!(
-            cfg.autonomy.retention, "distill-and-prune",
+            cfg.autonomy.retention,
+            RetentionPolicy::DistillAndPrune,
             "retention defaults to distill-and-prune"
         );
         assert_eq!(
@@ -516,7 +532,7 @@ recall_budget_chars = 600
 "#;
         let cfg: Config = toml::from_str(toml).expect("must parse");
         assert!(!cfg.autonomy.capture, "capture should be false");
-        assert_eq!(cfg.autonomy.retention, "keep-raw");
+        assert_eq!(cfg.autonomy.retention, RetentionPolicy::KeepRaw);
         assert_eq!(cfg.autonomy.recall_budget_chars, 600);
     }
 
@@ -533,7 +549,7 @@ retention = "keep-raw"
             cfg.autonomy.capture,
             "unspecified capture should default to true"
         );
-        assert_eq!(cfg.autonomy.retention, "keep-raw");
+        assert_eq!(cfg.autonomy.retention, RetentionPolicy::KeepRaw);
         assert_eq!(
             cfg.autonomy.recall_budget_chars, 1200,
             "unspecified recall_budget_chars should default to 1200"
@@ -545,7 +561,32 @@ retention = "keep-raw"
     fn config_default_has_autonomy_defaults() {
         let cfg = Config::default();
         assert!(cfg.autonomy.capture);
-        assert_eq!(cfg.autonomy.retention, "distill-and-prune");
+        assert_eq!(cfg.autonomy.retention, RetentionPolicy::DistillAndPrune);
         assert_eq!(cfg.autonomy.recall_budget_chars, 1200);
+    }
+
+    /// An invalid retention value must be a hard parse error (P1-13).
+    #[test]
+    fn autonomy_invalid_retention_is_parse_error() {
+        let toml = r#"
+[autonomy]
+retention = "typo-value"
+"#;
+        let result: Result<Config, _> = toml::from_str(toml);
+        assert!(
+            result.is_err(),
+            "invalid retention value must fail to parse"
+        );
+    }
+
+    /// distill-and-prune is a valid kebab-case value (P1-13).
+    #[test]
+    fn autonomy_distill_and_prune_parses() {
+        let toml = r#"
+[autonomy]
+retention = "distill-and-prune"
+"#;
+        let cfg: Config = toml::from_str(toml).expect("must parse");
+        assert_eq!(cfg.autonomy.retention, RetentionPolicy::DistillAndPrune);
     }
 }

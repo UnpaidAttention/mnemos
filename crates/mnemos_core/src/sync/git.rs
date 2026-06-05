@@ -9,6 +9,12 @@ use std::path::Path;
 use tokio::fs;
 use tokio::process::Command;
 
+/// Maximum time to wait for a single `git` subprocess before treating it as
+/// hung.  Five minutes is generous for a first push/pull; hung remotes (SSH
+/// with no timeout configured, dead network, stalled server) typically never
+/// return at all, so we must bound the wait ourselves (P1-10).
+const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 pub struct GitSync {
     #[allow(dead_code)]
     storage: Storage,
@@ -26,13 +32,36 @@ impl GitSync {
     }
 }
 
+/// Run a `git` subcommand with a 5-minute timeout.
+///
+/// The child is spawned with `.kill_on_drop(true)` so if the timeout fires
+/// (or the future is cancelled because the sync worker is shutting down) the
+/// underlying process is killed rather than left as an orphan (P1-10).
 async fn run(cwd: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
+    use std::process::Stdio as StdioBlocking;
+
+    let child = Command::new("git")
         .current_dir(cwd)
         .args(args)
-        .output()
-        .await
+        .stdin(StdioBlocking::null())
+        .stdout(StdioBlocking::piped())
+        .stderr(StdioBlocking::piped())
+        .kill_on_drop(true)
+        .spawn()
         .map_err(|e| MnemosError::Internal(format!("git invocation failed: {e}")))?;
+
+    let wait_fut = child.wait_with_output();
+    let out = tokio::time::timeout(GIT_TIMEOUT, wait_fut)
+        .await
+        .map_err(|_| {
+            MnemosError::Internal(format!(
+                "git {} timed out after {}s",
+                args.join(" "),
+                GIT_TIMEOUT.as_secs()
+            ))
+        })?
+        .map_err(|e| MnemosError::Internal(format!("git wait failed: {e}")))?;
+
     if !out.status.success() {
         return Err(MnemosError::Internal(format!(
             "git {} failed: {}",

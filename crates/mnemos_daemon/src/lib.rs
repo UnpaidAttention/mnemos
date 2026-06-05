@@ -98,6 +98,7 @@ pub async fn build_app_full(
         rebuild_status: Arc::new(tokio::sync::Mutex::new(
             mnemos_core::embedder_rebuild::RebuildStatus::Idle,
         )),
+        rebuild_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
     };
     let app = routes::build_router(state.clone());
     let pipeline = if state.llm.is_some() {

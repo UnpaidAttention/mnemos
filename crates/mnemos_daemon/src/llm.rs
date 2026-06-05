@@ -33,6 +33,8 @@ pub fn build_llm_for_daemon(cfg: &Config) -> Option<Arc<dyn LlmProvider>> {
                 if !cfg.llm.model.is_empty() && cfg.llm.model != "llama3.2" {
                     oc.model = cfg.llm.model.clone();
                 }
+                // Propagate the user-configured timeout (P1-14).
+                oc.timeout_secs = cfg.llm.timeout_secs;
                 match OpenAiLlm::new(&oc) {
                     Ok(llm) => Some(Arc::new(llm)),
                     Err(e) => {

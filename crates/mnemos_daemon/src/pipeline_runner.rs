@@ -219,13 +219,14 @@ async fn maybe_mine_and_harden(state: &AppState, llm: &dyn LlmProvider, session_
     }
 }
 
-/// If `config.autonomy.retention == "distill-and-prune"`, delete the raw
-/// chunks for `session_id` now that the pipeline + correction passes are done.
+/// If `config.autonomy.retention == DistillAndPrune`, delete the raw chunks
+/// for `session_id` now that the pipeline + correction passes are done.
 ///
 /// Errors are logged and swallowed — distillation already succeeded and a
 /// prune failure must never surface as a pipeline failure.
 async fn maybe_prune_chunks(state: &AppState, session_id: &str) {
-    if state.config.autonomy.retention != "distill-and-prune" {
+    use crate::config::RetentionPolicy;
+    if state.config.autonomy.retention != RetentionPolicy::DistillAndPrune {
         return;
     }
     match delete_session_chunks(state.vault.storage(), session_id).await {
