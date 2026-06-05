@@ -30,6 +30,19 @@ export function connectEvents(queryClient: QueryClient, baseUrl = "localhost:742
     if (closed) return;
     const token = await getToken();
     useEventStore.getState().setStatus("connecting");
+    // Security note (P2-3): the bearer token is passed as a URL query parameter
+    // rather than an Authorization header because the WebSocket handshake API
+    // does not support custom request headers from browser/WebView contexts.
+    // This is an acceptable tradeoff because:
+    //   1. The daemon binds to 127.0.0.1 (loopback) only — the token is never
+    //      sent over the network or visible to remote parties.
+    //   2. The token is short-lived relative to the session and stored at
+    //      mode 0600 on disk.
+    //   3. The Tauri WebView context means no third-party scripts or CORS
+    //      origins can read the URL.
+    // Do NOT relax the loopback bind constraint in daemon config without
+    // revisiting this tradeoff and implementing a short-lived upgrade ticket
+    // (POST /v1/events/ticket → 30 s one-time token) before that change ships.
     ws = new WebSocket(`ws://${baseUrl}/v1/events?token=${encodeURIComponent(token)}`);
     ws.onopen = () => { backoff = 500; useEventStore.getState().setStatus("open"); };
     ws.onmessage = (msg) => {
