@@ -40,7 +40,8 @@ fn doctor_reports_clean_vault() {
         .args(["doctor"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("no issues"));
+        // New doctor output: "no drift issues" when no file/DB divergence found.
+        .stdout(predicate::str::contains("no drift issues"));
 }
 
 #[test]
