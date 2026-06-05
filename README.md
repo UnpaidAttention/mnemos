@@ -201,6 +201,89 @@ Daemon endpoints require `Authorization: Bearer <token>`. The token lives at
 `~/.config/mnemos/token` (mode 0600), auto-generated on first daemon start.
 `/health` is exempt for monitoring.
 
+## Autonomy (set it and forget it)
+
+Mnemos can capture every Claude Code session automatically — no manual
+`remember` calls needed.  The daemon learns as you work.
+
+### 1. Install and enable the system service
+
+```bash
+# Install the unit file into ~/.config/systemd/user/
+mnemos service install
+
+# Enable and start it now (idempotent)
+mnemos service enable
+
+# Verify it's running
+mnemos daemon status
+
+# Tail live logs
+journalctl --user -u mnemosd -f
+```
+
+The systemd unit restarts the daemon automatically on crash and limits
+memory to 2 GiB.  See `packaging/systemd/mnemosd.service` for the full
+unit definition.
+
+### 2. Connect via the First-Run Wizard
+
+Launch the desktop app (`Mnemos` in your launcher) — a first-run wizard
+walks you through embedder selection (bundled / Ollama / OpenAI) and
+registers the MCP server in your Claude Code configuration.
+
+You can also connect manually:
+```bash
+# Copy the MCP config snippet
+cat adapters/claude-code/claude_mcp_config.json
+
+# Add it to ~/.config/claude-code/mcp_servers.json, then restart Claude Code.
+```
+
+### 3. Hooks
+
+Three hook events fire automatically during every Claude Code session:
+
+| Event | CLI command | What it does |
+|---|---|---|
+| `session-start` | `mnemos hook session-start` | Injects your working-set memories as `additionalContext` |
+| `user-prompt` | `mnemos hook user-prompt` | Recalls memories relevant to the current prompt |
+| `session-end` | `mnemos hook session-end` | Reads the session transcript and ingests it into the vault |
+
+The hooks are **fail-open**: if the daemon is down, hooks exit 0 and
+Claude Code continues normally.
+
+Append the fragment in `adapters/claude-code/CLAUDE.md.fragment` to your
+`~/.claude/CLAUDE.md` to activate them.
+
+### 4. Verification
+
+```bash
+# After a session, confirm something was captured:
+mnemos recall "what did we work on"
+
+# List recent memories:
+mnemos list --tier episodic --limit 5
+```
+
+### 5. Where captured sessions live
+
+| Location | Contents |
+|---|---|
+| `~/.local/share/mnemos/files/` | Markdown memory files (episodic, semantic, reflections, …) |
+| `~/.local/share/mnemos/index.db` | SQLite index + vector table |
+| `~/.config/mnemos/token` | Daemon bearer token (mode 0600) |
+
+Override the vault root with `--vault <path>` or `MNEMOS_VAULT=<path>`.
+
+### Restart after config changes
+
+```bash
+mnemos daemon restart
+# or, with systemd:
+systemctl --user restart mnemosd
+```
+
 ## Graph intelligence (v0.4.0)
 
 Recall is now graph-aware, and the system distills what it learns.

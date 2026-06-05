@@ -9,6 +9,7 @@ pub async fn run(_vault: Option<PathBuf>, json: bool, args: DaemonArgs) -> Resul
     match args.action {
         DaemonAction::Start => start(json).await,
         DaemonAction::Stop => stop(json).await,
+        DaemonAction::Restart => restart(json).await,
         DaemonAction::Status => status(json).await,
         DaemonAction::Logs { lines } => logs(lines).await,
     }
@@ -101,6 +102,17 @@ async fn stop(json: bool) -> Result<()> {
         println!("sent SIGTERM to pid {pid}");
     }
     Ok(())
+}
+
+/// Stop then start the daemon.  This is the implementation of
+/// `mnemos daemon restart` (P2-8): no separate DaemonAction::Restart existed
+/// before; docs referenced it but the command was absent.
+async fn restart(json: bool) -> Result<()> {
+    stop(json).await?;
+    // Give the daemon a moment to release its port and PID file before
+    // we attempt to re-bind them.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    start(json).await
 }
 
 async fn status(json: bool) -> Result<()> {

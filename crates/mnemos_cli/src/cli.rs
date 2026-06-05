@@ -185,6 +185,8 @@ pub enum DaemonAction {
     Start,
     /// Send SIGTERM to the daemon (graceful shutdown).
     Stop,
+    /// Stop then start the daemon (stop + start in sequence).
+    Restart,
     /// Print whether a daemon is running, its PID, and its address.
     Status,
     /// Tail the daemon log file.

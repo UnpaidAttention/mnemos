@@ -6,6 +6,20 @@ After=default.target
 ExecStart=/usr/bin/mnemos-daemon
 Restart=always
 RestartSec=2
+# Allow up to 60 s for the daemon to bind its port and write its PID file.
+# Cold model load (bundled llama-server / GGUF) can take 10-30 s.
+TimeoutStartSec=60
+# Allow 5 rapid restarts within a 5-minute window before giving up.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+# Cap resident memory at 2 GiB; the bundled MiniLM model is ~22 MB GGUF
+# but llama-server maps it into memory.  Adjust upward if you switch to a
+# larger model.
+MemoryMax=2G
+# Route stdout/stderr to the systemd journal so logs are available via:
+#   journalctl --user -u mnemosd -f
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target
