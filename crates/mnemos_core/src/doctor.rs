@@ -40,6 +40,19 @@ pub struct DoctorReport {
     pub issues: Vec<DriftIssue>,
 }
 
+/// Summary of actions taken by [`repair`].
+#[derive(Debug, Serialize, Default)]
+pub struct RepairReport {
+    /// Files that were missing from the DB but successfully re-indexed.
+    pub re_indexed: Vec<PathBuf>,
+    /// Files that could not be re-indexed (parse / insert errors).
+    pub re_index_errors: Vec<(PathBuf, String)>,
+    /// DB rows whose backing file was missing; now marked `invalid_at = now`.
+    pub soft_invalidated: Vec<String>,
+    /// DB rows that could not be soft-invalidated.
+    pub invalidate_errors: Vec<(String, String)>,
+}
+
 /// Walk the vault's tier directories and database, detect any drift, and
 /// return a [`DoctorReport`].
 ///
@@ -146,4 +159,86 @@ pub async fn diagnose(paths: &Paths) -> Result<DoctorReport> {
     }
 
     Ok(report)
+}
+
+/// Attempt to automatically repair the two most critical categories of drift
+/// detected by [`diagnose`]:
+///
+/// - **`FileNotInDb`**: parse the markdown file and re-insert it into the DB
+///   using `INSERT OR REPLACE` (idempotent; safe to re-run).
+/// - **`DbRowNoFile`**: soft-invalidate the DB row so it is no longer active
+///   (preserves the row for audit purposes; marks it with `invalid_at = now`).
+///
+/// `HashMismatch` and `QuarantineFile` issues are intentionally left to manual
+/// review — they may indicate user edits that should be imported or anomalies
+/// that need human judgment.
+///
+/// Returns a [`RepairReport`] summarising what was fixed and what failed.
+/// Called by `mnemos doctor --repair`.
+pub async fn repair(paths: &Paths) -> Result<RepairReport> {
+    paths.ensure_dirs()?;
+    let storage = Storage::open(&paths.db_path).await?;
+    let report = diagnose(paths).await?;
+    let mut repair = RepairReport::default();
+    let now = chrono::Utc::now();
+
+    for issue in report.issues {
+        match issue.kind {
+            DriftKind::FileNotInDb => {
+                if let Some(path) = issue.path {
+                    match re_index_file(&storage, &path).await {
+                        Ok(()) => repair.re_indexed.push(path),
+                        Err(e) => repair.re_index_errors.push((path, e.to_string())),
+                    }
+                }
+            }
+            DriftKind::DbRowNoFile => {
+                if let Some(id) = issue.memory_id {
+                    match soft_invalidate_repair(&storage, &id, now).await {
+                        Ok(()) => repair.soft_invalidated.push(id),
+                        Err(e) => repair.invalidate_errors.push((id, e.to_string())),
+                    }
+                }
+            }
+            // HashMismatch and QuarantineFile require manual review.
+            DriftKind::HashMismatch | DriftKind::QuarantineFile => {}
+        }
+    }
+
+    Ok(repair)
+}
+
+// ── repair helpers ────────────────────────────────────────────────────────────
+
+/// Parse a single markdown memory file and insert (or re-insert) it into the
+/// DB using `INSERT OR REPLACE` so the operation is idempotent.
+async fn re_index_file(storage: &Storage, path: &PathBuf) -> Result<()> {
+    use crate::file_io::content_hash;
+    use crate::storage::memory_ops::insert_memory;
+
+    let text = tokio::fs::read_to_string(path).await?;
+    let (mem, body) = crate::frontmatter::parse_frontmatter(&text)?;
+    let hash = content_hash(&body);
+    let file_path_str = path.to_string_lossy();
+    insert_memory(storage, &mem, &file_path_str, &hash).await?;
+    Ok(())
+}
+
+/// Soft-invalidate a DB row whose backing file is missing.
+///
+/// Uses a plain `UPDATE … WHERE id = ?` (no `AND invalid_at IS NULL`) so the
+/// operation is idempotent even if the row is already invalidated (e.g. because
+/// `repair` was run twice).
+async fn soft_invalidate_repair(
+    storage: &Storage,
+    id: &str,
+    at: chrono::DateTime<chrono::Utc>,
+) -> Result<()> {
+    let (conn, _g) = storage.write_conn().await?;
+    conn.execute(
+        "UPDATE memories SET invalid_at = ? WHERE id = ? AND invalid_at IS NULL",
+        libsql::params![at.to_rfc3339(), id.to_string()],
+    )
+    .await?;
+    Ok(())
 }

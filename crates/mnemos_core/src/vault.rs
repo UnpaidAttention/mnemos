@@ -234,17 +234,55 @@ impl Vault {
     /// "files are source of truth" invariant: if the DB is wiped and rebuilt
     /// from disk the memory will remain invalidated rather than being
     /// resurrected as fully valid.
+    ///
+    /// ## P1-2 crash-safety
+    ///
+    /// Order of operations:
+    /// 1. `soft_invalidate` marks the DB row (and cleans FTS in one txn — P1-4).
+    /// 2. The file is rewritten with the new `invalid_at` in frontmatter.
+    /// 3. A second DB UPDATE records the new `file_path` / `content_hash`.
+    ///
+    /// If the process crashes after step 1 but before step 2, the DB row is
+    /// already marked invalid and the file still lacks `invalid_at`.  On retry:
+    /// `soft_invalidate` will return `MemoryNotFound` (the row is already
+    /// invalid) — we detect this and skip straight to the file rewrite.  The
+    /// subsequent UPDATE in step 3 uses a WHERE clause that matches any value of
+    /// `invalid_at` (not just NULL), so it is safe to re-run.
     pub async fn forget(&self, id: &str, reason: Option<&str>) -> Result<()> {
         let now = Utc::now();
-        soft_invalidate(&self.storage, id, now).await?;
 
-        // Fetch the updated row and rewrite the file with the new invalid_at.
-        let mut mem = get_memory(&self.storage, id).await?;
-        mem.invalid_at = Some(now); // ensure consistency with the DB value
+        // Step 1: mark the DB row invalid (and clean FTS — P1-4).
+        // If the row is already invalid (crash-retry path) we continue anyway
+        // to ensure the file and DB are consistent.
+        let mem_before_invalidate;
+        let effective_invalid_at;
+        match soft_invalidate(&self.storage, id, now).await {
+            Ok(()) => {
+                mem_before_invalidate = get_memory(&self.storage, id).await?;
+                effective_invalid_at = now;
+            }
+            Err(crate::error::MnemosError::MemoryNotFound(_)) => {
+                // Already invalidated (crash-retry path): fetch the row as-is
+                // to get the stored invalid_at timestamp for file consistency.
+                let existing = get_memory(&self.storage, id).await?;
+                if existing.invalid_at.is_none() {
+                    // Row truly doesn't exist — propagate the original error.
+                    return Err(crate::error::MnemosError::MemoryNotFound(id.into()));
+                }
+                effective_invalid_at = existing.invalid_at.unwrap();
+                mem_before_invalidate = existing;
+            }
+            Err(e) => return Err(e),
+        };
+
+        // Step 2: rewrite the file with the correct invalid_at in frontmatter.
+        let mut mem = mem_before_invalidate;
+        mem.invalid_at = Some(effective_invalid_at);
         let new_path = write_memory_file(&self.paths, &mem).await?;
 
-        // Update the DB row's file_path (in case it changed) and content_hash
-        // (the frontmatter changed even though the body did not).
+        // Step 3: update the DB row's file_path and content_hash so they stay
+        // consistent with the rewritten file.  This UPDATE intentionally has NO
+        // WHERE invalid_at IS NULL — it must succeed on the retry path too.
         let new_hash = content_hash(&mem.body);
         {
             let (conn, _g) = self.storage.write_conn().await?;
@@ -286,6 +324,13 @@ impl Vault {
     /// source of truth, writes an `update` audit entry, and returns the
     /// refreshed memory. `title` and `body` are not patchable here — those go
     /// through file edits + reindex.
+    ///
+    /// ## P1-2 crash-safety
+    ///
+    /// File is written first; DB UPDATE follows.  A crash between the two
+    /// leaves the file updated and the DB row stale — re-running `patch` with
+    /// the same values writes the same file bytes and then re-applies the same
+    /// UPDATE, which is idempotent.
     pub async fn patch(
         &self,
         id: &str,
@@ -299,8 +344,10 @@ impl Vault {
         if let Some(i) = importance {
             mem.importance = i;
         }
+        // Step 1: write file first (P1-2).
         let new_path = write_memory_file(&self.paths, &mem).await?;
         let new_hash = content_hash(&mem.body);
+        // Step 2: update DB row. Safe to re-run on retry.
         {
             let (conn, _g) = self.storage.write_conn().await?;
             conn.execute(
@@ -329,6 +376,19 @@ impl Vault {
     /// Re-tier a memory: update DB row, rewrite/move the file to the new
     /// tier directory, write a `promote` audit entry, and return the refreshed
     /// memory. Idempotent when `new_tier` matches the current tier.
+    ///
+    /// ## P1-2 crash-safety
+    ///
+    /// Order of operations:
+    /// 1. Write the new-tier file (atomic tmp+rename).
+    /// 2. Update the DB row (tier, file_path, content_hash).
+    /// 3. Remove the old-tier file.
+    ///
+    /// A crash after step 1 but before step 2 leaves both the old and new file
+    /// present with the DB still pointing at the old path.  On retry, step 1
+    /// overwrites (or creates) the new file, step 2 is a plain idempotent UPDATE
+    /// matching on `id`, and step 3 silently no-ops if the old file was already
+    /// removed.
     pub async fn promote(&self, id: &str, new_tier: Tier) -> Result<Memory> {
         let mut mem = get_memory(&self.storage, id).await?;
         if mem.tier == new_tier {
@@ -346,13 +406,10 @@ impl Vault {
             r.next().await?.and_then(|row| row.get::<String>(0).ok())
         };
         mem.tier = new_tier;
+        // Step 1: write file first (P1-2).
         let new_path = write_memory_file(&self.paths, &mem).await?;
-        if let Some(old) = old_file_path.as_deref() {
-            if old != new_path.to_string_lossy() {
-                let _ = tokio::fs::remove_file(old).await;
-            }
-        }
         let new_hash = content_hash(&mem.body);
+        // Step 2: update DB row. Safe to re-run on retry.
         {
             let (conn, _g) = self.storage.write_conn().await?;
             conn.execute(
@@ -365,6 +422,12 @@ impl Vault {
                 ],
             )
             .await?;
+        }
+        // Step 3: remove old file after DB is consistent (P1-2).
+        if let Some(old) = old_file_path.as_deref() {
+            if old != new_path.to_string_lossy() {
+                let _ = tokio::fs::remove_file(old).await;
+            }
         }
         write_audit(
             &self.storage,

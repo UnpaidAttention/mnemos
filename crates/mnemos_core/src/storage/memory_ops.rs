@@ -15,8 +15,12 @@ pub async fn insert_memory(
     let (conn, _guard) = storage.write_conn().await?;
     let tx = conn.transaction().await?;
 
+    // P1-2: Use INSERT OR REPLACE so a retry after a crash (file written but
+    // DB row absent) is idempotent.  The file is always written before this
+    // call (by vault.rs), so on a retry the file already exists and the
+    // INSERT OR REPLACE simply overwrites the partial/absent row.
     tx.execute(
-        "INSERT INTO memories
+        "INSERT OR REPLACE INTO memories
             (id, tier, kind, title, body, file_path, content_hash,
              tags_json, entities_json, links_json, provenance_json,
              created_at, ingested_at, valid_at, invalid_at, superseded_by,
@@ -59,6 +63,16 @@ pub async fn insert_memory(
     )
     .await?;
 
+    // P1-2 / P1-4: FTS5 virtual tables do not honour INSERT OR REPLACE
+    // semantics for UNINDEXED columns — a plain INSERT always adds a new row
+    // even if one already exists for the same memory_id.  Use DELETE + INSERT
+    // so a crash-retry does not accumulate duplicate FTS rows that would
+    // inflate BM25 scores.
+    tx.execute(
+        "DELETE FROM memory_fts WHERE memory_id = ?1",
+        params![mem.id.clone()],
+    )
+    .await?;
     tx.execute(
         "INSERT INTO memory_fts (memory_id, title, body) VALUES (?1, ?2, ?3)",
         params![mem.id.clone(), mem.title.clone(), mem.body.clone()],
@@ -140,6 +154,9 @@ fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
 ///
 /// Returns `MnemosError::MemoryNotFound` if `old_id` is already invalidated
 /// or does not exist.
+///
+/// P1-4: also removes the FTS row for `old_id` in the same transaction so
+/// BM25 search has no ghost rows for superseded memories.
 pub async fn supersede_memory(
     storage: &Storage,
     old_id: &str,
@@ -172,6 +189,14 @@ pub async fn supersede_memory(
     )
     .await?;
 
+    // P1-4: remove from FTS index in the same transaction to prevent ghost rows
+    // that would corrupt BM25 ranking.
+    tx.execute(
+        "DELETE FROM memory_fts WHERE memory_id = ?",
+        params![old_id.to_string()],
+    )
+    .await?;
+
     tx.commit().await?;
     Ok(())
 }
@@ -180,17 +205,34 @@ pub async fn supersede_memory(
 ///
 /// Useful for plain retraction / expiry. Returns `MnemosError::MemoryNotFound`
 /// if the memory is already invalidated or does not exist.
+///
+/// P1-4: also removes the FTS row for `id` in the same transaction so BM25
+/// search has no ghost rows for forgotten memories.
 pub async fn soft_invalidate(storage: &Storage, id: &str, at: DateTime<Utc>) -> Result<()> {
     let (conn, _guard) = storage.write_conn().await?;
-    let affected = conn
+    let tx = conn.transaction().await?;
+
+    let affected = tx
         .execute(
             "UPDATE memories SET invalid_at = ? WHERE id = ? AND invalid_at IS NULL",
             params![at.to_rfc3339(), id.to_string()],
         )
         .await?;
     if affected == 0 {
+        // Roll back the (no-op) transaction and return the error.
+        tx.rollback().await.ok();
         return Err(MnemosError::MemoryNotFound(id.into()));
     }
+
+    // P1-4: remove from FTS index in the same transaction to prevent ghost rows
+    // that would corrupt BM25 ranking.
+    tx.execute(
+        "DELETE FROM memory_fts WHERE memory_id = ?",
+        params![id.to_string()],
+    )
+    .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 
