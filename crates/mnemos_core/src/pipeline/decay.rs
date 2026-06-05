@@ -101,13 +101,22 @@ pub async fn decay_pass(
     }
     drop(rows);
 
+    if updates.is_empty() {
+        return Ok(stats);
+    }
+
+    // P1-8: Acquire write_conn once and wrap ALL strength updates in a single
+    // transaction.  Previously this did one fsync per row; now it is O(1)
+    // fsyncs and all-or-nothing.
     let (conn, _guard) = storage.write_conn().await?;
+    let tx = conn.transaction().await?;
     for (id, s) in updates {
-        conn.execute(
+        tx.execute(
             "UPDATE memories SET strength = ? WHERE id = ?",
             params![s, id],
         )
         .await?;
     }
+    tx.commit().await?;
     Ok(stats)
 }

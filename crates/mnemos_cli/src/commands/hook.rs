@@ -765,6 +765,10 @@ async fn fetch_recall(token: &str, query: &str, workspace: Option<&str>) -> Opti
     let mut body = serde_json::Map::new();
     body.insert("query".into(), serde_json::json!(query));
     body.insert("k".into(), serde_json::json!(RECALL_K));
+    // P1-6: disable graph PPR on the user-prompt path to avoid full-graph load
+    // + 30-iter PageRank on every keystroke.  Explicit /v1/memories/search calls
+    // from clients can still pass graph:true if they need it.
+    body.insert("graph".into(), serde_json::json!(false));
     if let Some(ws) = workspace {
         body.insert("workspace".into(), serde_json::json!(ws));
     }

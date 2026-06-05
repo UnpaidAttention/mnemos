@@ -92,9 +92,22 @@ pub async fn hybrid_recall_full(
         .filter_map(|h| h.dense_distance.map(|d| (h.memory.id.as_str(), d)))
         .collect();
 
+    // P1-6: Build a HashMap from already-hydrated BM25 + dense hits to avoid
+    // an N+1 `get_memory` round-trip for every fused id. IDs present in neither
+    // retriever (rare: PPR-only hits) still fall back to a direct DB fetch.
+    let mut memory_cache: HashMap<String, crate::types::Memory> = HashMap::new();
+    for h in bm25.iter().chain(dense.iter()) {
+        memory_cache
+            .entry(h.memory.id.clone())
+            .or_insert_with(|| h.memory.clone());
+    }
+
     let mut hits: Vec<RecallHit> = Vec::with_capacity(fused.len());
     for f in fused.iter() {
-        let memory = get_memory(storage, &f.id).await?;
+        let memory = match memory_cache.remove(&f.id) {
+            Some(m) => m,
+            None => get_memory(storage, &f.id).await?,
+        };
         if !opts.include_invalid && memory.invalid_at.is_some() {
             continue;
         }

@@ -96,25 +96,59 @@ pub async fn rebuild(vault: &Vault, opts: RebuildOptions) -> Result<RebuildStatu
     let target_embedder = build_target_embedder(&opts).await?;
 
     // 4. Embed any memory not yet in the shadow table.
+    //
+    // P1-9: Collect IDs/bodies that need embedding, then call embed_batch in
+    // batches of REBUILD_BATCH_SIZE.  Each batch is written to the shadow table
+    // in a single transaction, reducing N round-trips + N fsyncs to
+    // ceil(N / batch_size) of each.
+    const REBUILD_BATCH_SIZE: usize = 32;
+
     let mut processed = 0;
     let mut skipped = 0;
+
+    // Split the id list into (needs_embed) vs already done.
+    let mut pending_ids: Vec<String> = Vec::new();
     for id in &memory_ids {
         if shadow_has(storage, id).await? {
             skipped += 1;
-            continue;
+        } else {
+            pending_ids.push(id.clone());
+        }
+    }
+
+    for id_chunk in pending_ids.chunks(REBUILD_BATCH_SIZE) {
+        // Load bodies for this chunk.
+        let mut bodies: Vec<String> = Vec::with_capacity(id_chunk.len());
+        for id in id_chunk {
+            bodies.push(load_memory_body(storage, id).await?);
         }
 
-        let body = load_memory_body(storage, id).await?;
-        let vector = target_embedder.embed(&body).await?;
-        if vector.len() != opts.target_dim as usize {
+        // Batch embed.
+        let vectors = target_embedder.embed_batch(&bodies).await?;
+        if vectors.len() != id_chunk.len() {
             return Err(MnemosError::Internal(format!(
-                "target embedder produced {} dims, expected {}",
-                vector.len(),
-                opts.target_dim
+                "embed_batch returned {} vectors for {} inputs",
+                vectors.len(),
+                id_chunk.len()
             )));
         }
-        insert_shadow_row(storage, id, &vector, &opts).await?;
-        processed += 1;
+
+        // Validate dims and collect rows.
+        let mut rows: Vec<(&str, Vec<u8>)> = Vec::with_capacity(id_chunk.len());
+        for (id, vector) in id_chunk.iter().zip(vectors.iter()) {
+            if vector.len() != opts.target_dim as usize {
+                return Err(MnemosError::Internal(format!(
+                    "target embedder produced {} dims, expected {}",
+                    vector.len(),
+                    opts.target_dim
+                )));
+            }
+            rows.push((id.as_str(), f32_vec_to_bytes(vector)));
+        }
+
+        // Write the whole chunk in one transaction.
+        insert_shadow_rows_batch(storage, &rows, &opts).await?;
+        processed += id_chunk.len();
     }
 
     // 5. Atomic swap: replace memory_vec contents with shadow vectors.
@@ -229,6 +263,9 @@ async fn load_memory_body(storage: &Storage, memory_id: &str) -> Result<String> 
     Ok(row.get::<String>(0)?)
 }
 
+/// Insert a single shadow row (kept for test use; production path uses the
+/// batched variant below).
+#[allow(dead_code)]
 async fn insert_shadow_row(
     storage: &Storage,
     memory_id: &str,
@@ -251,6 +288,42 @@ async fn insert_shadow_row(
         ],
     )
     .await?;
+    Ok(())
+}
+
+/// P1-9: Insert a batch of shadow rows in a single transaction.
+///
+/// `rows` is a slice of `(memory_id, embedding_bytes)` pairs. All rows must
+/// have been produced by the same embedder (`opts` supplies the metadata).
+/// Committing the whole chunk at once turns N fsyncs into one.
+async fn insert_shadow_rows_batch(
+    storage: &Storage,
+    rows: &[(&str, Vec<u8>)],
+    opts: &RebuildOptions,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let now = Utc::now().to_rfc3339();
+    let (conn, _g) = storage.write_conn().await?;
+    let tx = conn.transaction().await?;
+    for (memory_id, bytes) in rows {
+        tx.execute(
+            "INSERT INTO memory_embeddings_v2 \
+             (memory_id, embedding, embedder_kind, embedder_model, embedder_dim, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![
+                memory_id.to_string(),
+                bytes.clone(),
+                opts.target_kind.clone(),
+                opts.target_model.clone(),
+                opts.target_dim as i64,
+                now.clone(),
+            ],
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 

@@ -103,9 +103,23 @@ impl OpenAiEmbedder {
     }
 }
 
+/// Maximum strings per batch POST to the OpenAI embeddings endpoint.
+///
+/// OpenAI allows up to 2048 inputs per request; 64 is a practical default that
+/// keeps request payloads manageable and avoids rate-limit pressure.
+const OPENAI_BATCH_SIZE: usize = 64;
+
+/// Single-input request body.
 #[derive(Serialize)]
 struct EmbedReq<'a> {
     input: &'a str,
+    model: &'a str,
+}
+
+/// Batch request body — `input` is a JSON array of strings.
+#[derive(Serialize)]
+struct EmbedBatchReq<'a> {
+    input: &'a [String],
     model: &'a str,
 }
 
@@ -116,6 +130,7 @@ struct EmbedResp {
 
 #[derive(Deserialize)]
 struct EmbedData {
+    index: usize,
     embedding: Vec<f32>,
 }
 
@@ -171,6 +186,62 @@ impl Embedder for OpenAiEmbedder {
             )));
         }
         Ok(v)
+    }
+
+    /// P1-9: True batch embedding — POSTs `input: [...]` arrays to the OpenAI
+    /// embeddings endpoint in chunks of at most `OPENAI_BATCH_SIZE`. Converts N
+    /// serial round-trips into N/batch_size round-trips during embed-rebuild.
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+        let url = format!("{}/v1/embeddings", self.cfg.base_url.trim_end_matches('/'));
+        let dim = self.cfg.dim as usize;
+        let mut results: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+
+        for chunk in texts.chunks(OPENAI_BATCH_SIZE) {
+            let resp = self
+                .client
+                .post(&url)
+                .bearer_auth(&self.cfg.api_key)
+                .json(&EmbedBatchReq {
+                    input: chunk,
+                    model: &self.cfg.model,
+                })
+                .send()
+                .await
+                .map_err(|e| MnemosError::Internal(format!("openai batch HTTP: {e}")))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(MnemosError::Internal(format!(
+                    "openai batch responded {status}: {body}"
+                )));
+            }
+            let mut parsed: EmbedResp = resp
+                .json()
+                .await
+                .map_err(|e| MnemosError::Internal(format!("openai batch parse: {e}")))?;
+            if parsed.data.len() != chunk.len() {
+                return Err(MnemosError::Internal(format!(
+                    "openai batch: expected {} embeddings, got {}",
+                    chunk.len(),
+                    parsed.data.len()
+                )));
+            }
+            // Sort by index to match input order regardless of server ordering.
+            parsed.data.sort_by_key(|d| d.index);
+            for item in parsed.data {
+                if item.embedding.len() != dim {
+                    return Err(MnemosError::Internal(format!(
+                        "openai batch returned dim {} (expected {dim})",
+                        item.embedding.len()
+                    )));
+                }
+                results.push(item.embedding);
+            }
+        }
+        Ok(results)
     }
 }
 
