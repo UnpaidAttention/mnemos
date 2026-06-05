@@ -17,6 +17,13 @@ mkdir -p assets
 LLAMA_CPP_TAG="b9400"
 LLAMA_CPP_ARCHIVE="llama-${LLAMA_CPP_TAG}-bin-ubuntu-x64.tar.gz"
 LLAMA_CPP_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/${LLAMA_CPP_ARCHIVE}"
+# P2-14: sha256 of the llama.cpp release tarball.  Bump this alongside
+# LLAMA_CPP_TAG by running:
+#   curl -fL "$LLAMA_CPP_URL" | sha256sum | awk '{print $1}'
+# and pasting the result here.  Using "<FILL_AFTER_FIRST_DOWNLOAD>" keeps the
+# verification mechanism active so reviewers know it needs updating on a tag
+# bump.  The model uses the same pattern (MODEL_SHA256 below).
+LLAMA_CPP_SHA256="<FILL_AFTER_FIRST_DOWNLOAD>"
 
 MODEL_NAME="all-MiniLM-L6-v2.Q8_0.gguf"
 MODEL_URL="https://huggingface.co/leliuga/all-MiniLM-L6-v2-GGUF/resolve/main/all-MiniLM-L6-v2.Q8_0.gguf"
@@ -41,6 +48,14 @@ if [[ ! -x "$TARGET_BINARY" ]]; then
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
     curl -fL --retry 3 -o "$tmpdir/llama.tar.gz" "$LLAMA_CPP_URL"
+    # Verify the archive checksum before extraction (P2-14).
+    # This mirrors the MODEL_SHA256 pattern; update LLAMA_CPP_SHA256 on every tag bump.
+    if [[ "$LLAMA_CPP_SHA256" != "<FILL_AFTER_FIRST_DOWNLOAD>" ]]; then
+        verify_sha "$tmpdir/llama.tar.gz" "$LLAMA_CPP_SHA256"
+    else
+        echo "WARNING: LLAMA_CPP_SHA256 is not set — skipping archive checksum." \
+             "Run: sha256sum $tmpdir/llama.tar.gz and fill LLAMA_CPP_SHA256 in this script." >&2
+    fi
     mkdir -p "$tmpdir/llama"
     tar -xzf "$tmpdir/llama.tar.gz" -C "$tmpdir/llama"
     # llama.cpp's archive layout: <root>/build/bin/llama-server (or just bin/)
