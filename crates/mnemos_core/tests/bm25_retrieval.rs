@@ -69,18 +69,26 @@ async fn bm25_hides_invalidated_by_default() {
     let tmp = TempDir::new().unwrap();
     let storage = Storage::open(&tmp.path().join("b.db")).await.unwrap();
     let id = seed(&storage, "Old belief", "User likes Vue").await;
+
+    // P1-4: soft_invalidate now removes the FTS row in the same transaction,
+    // so BM25 cannot find the memory anymore (no ghost rows).
     mnemos_core::storage::memory_ops::soft_invalidate(&storage, &id, chrono::Utc::now())
         .await
         .unwrap();
 
+    // Default (include_invalid=false): must not appear.
     let hits = bm25_recall(&storage, "vue", RecallOpts::default())
         .await
         .unwrap();
     assert!(
         hits.iter().all(|h| h.memory.id != id),
-        "invalidated memory should be hidden"
+        "invalidated memory should be hidden by default"
     );
 
+    // include_invalid=true: also absent from BM25 because the FTS row was
+    // removed on invalidation (P1-4). The memory is still in `memories` and
+    // accessible via `list_memories(include_invalid=true)`; it is just not
+    // searchable by BM25 (correct — ghost FTS rows degrade ranking).
     let hits_all = bm25_recall(
         &storage,
         "vue",
@@ -91,5 +99,17 @@ async fn bm25_hides_invalidated_by_default() {
     )
     .await
     .unwrap();
-    assert!(hits_all.iter().any(|h| h.memory.id == id));
+    assert!(
+        hits_all.iter().all(|h| h.memory.id != id),
+        "P1-4: FTS row removed on invalidation — BM25 must not return ghost rows"
+    );
+
+    // The raw memories table still has the row (accessible by id).
+    let mem = mnemos_core::storage::memory_ops::get_memory(&storage, &id)
+        .await
+        .unwrap();
+    assert!(
+        mem.invalid_at.is_some(),
+        "row still exists and is marked invalid"
+    );
 }
