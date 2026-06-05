@@ -17,7 +17,7 @@
 //! JSON serialisation cost.  `k` must come after `MATCH` in the WHERE clause —
 //! the two predicates are non-commutative in vec0's query planner.
 
-use crate::error::Result;
+use crate::error::{MnemosError, Result};
 use crate::storage::Storage;
 use libsql::params;
 use serde::Serialize;
@@ -82,12 +82,74 @@ pub async fn memory_vec_declared_dim(storage: &Storage) -> Result<Option<usize>>
 /// already inserted at the correct dim (e.g. by `rebuild_index_with_embedder`,
 /// which populates `memory_vec` without seeding `vault_meta`). When the dim
 /// already matches, this is a no-op.
+///
+/// ## P1-5 safety rules
+///
+/// - A non-zero declared dim is treated as authoritative regardless of whether
+///   `vault_meta.embedder_model_id` is set.
+/// - The actual dim is re-checked **inside** the write-lock transaction before
+///   any DROP to close the TOCTOU window between the pre-lock read and the
+///   destructive operation.
+/// - If `memory_vec` is non-empty at a *different* dim, this function returns
+///   [`MnemosError::Validation`] requiring an explicit `embed-rebuild` instead
+///   of silently wiping the user's vectors.
 pub async fn ensure_vec_tables_dim(storage: &Storage, dim: usize) -> Result<()> {
+    // Fast path: dims already match, no lock needed.
     if memory_vec_declared_dim(storage).await? == Some(dim) {
         return Ok(());
     }
+
+    // Acquire the write lock and re-check the dim inside the transaction to
+    // close the TOCTOU window between the pre-lock read above and the DROP.
     let (conn, _g) = storage.write_conn().await?;
     let tx = conn.transaction().await?;
+
+    // Re-read the declared dim while holding the lock.
+    let current_dim = {
+        let mut rows = tx
+            .query(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_vec'",
+                (),
+            )
+            .await?;
+        rows.next().await?.and_then(|row| {
+            let sql = row.get::<String>(0).ok()?;
+            let open = sql.find("FLOAT[")?;
+            let after = &sql[open + "FLOAT[".len()..];
+            let close = after.find(']')?;
+            after[..close].trim().parse::<usize>().ok()
+        })
+    };
+
+    if current_dim == Some(dim) {
+        // Another writer beat us here; already the right dim.
+        tx.rollback().await.ok();
+        return Ok(());
+    }
+
+    // If the table already exists at a *different* dimension and contains
+    // vectors, refuse to silently wipe them — require an explicit embed-rebuild.
+    if let Some(existing_dim) = current_dim {
+        if existing_dim != dim {
+            // Count rows inside the transaction to be safe.
+            let mut count_rows = tx.query("SELECT COUNT(*) FROM memory_vec", ()).await?;
+            let count: i64 = count_rows
+                .next()
+                .await?
+                .and_then(|r| r.get::<i64>(0).ok())
+                .unwrap_or(0);
+            if count > 0 {
+                tx.rollback().await.ok();
+                return Err(MnemosError::Validation(format!(
+                    "memory_vec has {count} vectors at dim {existing_dim} but the \
+                     configured embedder produces dim {dim}. Run `mnemos embed-rebuild` \
+                     to re-embed all memories at the new dimension before changing the \
+                     embedder."
+                )));
+            }
+        }
+    }
+
     tx.execute("DROP TABLE IF EXISTS memory_vec", ()).await?;
     tx.execute("DROP TABLE IF EXISTS chunk_vec", ()).await?;
     tx.execute(
