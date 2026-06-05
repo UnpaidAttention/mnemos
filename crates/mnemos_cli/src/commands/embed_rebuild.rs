@@ -35,10 +35,14 @@ pub async fn run(opts: EmbedRebuildOpts) -> Result<()> {
             "http://{}:{}/v1/embed-rebuild/start",
             cfg.daemon.host, cfg.daemon.port
         );
-        let body = format!(
-            r#"{{"target_kind":"{}","target_model":"{}","target_dim":{}}}"#,
-            opts.target_kind, opts.target_model, opts.target_dim
-        );
+        // P2-18: build the curl example body with serde_json::json! so values
+        // are properly escaped regardless of special characters in model names.
+        let body = serde_json::json!({
+            "target_kind": opts.target_kind,
+            "target_model": opts.target_model,
+            "target_dim": opts.target_dim,
+        })
+        .to_string();
         eprintln!("mnemosd is running — refusing to run rebuild in-process.");
         eprintln!("Use the daemon's REST endpoint instead:");
         eprintln!();

@@ -152,8 +152,25 @@ async fn logs(lines: usize) -> Result<()> {
         println!("no log file at {}", path.display());
         return Ok(());
     }
-    let s = std::fs::read_to_string(&path)?;
-    let all: Vec<&str> = s.lines().collect();
+    // P2-9: avoid blocking the async executor with a potentially large
+    // read_to_string. We read at most the last ~1 MB of the file in a
+    // spawn_blocking task so large log files never stall the runtime.
+    const MAX_TAIL_BYTES: u64 = 1_024 * 1_024; // 1 MiB
+    let tail = tokio::task::spawn_blocking(move || -> std::io::Result<String> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = std::fs::File::open(&path)?;
+        let len = f.metadata()?.len();
+        if len > MAX_TAIL_BYTES {
+            // Seek near the end so we only buffer the last ~1 MB.
+            // We may land mid-line; the first line will be discarded below.
+            f.seek(SeekFrom::Start(len - MAX_TAIL_BYTES))?;
+        }
+        let mut buf = String::new();
+        f.read_to_string(&mut buf)?;
+        Ok(buf)
+    })
+    .await??;
+    let all: Vec<&str> = tail.lines().collect();
     let start = all.len().saturating_sub(lines);
     for line in &all[start..] {
         println!("{line}");

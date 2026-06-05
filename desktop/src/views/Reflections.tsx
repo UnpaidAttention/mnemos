@@ -10,6 +10,8 @@ export function Reflections() {
   const qc = useQueryClient();
   const select = useUiStore((s) => s.select);
   const [busy, setBusy] = useState(false);
+  // P2-15: local error state surfaced near the promote button
+  const [promoteError, setPromoteError] = useState<string | null>(null);
 
   const reflectNow = async () => {
     setBusy(true);
@@ -22,9 +24,16 @@ export function Reflections() {
   };
 
   const promote = async (id: string) => {
-    await client.promoteMemory(id, "procedural");
-    await qc.invalidateQueries({ queryKey: ["reflections"] });
-    await qc.invalidateQueries({ queryKey: ["memories"] });
+    setPromoteError(null);
+    try {
+      await client.promoteMemory(id, "procedural");
+      await qc.invalidateQueries({ queryKey: ["reflections"] });
+      await qc.invalidateQueries({ queryKey: ["memories"] });
+    } catch (err) {
+      setPromoteError(
+        err instanceof Error ? err.message : "Failed to promote memory",
+      );
+    }
   };
 
   if (isLoading) {
@@ -58,6 +67,16 @@ export function Reflections() {
         <p className="text-text-muted">
           No reflections yet. They form automatically as the system learns, or
           trigger one now.
+        </p>
+      )}
+
+      {promoteError && (
+        <p
+          role="alert"
+          className="text-sm text-tier-procedural"
+          data-testid="promote-error"
+        >
+          {promoteError}
         </p>
       )}
 

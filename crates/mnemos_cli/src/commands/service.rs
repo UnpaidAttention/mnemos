@@ -106,7 +106,7 @@ fn service_status() -> Result<()> {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .expect("tokio runtime");
+                .map_err(|e| anyhow::anyhow!("failed to build tokio runtime: {e}"))?;
             let up = rt.block_on(crate::daemon_ctl::is_up());
             println!("daemon (health probe): {}", if up { "up" } else { "down" });
         }

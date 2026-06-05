@@ -17,8 +17,11 @@ export function Pipelines() {
   const { data, isLoading, isError } = usePipelines();
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
+  // P2-15: surface trigger errors near the maintenance buttons
+  const [triggerError, setTriggerError] = useState<string | null>(null);
 
   const trigger = async (which: "decay" | "communities") => {
+    setTriggerError(null);
     setBusy(which);
     try {
       if (which === "decay") {
@@ -27,6 +30,10 @@ export function Pipelines() {
         await client.runCommunities();
       }
       await qc.invalidateQueries({ queryKey: ["pipelines"] });
+    } catch (err) {
+      setTriggerError(
+        err instanceof Error ? err.message : `Failed to run ${which}`,
+      );
     } finally {
       setBusy(null);
     }
@@ -76,20 +83,29 @@ export function Pipelines() {
         <div className="flex gap-2">
           <Button
             variant="ghost"
-            onClick={() => trigger("decay")}
+            onClick={() => void trigger("decay")}
             disabled={busy === "decay"}
           >
             {busy === "decay" ? "Running…" : "Run decay"}
           </Button>
           <Button
             variant="ghost"
-            onClick={() => trigger("communities")}
+            onClick={() => void trigger("communities")}
             disabled={busy === "communities" || !data.enabled}
             title={!data.enabled ? "Enable an LLM model to detect communities" : undefined}
           >
             {busy === "communities" ? "Detecting…" : "Detect communities"}
           </Button>
         </div>
+        {triggerError && (
+          <p
+            role="alert"
+            className="text-sm text-tier-procedural"
+            data-testid="trigger-error"
+          >
+            {triggerError}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">

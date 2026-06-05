@@ -39,3 +39,23 @@ test("Promote-to-procedural posts to the promote endpoint", async () => {
     expect(promoted!.body).toMatchObject({ tier: "procedural" });
   });
 });
+
+// P2-15: a failed promote must surface an error message near the button,
+// not silently disappear.
+test("promote failure surfaces an error near the button (P2-15)", async () => {
+  server.use(
+    http.post("http://localhost:7423/v1/memories/:id/promote", () =>
+      HttpResponse.json({ error: "daemon error" }, { status: 500 }),
+    ),
+  );
+  renderWithQuery(<Reflections />);
+  const buttons = await screen.findAllByRole("button", {
+    name: /promote to procedural/i,
+  });
+  await userEvent.click(buttons[0]);
+  await waitFor(() => {
+    expect(screen.getByTestId("promote-error")).toBeInTheDocument();
+  });
+  // Error element must have role="alert" so it is announced to screen readers.
+  expect(screen.getByRole("alert")).toBeInTheDocument();
+});

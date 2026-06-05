@@ -13,7 +13,19 @@ export type DaemonEvent =
   | { type: "sync_started"; backend: string; direction: string }
   | { type: "sync_completed"; backend: string; direction: string; files_changed: number }
   | { type: "sync_failed"; backend: string; direction: string; error: string }
-  | { type: "sync_conflict"; path: string; detected_by: string };
+  | { type: "sync_conflict"; path: string; detected_by: string }
+  // P2-15: embed_rebuild_* variants so exhaustive narrowing over DaemonEvent
+  // stays correct and ws.ts INVALIDATE table keys resolve to real event types.
+  | { type: "embed_rebuild_started"; target_kind: string; target_model: string }
+  | { type: "embed_rebuild_progress"; processed: number; total: number }
+  | {
+      type: "embed_rebuild_completed";
+      processed: number;
+      skipped: number;
+      total: number;
+      swapped: boolean;
+    }
+  | { type: "embed_rebuild_failed"; error: string; processed: number };
 
 type Status = "connecting" | "open" | "closed";
 

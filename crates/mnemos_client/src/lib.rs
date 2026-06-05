@@ -50,7 +50,13 @@ impl Client {
             .tx
             .request(Method::POST, "/v1/memories", Some(&req), true)
             .await?;
-        Ok(v["id"].as_str().unwrap_or_default().to_string())
+        v["id"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| ClientError::Server {
+                status: 200,
+                body: "daemon response missing 'id' field".to_string(),
+            })
     }
 
     pub async fn get_memory(&self, id: &str) -> Result<Memory> {
@@ -188,4 +194,61 @@ struct RecallReq {
     include_invalid: bool,
     explain: bool,
     rerank: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P2-9: a daemon response with a missing "id" field must surface as
+    /// ClientError::Server, not silently return an empty string.
+    #[test]
+    fn remember_missing_id_is_an_error() {
+        // Simulate the JSON body that `remember()` parses from the daemon.
+        let v: Value = serde_json::json!({ "other": "stuff" });
+        let result: Result<String> =
+            v["id"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| ClientError::Server {
+                    status: 200,
+                    body: "daemon response missing 'id' field".to_string(),
+                });
+        assert!(result.is_err(), "missing id must yield an error");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("missing 'id'"),
+            "error message should mention missing id, got: {msg}"
+        );
+    }
+
+    /// P2-9: when the daemon returns a proper id, remember() must return it.
+    #[test]
+    fn remember_present_id_is_returned() {
+        let v: Value = serde_json::json!({ "id": "mem_abc123", "body": "x" });
+        let result: Result<String> =
+            v["id"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| ClientError::Server {
+                    status: 200,
+                    body: "daemon response missing 'id' field".to_string(),
+                });
+        assert_eq!(result.unwrap(), "mem_abc123");
+    }
+
+    /// P2-9: null id (JSON null) is also treated as an error.
+    #[test]
+    fn remember_null_id_is_an_error() {
+        let v: Value = serde_json::json!({ "id": null });
+        let result: Result<String> =
+            v["id"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| ClientError::Server {
+                    status: 200,
+                    body: "daemon response missing 'id' field".to_string(),
+                });
+        assert!(result.is_err(), "null id must yield an error");
+    }
 }

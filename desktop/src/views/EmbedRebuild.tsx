@@ -41,10 +41,13 @@ export function EmbedRebuild() {
   const { data, isLoading } = useEmbedRebuildStatus();
   const [target, setTarget] = useState<string>("bundled");
   const [busy, setBusy] = useState(false);
+  // P2-15: surface action errors near the button
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const start = async () => {
     const t = TARGETS.find((x) => x.value === target);
     if (!t) return;
+    setActionError(null);
     setBusy(true);
     try {
       await client.startEmbedRebuild(t.value, t.model, t.dim);
@@ -52,14 +55,25 @@ export function EmbedRebuild() {
       // UI flips from idle → running on the same render cycle as the WS
       // event arrives (or in tests where there is no WS).
       await qc.invalidateQueries({ queryKey: ["embed-rebuild", "status"] });
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Failed to start rebuild",
+      );
     } finally {
       setBusy(false);
     }
   };
 
   const abort = async () => {
-    await client.abortEmbedRebuild();
-    await qc.invalidateQueries({ queryKey: ["embed-rebuild", "status"] });
+    setActionError(null);
+    try {
+      await client.abortEmbedRebuild();
+      await qc.invalidateQueries({ queryKey: ["embed-rebuild", "status"] });
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Failed to abort rebuild",
+      );
+    }
   };
 
   if (isLoading) {
@@ -79,6 +93,16 @@ export function EmbedRebuild() {
         Re-embeds every memory with the chosen backend. Atomic and resumable — safe to abort
         and restart. The old embeddings are kept as a backup for 7 days.
       </p>
+
+      {actionError && (
+        <p
+          role="alert"
+          className="text-sm text-tier-procedural"
+          data-testid="rebuild-action-error"
+        >
+          {actionError}
+        </p>
+      )}
 
       {status.status === "running" && (
         <Card className="p-4 space-y-2" data-testid="rebuild-running">

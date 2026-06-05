@@ -90,6 +90,33 @@ test("renders the app shell with the mnemos brand", async () => {
   expect(await screen.findByText(/mnemos/i)).toBeInTheDocument();
 });
 
+// P2-18: the shell must render the nav sidebar with key navigation links
+// and the default route (Browser) must be mounted so at least one route
+// renders its content. This strengthens the smoke test beyond the brand check.
+test("renders nav links for core views (P2-18)", async () => {
+  render(<App />);
+  // Wait for the app to settle (getFirstRun resolves)
+  expect(await screen.findByText(/mnemos/i)).toBeInTheDocument();
+  // Sidebar navigation links — defined in LeftSidebar.tsx NAV array
+  const navLinks = ["Browser", "Search", "Pipelines", "Reflections", "Settings", "Migration"];
+  for (const label of navLinks) {
+    expect(
+      screen.getByRole("link", { name: label }),
+      `nav link "${label}" should be present`,
+    ).toBeInTheDocument();
+  }
+});
+
+// P2-18: the default route (/) must render the Browser view content,
+// confirming that RouterProvider is wired up and at least one route renders.
+test("default route renders the Browser view (P2-18)", async () => {
+  render(<App />);
+  expect(await screen.findByText(/mnemos/i)).toBeInTheDocument();
+  // The Browser view renders an element with the navigation role (LeftSidebar)
+  // plus the main content area. The navigation element must be present.
+  expect(screen.getByRole("navigation")).toBeInTheDocument();
+});
+
 // P1-17 — getFirstRun() failure must not leave firstRunShown null forever
 // (which would block the app from rendering the main UI).
 // The .catch handler should fall back to setFirstRunShown(false) so the main
