@@ -36,8 +36,7 @@ use axum::{
 use crate::state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
-    let public: Router<AppState> =
-        Router::new().route("/health", axum::routing::get(health::get_health));
+    let public: Router<AppState> = health::router();
 
     let authed: Router<AppState> = Router::new()
         .merge(memories::router())

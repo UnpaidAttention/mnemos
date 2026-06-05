@@ -93,3 +93,47 @@ fn retrieval_ppr_defaults() {
     assert_eq!(cfg.retrieval.ppr_alpha, 0.85);
     assert_eq!(cfg.retrieval.ppr_iterations, 30);
 }
+
+/// P2-21: MNEMOS_LOG_FORMAT env var must override the logging.format field.
+/// This test is sequential (env mutation) — run with `-- --test-threads=1`
+/// if flakiness arises, but env vars are isolated per process in CI.
+#[test]
+fn mnemos_log_format_env_override() {
+    use mnemos_daemon::config::Config;
+    use tempfile::TempDir;
+
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("lf.toml");
+    std::fs::write(&path, "[logging]\nformat = \"compact\"\n").unwrap();
+
+    // Baseline: toml value.
+    let cfg = Config::load_from(&path).unwrap();
+    assert_eq!(cfg.logging.format, "compact");
+
+    // With env override to "json".
+    std::env::set_var("MNEMOS_LOG_FORMAT", "json");
+    let cfg_json = Config::load_from(&path).unwrap();
+    assert_eq!(
+        cfg_json.logging.format, "json",
+        "MNEMOS_LOG_FORMAT=json must override toml logging.format"
+    );
+    std::env::remove_var("MNEMOS_LOG_FORMAT");
+
+    // With env override back to "compact".
+    std::env::set_var("MNEMOS_LOG_FORMAT", "compact");
+    let cfg_compact = Config::load_from(&path).unwrap();
+    assert_eq!(cfg_compact.logging.format, "compact");
+    std::env::remove_var("MNEMOS_LOG_FORMAT");
+}
+
+/// P2-21: BundledEmbedder::new() must return Result, not panic.
+#[test]
+fn bundled_embedder_new_returns_result() {
+    use mnemos_core::providers::bundled::BundledEmbedder;
+    // Building the reqwest client should succeed in normal environments.
+    let result = BundledEmbedder::new("http://127.0.0.1:7424");
+    assert!(
+        result.is_ok(),
+        "BundledEmbedder::new must return Ok in a normal environment"
+    );
+}

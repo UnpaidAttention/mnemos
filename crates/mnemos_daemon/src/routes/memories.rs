@@ -200,6 +200,7 @@ async fn list_memories(
             workspace: q.workspace,
             include_invalid: q.include_invalid,
             limit: Some(q.limit),
+            ..Default::default()
         })
         .await?;
     Ok(Json(serde_json::json!({ "memories": memories })))

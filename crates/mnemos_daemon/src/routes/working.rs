@@ -48,25 +48,22 @@ pub(crate) async fn build_working_set(
             workspace: workspace.map(str::to_owned),
             include_invalid: false,
             limit: Some(64),
-        })
-        .await?;
-
-    // Fetch all Reflection-tier memories and filter for the "mnemos:hardened"
-    // tag in Rust (ListFilter has no tag field).
-    let reflection_all = state
-        .vault
-        .list(ListFilter {
-            tiers: Some(vec![Tier::Reflection]),
-            include_invalid: false,
-            limit: None,
             ..Default::default()
         })
         .await?;
 
-    let mut hardened: Vec<_> = reflection_all
-        .into_iter()
-        .filter(|m| m.tags.iter().any(|t| t == "mnemos:hardened"))
-        .collect();
+    // P2-11: push the tag filter into SQL instead of hydrating the whole
+    // Reflection tier and filtering in Rust.
+    let mut hardened = state
+        .vault
+        .list(ListFilter {
+            tiers: Some(vec![Tier::Reflection]),
+            include_invalid: false,
+            limit: Some(HARDENED_CAP * 4), // over-fetch so sort+truncate has room
+            required_tags: vec!["mnemos:hardened".to_owned()],
+            ..Default::default()
+        })
+        .await?;
 
     // Rank: importance desc, then created_at desc (newest first).
     hardened.sort_by(|a, b| {

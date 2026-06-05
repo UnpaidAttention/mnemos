@@ -25,8 +25,9 @@
 //! Both paths run inside a single transaction; readers either see the old
 //! state or the new state, never an intermediate.
 //!
-//! TODO(v0.9.0): Background cleanup of the shadow table after swap. v0.8.0
-//! leaves it in place — rows are small (embedding metadata only after swap).
+//! P2-17: The shadow table is now cleaned up (DELETE FROM memory_embeddings_v2)
+//! immediately after each successful swap so prior-model vectors do not
+//! accumulate on disk across repeated rebuild runs.
 
 use crate::error::{MnemosError, Result};
 use crate::providers::Embedder;
@@ -154,6 +155,11 @@ pub async fn rebuild(vault: &Vault, opts: RebuildOptions) -> Result<RebuildStatu
     // 5. Atomic swap: replace memory_vec contents with shadow vectors.
     swap_memory_vec(storage, opts.target_dim).await?;
 
+    // 5a. P2-17: delete the shadow table rows now that the swap succeeded.
+    //     This prevents prior-model vectors from accumulating on disk across
+    //     multiple rebuild runs. The TODO in the v0.8.0 header is now resolved.
+    cleanup_shadow_table(storage).await?;
+
     // 6. Update vault_meta atomically.
     set_embedder_meta(
         storage,
@@ -188,6 +194,17 @@ pub async fn rebuild(vault: &Vault, opts: RebuildOptions) -> Result<RebuildStatu
         total,
         swapped: true,
     })
+}
+
+/// P2-17: Delete all rows from the shadow table after a successful swap so
+/// vectors from prior models do not accumulate on disk.
+///
+/// The table itself is left in place (it is cheap to keep and `ensure_shadow_table`
+/// is idempotent on the next rebuild), only the rows are removed.
+async fn cleanup_shadow_table(storage: &Storage) -> Result<()> {
+    let (conn, _g) = storage.write_conn().await?;
+    conn.execute("DELETE FROM memory_embeddings_v2", ()).await?;
+    Ok(())
 }
 
 /// Create the shadow table if it does not exist.
@@ -432,7 +449,7 @@ async fn build_target_embedder(opts: &RebuildOptions) -> Result<Box<dyn Embedder
             // Default port is 7424 per Plan 9. Operators can override via env.
             let url = std::env::var("MNEMOS_BUNDLED_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:7424".into());
-            Ok(Box::new(BundledEmbedder::new(url)))
+            Ok(Box::new(BundledEmbedder::new(url)?))
         }
         "ollama" => {
             let base_url = std::env::var("MNEMOS_OLLAMA_URL")

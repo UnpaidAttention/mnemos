@@ -47,13 +47,24 @@ async fn mcp_correct_missing_why_returns_error() {
     let body = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"correct","arguments":{"wrong":"did x","right":"do y","why":""}}}"#;
     let (_, b) = call(app, "POST", "/mcp", Some(&token), body).await;
     let v: serde_json::Value = serde_json::from_str(&b).unwrap();
-    // The MCP dispatcher maps tool call failures to INTERNAL_ERROR (-32603);
-    // INVALID_PARAMS (-32602) is reserved for "unknown tool name" only.
-    assert_eq!(
-        v["error"]["code"], -32603,
-        "empty why must return INTERNAL_ERROR; response: {v}"
+    // P2-10: tool execution failures use isError=true in the result envelope;
+    // JSON-RPC error codes are reserved for protocol-level failures (unknown
+    // method, bad params, parse error). Verify both the new and old shapes.
+    let is_error_result = v["result"]["isError"].as_bool().unwrap_or(false);
+    let error_code = v["error"]["code"].as_i64().unwrap_or(0);
+    assert!(
+        is_error_result || error_code == -32603,
+        "empty why must return isError:true or INTERNAL_ERROR; response: {v}"
     );
-    let msg = v["error"]["message"].as_str().unwrap_or("");
+    // The error text must mention "why" regardless of which shape is used.
+    let msg = if is_error_result {
+        v["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    } else {
+        v["error"]["message"].as_str().unwrap_or("").to_string()
+    };
     assert!(
         msg.contains("why"),
         "error message must mention 'why'; got: {msg}"

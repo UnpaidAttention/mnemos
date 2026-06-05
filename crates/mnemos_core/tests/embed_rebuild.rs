@@ -274,3 +274,45 @@ async fn rebuild_round_trip_purges_intermediate_model_vectors() {
     let meta = get_embedder_meta(vault.storage()).await.unwrap();
     assert_eq!(meta.model, "model-a");
 }
+
+/// P2-17: after a successful rebuild the shadow table must be empty.
+///
+/// Prior to this fix the shadow table accumulated rows from every rebuild run;
+/// after the fix it must be empty following each successful swap.
+#[tokio::test]
+async fn rebuild_cleans_shadow_table_after_swap() {
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths::with_root(tmp.path());
+
+    // Seed two memories.
+    {
+        let emb: Arc<dyn Embedder> = Arc::new(MockEmbedder::new(384));
+        let vault = Vault::open_with_embedder(paths.clone(), Some(emb))
+            .await
+            .unwrap();
+        for body in ["alpha body", "beta body"] {
+            vault.remember(body, RememberOpts::default()).await.unwrap();
+        }
+    }
+
+    let vault = Vault::open(paths.clone()).await.unwrap();
+    let status = rebuild(&vault, mock_opts("clean-model", 384))
+        .await
+        .unwrap();
+    assert!(
+        matches!(status, RebuildStatus::Completed { processed: 2, .. }),
+        "rebuild should complete processing 2 memories; got {status:?}"
+    );
+
+    // Shadow table must be empty after the swap.
+    let conn = vault.storage().conn().unwrap();
+    let mut rows = conn
+        .query("SELECT COUNT(*) FROM memory_embeddings_v2", ())
+        .await
+        .unwrap();
+    let count: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+    assert_eq!(
+        count, 0,
+        "P2-17: shadow table must be empty after a successful rebuild swap"
+    );
+}

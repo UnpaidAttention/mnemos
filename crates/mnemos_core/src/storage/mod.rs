@@ -157,7 +157,32 @@ impl Storage {
     }
 
     /// Persist the embedder dim and model_id into `vault_meta`.
+    ///
+    /// # P2-16
+    ///
+    /// Returns `MnemosError::Internal` if no `vault_meta` row with `id = 1`
+    /// exists (database not properly initialized via `Storage::open`).
     pub async fn set_vault_meta(&self, dim: usize, model_id: &str) -> Result<()> {
+        // P2-16: verify the row exists before writing, so a silent zero-row
+        // UPDATE does not mask initialization failures.
+        {
+            let conn = self.conn()?;
+            let mut rows = conn
+                .query("SELECT COUNT(*) FROM vault_meta WHERE id = 1", ())
+                .await?;
+            let count: i64 = rows
+                .next()
+                .await?
+                .ok_or_else(|| {
+                    MnemosError::Internal("vault_meta COUNT query returned no rows".into())
+                })?
+                .get(0)?;
+            if count == 0 {
+                return Err(MnemosError::Internal(
+                    "vault_meta row missing; run Storage::open to initialize".into(),
+                ));
+            }
+        }
         let (conn, _g) = self.write_conn().await?;
         conn.execute(
             "UPDATE vault_meta SET embedder_dim = ?, embedder_model_id = ?, updated_at = ? WHERE id = 1",

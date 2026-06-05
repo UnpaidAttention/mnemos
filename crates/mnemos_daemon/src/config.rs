@@ -402,6 +402,12 @@ fn apply_env_overrides(cfg: &mut Config) {
     if let Ok(v) = std::env::var("MNEMOS_LOG") {
         cfg.logging.level = v;
     }
+    // P2-21: allow the log format to be overridden at runtime without editing
+    // config.toml.  Accepted values: "json" | "compact" (anything else is
+    // silently treated as "compact").
+    if let Ok(v) = std::env::var("MNEMOS_LOG_FORMAT") {
+        cfg.logging.format = v;
+    }
     if let Ok(v) = std::env::var("MNEMOS_LLM") {
         cfg.llm.kind = match v.as_str() {
             "ollama" => LlmKind::Ollama,

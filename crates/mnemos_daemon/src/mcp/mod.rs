@@ -4,6 +4,7 @@ pub mod resources;
 pub mod tools;
 
 use axum::{
+    body::Bytes,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -14,7 +15,7 @@ use serde_json::{json, Value};
 
 use crate::mcp::protocol::{
     JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
-    METHOD_NOT_FOUND,
+    METHOD_NOT_FOUND, PARSE_ERROR,
 };
 use crate::state::AppState;
 
@@ -22,7 +23,35 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/mcp", post(handle))
 }
 
-async fn handle(State(state): State<AppState>, Json(req): Json<JsonRpcRequest>) -> Response {
+/// Handle an MCP JSON-RPC POST request.
+///
+/// The body is accepted as raw `Bytes` so we can return a well-formed
+/// JSON-RPC PARSE_ERROR (-32700) on malformed JSON rather than letting axum
+/// reject it with HTTP 422 (which leaves the PARSE_ERROR path dead — P2-10).
+async fn handle(State(state): State<AppState>, body: Bytes) -> Response {
+    // Step 1: parse the raw bytes as JSON — return PARSE_ERROR on failure.
+    let raw: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            let resp = JsonRpcResponse::error(None, PARSE_ERROR, format!("JSON parse error: {e}"));
+            return (StatusCode::OK, Json(resp)).into_response();
+        }
+    };
+
+    // Step 2: deserialize into the typed JsonRpcRequest — return INVALID_REQUEST
+    // on a structurally invalid envelope (e.g. missing `method`, wrong field
+    // types, wrong `jsonrpc` version). We extract `id` from the raw JSON first
+    // so that the error response can echo it back even when the typed
+    // deserialization fails.
+    let id = raw.get("id").cloned();
+    let req: JsonRpcRequest = match serde_json::from_value(raw) {
+        Ok(r) => r,
+        Err(e) => {
+            let resp = JsonRpcResponse::error(id, INVALID_REQUEST, format!("invalid request: {e}"));
+            return (StatusCode::OK, Json(resp)).into_response();
+        }
+    };
+
     // JSON-RPC notifications (no id, no response expected). MCP sends
     // `notifications/initialized` after initialize. Ack with 200, empty body.
     if req.method.starts_with("notifications/") {
@@ -81,6 +110,18 @@ fn tools_list(id: Option<Value>) -> JsonRpcResponse {
     JsonRpcResponse::success(id, json!({ "tools": tools::descriptors() }))
 }
 
+/// Dispatch a `tools/call` request.
+///
+/// # P2-10 semantics
+///
+/// JSON-RPC errors (`error` field) are reserved for protocol-level failures:
+/// - Bad/missing `name` parameter → INVALID_PARAMS (-32602).
+/// - Unknown tool name → INVALID_PARAMS (-32602).
+///
+/// Tool *execution* failures (the tool was dispatched but returned an error)
+/// are returned as a successful JSON-RPC response whose `result` carries
+/// `{ "content": [{"type":"text","text":"<msg>"}], "isError": true }`.
+/// This matches the MCP specification's `CallToolResult.isError` convention.
 async fn tools_call(id: Option<Value>, state: &AppState, params: &Value) -> JsonRpcResponse {
     let name = match params["name"].as_str() {
         Some(n) => n,
@@ -89,16 +130,26 @@ async fn tools_call(id: Option<Value>, state: &AppState, params: &Value) -> Json
         }
     };
     let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+
+    // Dispatch — unknown tool name is a protocol error; execution errors are
+    // returned in-band as isError results.
     match tools::call(state, name, &args).await {
         Ok(result) => JsonRpcResponse::success(id, result),
         Err(e) => {
             let msg = e.to_string();
-            let code = if msg.starts_with("unknown tool") {
-                INVALID_PARAMS
+            if msg.starts_with("unknown tool") {
+                // Unknown tool: JSON-RPC INVALID_PARAMS (protocol error).
+                JsonRpcResponse::error(id, INVALID_PARAMS, msg)
             } else {
-                INTERNAL_ERROR
-            };
-            JsonRpcResponse::error(id, code, msg)
+                // Execution failure: success envelope with isError=true.
+                JsonRpcResponse::success(
+                    id,
+                    json!({
+                        "content": [{ "type": "text", "text": msg }],
+                        "isError": true,
+                    }),
+                )
+            }
         }
     }
 }

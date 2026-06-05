@@ -11,6 +11,45 @@ async fn health_endpoint_returns_200_without_auth() {
     assert!(resp.1.contains("\"status\":\"ok\""));
 }
 
+/// P2-7: /health with the default config (EmbedderKind::Bundled) must include
+/// an "embedder" field. The value will be "degraded" in tests (no real
+/// llama-server), but the field must be present.
+#[tokio::test]
+async fn health_includes_embedder_field_for_bundled_kind() {
+    let (app, _state) = build_app(Config::default(), test_vault().await)
+        .await
+        .unwrap();
+    let resp = call(app, "GET", "/health", None, "").await;
+    assert_eq!(resp.0, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_str(&resp.1).unwrap();
+    assert!(
+        v["embedder"].is_object(),
+        "embedder field must be present for bundled kind; response: {}",
+        resp.1
+    );
+    let status = v["embedder"]["status"].as_str().unwrap_or("");
+    assert!(
+        status == "ok" || status == "degraded",
+        "embedder.status must be 'ok' or 'degraded'; got: {status}"
+    );
+}
+
+/// P2-7: /health with EmbedderKind::Mock must NOT include an "embedder" field.
+#[tokio::test]
+async fn health_omits_embedder_field_for_mock_kind() {
+    let mut cfg = Config::default();
+    cfg.embedder.kind = mnemos_daemon::config::EmbedderKind::Mock;
+    let (app, _state) = build_app(cfg, test_vault().await).await.unwrap();
+    let resp = call(app, "GET", "/health", None, "").await;
+    assert_eq!(resp.0, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_str(&resp.1).unwrap();
+    assert!(
+        v["embedder"].is_null(),
+        "embedder field must be absent for mock kind; response: {}",
+        resp.1
+    );
+}
+
 #[tokio::test]
 async fn auth_required_on_v1_routes() {
     let (app, _state) = build_app(Config::default(), test_vault().await)

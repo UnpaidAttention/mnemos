@@ -20,7 +20,7 @@ async fn bundled_embedder_returns_384_dim_vector() {
     if std::env::var("MNEMOS_TEST_LLAMA_SERVER").is_err() {
         return;
     }
-    let e = BundledEmbedder::new("http://127.0.0.1:7424");
+    let e = BundledEmbedder::new("http://127.0.0.1:7424").unwrap();
     let v = e.embed("hello world").await.unwrap();
     assert_eq!(v.len(), 384);
     let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -36,7 +36,7 @@ async fn bundled_embedder_is_deterministic() {
     if std::env::var("MNEMOS_TEST_LLAMA_SERVER").is_err() {
         return;
     }
-    let e = BundledEmbedder::new("http://127.0.0.1:7424");
+    let e = BundledEmbedder::new("http://127.0.0.1:7424").unwrap();
     let v1 = e.embed("the quick brown fox").await.unwrap();
     let v2 = e.embed("the quick brown fox").await.unwrap();
     for (a, b) in v1.iter().zip(v2.iter()) {

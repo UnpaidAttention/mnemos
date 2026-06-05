@@ -139,11 +139,25 @@ fn spawn_child(cfg: &BundledEmbedderConfig, log_path: &std::path::Path) -> Resul
         .with_context(|| format!("spawn {}", cfg.binary.display()))
 }
 
-/// Spawn `llama-server` and wait for its `/health` endpoint to come up.
+/// Spawn `llama-server` and return a [`BundledHandle`] **immediately** without
+/// waiting for the health endpoint to come up.
 ///
-/// On success, returns a [`BundledHandle`] and a detached background task
-/// that polls health every 30s and restarts the child with exponential
-/// backoff on 3 consecutive failures.
+/// # P2-13: non-blocking startup
+///
+/// Cold GGUF model loads routinely take 10-60 s on low-end hardware. The
+/// previous implementation blocked daemon startup for up to 5 s waiting for
+/// llama-server to become healthy; if it didn't come up in time the daemon
+/// refused to start at all — even though BM25-only recall works immediately.
+///
+/// Now `spawn` fires a background readiness task that:
+/// 1. Polls `<host:port>/health` every 100 ms for up to 120 s, logging an
+///    info message once ready and a warning if it times out.
+/// 2. After readiness (or timeout), transitions to the normal 30-second
+///    watchdog loop that restarts the child on 3 consecutive failures.
+///
+/// The HTTP listener is returned and can serve requests while the embedder
+/// warms up. The `/health` endpoint reports `embedder.status = "degraded"`
+/// during this window.
 pub async fn spawn(cfg: BundledEmbedderConfig) -> Result<BundledHandle> {
     if !cfg.binary.exists() {
         anyhow::bail!(
@@ -164,48 +178,52 @@ pub async fn spawn(cfg: BundledEmbedderConfig) -> Result<BundledHandle> {
     }
 
     let child = spawn_child(&cfg, &initial_log_path)?;
-
     let child = Arc::new(Mutex::new(Some(child)));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
-    // Wait up to 5s for the health endpoint to come up.
     let base = format!("http://{}:{}", cfg.host, cfg.port);
     let probe_url = format!("{base}/health");
     let probe_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()?;
-    let mut ready = false;
-    for _ in 0..50 {
-        if shutdown_rx.has_changed().unwrap_or(false) && *shutdown_rx.borrow() {
-            break;
-        }
-        if let Ok(r) = probe_client.get(&probe_url).send().await {
-            if r.status().is_success() {
-                ready = true;
-                break;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    if !ready {
-        // Bring down the child we spawned before bailing.
-        let mut guard = child.lock().await;
-        if let Some(mut c) = guard.take() {
-            let _ = c.start_kill();
-        }
-        anyhow::bail!(
-            "llama-server did not become healthy within 5s; check {}",
-            initial_log_path.display()
-        );
-    }
 
-    // Background health task: poll every 30s, restart on 3 consecutive
-    // failures. Stops when shutdown_tx fires.
+    // Background task: wait for initial readiness, then run the 30 s watchdog.
     let child_for_health = child.clone();
     let cfg_for_health = cfg.clone();
-    let probe_client_h = probe_client.clone();
-    let probe_url_h = probe_url.clone();
+    let probe_client_h = probe_client;
+    let probe_url_h = probe_url;
     tokio::spawn(async move {
+        // --- Phase 1: initial readiness wait (up to 120 s) ---
+        // Poll every 100 ms; do NOT block the caller.
+        let mut ready = false;
+        // 1200 iterations × 100 ms = 120 s maximum wait.
+        for _ in 0..1200u16 {
+            if shutdown_rx.has_changed().unwrap_or(false) && *shutdown_rx.borrow() {
+                return;
+            }
+            if let Ok(r) = probe_client_h.get(&probe_url_h).send().await {
+                if r.status().is_success() {
+                    ready = true;
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        if ready {
+            tracing::info!("bundled llama-server is healthy and ready");
+        } else {
+            tracing::warn!(
+                log = %{
+                    log_path().map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| "<unknown>".into())
+                },
+                "llama-server did not become healthy within 120 s; \
+                 semantic recall will be unavailable until it does. \
+                 Check the llama-server log for details."
+            );
+        }
+
+        // --- Phase 2: steady-state 30 s watchdog ---
         let mut consecutive_fails = 0u32;
         let mut backoff = std::time::Duration::from_secs(1);
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
@@ -246,7 +264,9 @@ pub async fn spawn(cfg: BundledEmbedderConfig) -> Result<BundledHandle> {
                                     Ok(c) => *guard = Some(c),
                                     Err(e) => tracing::error!("llama-server restart failed: {e}"),
                                 },
-                                Err(e) => tracing::error!("llama-server restart: cannot resolve log path: {e}"),
+                                Err(e) => tracing::error!(
+                                    "llama-server restart: cannot resolve log path: {e}"
+                                ),
                             }
                         }
                     }

@@ -205,7 +205,10 @@ fn build_embedder_for_daemon(
     Ok(match cfg.embedder.kind {
         EmbedderKind::None => None,
         EmbedderKind::Mock => Some(Arc::new(MockEmbedder::new(cfg.embedder.dim))),
-        EmbedderKind::Bundled => Some(Arc::new(BundledEmbedder::new(cfg.embedder.url.clone()))),
+        EmbedderKind::Bundled => Some(Arc::new(
+            BundledEmbedder::new(cfg.embedder.url.clone())
+                .map_err(|e| anyhow::anyhow!("bundled embedder init: {e}"))?,
+        )),
         EmbedderKind::Ollama => {
             let oc = OllamaConfig {
                 base_url: cfg.embedder.url.clone(),

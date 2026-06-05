@@ -229,6 +229,7 @@ async fn list_memories(state: &AppState, args: &Value) -> anyhow::Result<Value> 
             workspace: args["workspace"].as_str().map(String::from),
             include_invalid: args["include_invalid"].as_bool().unwrap_or(false),
             limit: args["limit"].as_u64().map(|n| n as usize),
+            ..Default::default()
         })
         .await?;
     Ok(tool_content_json(json!({ "memories": memories })))

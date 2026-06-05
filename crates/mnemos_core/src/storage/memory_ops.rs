@@ -157,6 +157,9 @@ fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
 ///
 /// P1-4: also removes the FTS row for `old_id` in the same transaction so
 /// BM25 search has no ghost rows for superseded memories.
+///
+/// P2-12: also removes the vector row from `memory_vec` so the vec0 KNN scan
+/// never wastes its `k` budget on invalidated/superseded memories.
 pub async fn supersede_memory(
     storage: &Storage,
     old_id: &str,
@@ -189,10 +192,17 @@ pub async fn supersede_memory(
     )
     .await?;
 
-    // P1-4: remove from FTS index in the same transaction to prevent ghost rows
-    // that would corrupt BM25 ranking.
+    // P1-4: remove from FTS index to prevent ghost rows corrupting BM25.
     tx.execute(
         "DELETE FROM memory_fts WHERE memory_id = ?",
+        params![old_id.to_string()],
+    )
+    .await?;
+
+    // P2-12: remove vector row so KNN scans only see live memories.
+    // The DELETE is a no-op if the memory was never embedded; that is fine.
+    tx.execute(
+        "DELETE FROM memory_vec WHERE memory_id = ?",
         params![old_id.to_string()],
     )
     .await?;
@@ -208,6 +218,9 @@ pub async fn supersede_memory(
 ///
 /// P1-4: also removes the FTS row for `id` in the same transaction so BM25
 /// search has no ghost rows for forgotten memories.
+///
+/// P2-12: also removes the vector row from `memory_vec` so the vec0 KNN scan
+/// never wastes its `k` budget on invalidated memories.
 pub async fn soft_invalidate(storage: &Storage, id: &str, at: DateTime<Utc>) -> Result<()> {
     let (conn, _guard) = storage.write_conn().await?;
     let tx = conn.transaction().await?;
@@ -224,10 +237,16 @@ pub async fn soft_invalidate(storage: &Storage, id: &str, at: DateTime<Utc>) -> 
         return Err(MnemosError::MemoryNotFound(id.into()));
     }
 
-    // P1-4: remove from FTS index in the same transaction to prevent ghost rows
-    // that would corrupt BM25 ranking.
+    // P1-4: remove from FTS index to prevent ghost rows corrupting BM25.
     tx.execute(
         "DELETE FROM memory_fts WHERE memory_id = ?",
+        params![id.to_string()],
+    )
+    .await?;
+
+    // P2-12: remove vector row so KNN scans only see live memories.
+    tx.execute(
+        "DELETE FROM memory_vec WHERE memory_id = ?",
         params![id.to_string()],
     )
     .await?;
@@ -247,6 +266,12 @@ pub struct ListFilter {
     pub include_invalid: bool,
     /// Maximum number of results to return. `None` means no limit.
     pub limit: Option<usize>,
+    /// If non-empty, only return memories whose `tags_json` contains ALL of
+    /// these tags (each must appear as a JSON string value in the array).
+    ///
+    /// P2-11: pushed into SQL via `json_each` to avoid hydrating the entire
+    /// tier into Rust memory just to filter by tag.
+    pub required_tags: Vec<String>,
 }
 
 /// Return memories matching `filter`, ordered newest-first by `created_at`.
@@ -280,6 +305,14 @@ pub async fn list_memories(storage: &Storage, filter: ListFilter) -> Result<Vec<
                 args.push(t.as_str().to_string().into());
             }
         }
+    }
+    // P2-11: push tag filter into SQL rather than hydrating the whole tier.
+    // Each required tag must appear in the tags_json array. We use a
+    // correlated EXISTS + json_each subquery so each tag adds exactly one
+    // predicate — no cross-join explosion.
+    for tag in &filter.required_tags {
+        sql.push_str(" AND EXISTS (SELECT 1 FROM json_each(tags_json) WHERE value = ?)");
+        args.push(tag.clone().into());
     }
     sql.push_str(" ORDER BY created_at DESC");
     if let Some(limit) = filter.limit {

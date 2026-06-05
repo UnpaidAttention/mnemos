@@ -23,6 +23,7 @@ pub async fn run(vault: Option<PathBuf>, json: bool, args: ListArgs) -> Result<(
             workspace: args.workspace,
             include_invalid: args.include_invalid,
             limit: Some(args.limit),
+            ..Default::default()
         })
         .await?;
     if json {

@@ -111,6 +111,65 @@ async fn mcp_tools_call_unknown_tool_returns_invalid_params() {
     );
 }
 
+/// P2-10: malformed JSON must return HTTP 200 with a JSON-RPC PARSE_ERROR
+/// (-32700) instead of HTTP 422 (which was the previous axum behaviour that
+/// left the PARSE_ERROR path dead).
+#[tokio::test]
+async fn mcp_malformed_json_returns_parse_error() {
+    let (app, token) = fixture().await;
+    let body = r#"{ this is not valid json "#;
+    let (s, b) = call(app, "POST", "/mcp", Some(&token), body).await;
+    assert_eq!(s, 200, "HTTP status must be 200 even for parse errors");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(
+        v["error"]["code"], -32700,
+        "malformed JSON must yield PARSE_ERROR (-32700); got: {v}"
+    );
+}
+
+/// P2-10: a structurally invalid request (valid JSON but missing `method`)
+/// must return INVALID_REQUEST (-32600).
+#[tokio::test]
+async fn mcp_invalid_request_missing_method_returns_invalid_request() {
+    let (app, token) = fixture().await;
+    let body = r#"{"jsonrpc":"2.0","id":42,"params":{}}"#;
+    let (s, b) = call(app, "POST", "/mcp", Some(&token), body).await;
+    assert_eq!(s, 200);
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(
+        v["error"]["code"], -32600,
+        "missing 'method' must yield INVALID_REQUEST (-32600); got: {v}"
+    );
+    // id must be echoed back
+    assert_eq!(v["id"], 42, "id must be echoed when available");
+}
+
+/// P2-10: tool execution failures (not unknown-tool) must return an isError
+/// result rather than a JSON-RPC error envelope.
+#[tokio::test]
+async fn mcp_tool_execution_failure_returns_is_error_result() {
+    let (app, token) = fixture().await;
+    // "forget" on a non-existent memory_id causes a tool execution error.
+    let body = r#"{"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"name":"forget","arguments":{"memory_id":"mem_does_not_exist_xyz"}}}"#;
+    let (_, b) = call(app, "POST", "/mcp", Some(&token), body).await;
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    // Must be a success envelope (no JSON-RPC error) with isError:true.
+    assert!(
+        v["error"].is_null(),
+        "execution failure must not produce a JSON-RPC error envelope; got: {v}"
+    );
+    assert_eq!(
+        v["result"]["isError"],
+        serde_json::Value::Bool(true),
+        "execution failure must have isError:true in result; got: {v}"
+    );
+    // Content array must be present with error text.
+    assert!(
+        v["result"]["content"].is_array(),
+        "content must be an array; got: {v}"
+    );
+}
+
 async fn call(
     app: axum::Router,
     method: &str,

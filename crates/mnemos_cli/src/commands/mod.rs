@@ -64,7 +64,9 @@ pub fn build_embedder() -> Result<Option<Arc<dyn Embedder>>> {
         "bundled" => {
             let url = std::env::var("MNEMOS_BUNDLED_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:7424".into());
-            Ok(Some(Arc::new(BundledEmbedder::new(url))))
+            let embedder =
+                BundledEmbedder::new(url).map_err(|e| anyhow!("bundled embedder init: {e}"))?;
+            Ok(Some(Arc::new(embedder)))
         }
         "ollama" => {
             let mut cfg = OllamaConfig::default();

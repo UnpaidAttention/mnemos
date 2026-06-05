@@ -31,14 +31,21 @@ pub struct BundledEmbedder {
 
 impl BundledEmbedder {
     /// Construct a client pointed at `base_url` (e.g. `"http://127.0.0.1:7424"`).
-    pub fn new(base_url: impl Into<String>) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns `MnemosError::Internal` if the underlying `reqwest::Client`
+    /// cannot be built (e.g. system TLS initialisation failure). This mirrors
+    /// `OpenAiEmbedder::new`'s error contract (P2-21).
+    pub fn new(base_url: impl Into<String>) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| MnemosError::Internal(format!("reqwest client build: {e}")))?;
+        Ok(Self {
             base_url: base_url.into(),
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("reqwest client build"),
-        }
+            client,
+        })
     }
 }
 
