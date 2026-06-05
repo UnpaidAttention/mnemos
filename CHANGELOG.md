@@ -51,11 +51,15 @@ All notable changes to this project are recorded here.
   `bundled / ollama / openai / mock / none` for both embedder and
   LLM. Settings includes an `[openai]` config block for `base_url` +
   `api_key`.
-- **Tauri auto-update re-enabled.** Deferred from v0.7.0; now back on
-  for AppImage + `.AppImage.tar.gz` signed manifest via
-  `mnemos_release_manifest`. (Requires the project owner to run
-  `bash scripts/gen-updater-key.sh` + upload the secret before the
-  release tag is pushed.)
+- **Tauri auto-update — DEFERRED.** The updater plugin and its endpoint
+  have been removed from `tauri.conf.json`. Shipping the AppImage
+  requires staging the bundled embedder `.so` libs into the AppDir
+  (a non-trivial linuxdeploy integration); until that is done no
+  AppImage is produced and therefore no `latest.json` update manifest
+  can be signed and published. The `mnemos_release_manifest` binary and
+  signing key infrastructure remain in the tree for when AppImage
+  bundling is re-enabled. The `.deb` and `.rpm` desktop packages
+  (the supported install paths) update via the system package manager.
 - **First-run wizard simplified.** No Ollama probe by default since
   the bundled embedder is ready. Three-step flow: welcome →
   bundled-embedder confirm → integration snippets.
@@ -102,10 +106,15 @@ All notable changes to this project are recorded here.
 - macOS desktop bundle still blocked on `dispatch2` macro recursion.
 - Windows desktop bundle still blocked on `libsql-sys` Unix-only
   APIs.
-- The desktop AppImage does NOT yet ship the bundled embedder
-  (deferred to a follow-up). AppImage users who want the local
-  embedder install the daemon `.deb`/`.rpm` separately, or fall back
-  to Ollama / OpenAI via Settings.
+- The desktop `.deb`/`.rpm` bundles now include the bundled embedder
+  `.so` libraries (fix for P0-2). AppImage bundling of the embedder
+  `.so` libs remains deferred; AppImage users who want the local
+  embedder should install the daemon `.deb`/`.rpm` separately, or
+  fall back to Ollama / OpenAI via Settings.
+- Auto-update via the Tauri updater is DEFERRED. The updater plugin
+  has been disabled; the `.deb`/`.rpm` packages update via the system
+  package manager. Re-enabling the updater requires AppImage `.so`
+  staging first.
 - Both desktop-portability and AppImage-bundled-embedder gaps will
   be addressed in a future plan.
 - The standalone CLI (`mnemos remember` / `recall`) opens the vault

@@ -40,7 +40,38 @@
     "externalBin": ["binaries/mnemos-daemon", "binaries/mnemos"],
     "resources": [
       "../../assets/llama-server-linux-x86_64",
-      "../../assets/all-MiniLM-L6-v2.Q8_0.gguf"
+      "../../assets/all-MiniLM-L6-v2.Q8_0.gguf",
+      "../../assets/libllama-server-impl.so",
+      "../../assets/libllama.so",
+      "../../assets/libllama.so.0",
+      "../../assets/libllama.so.0.0.9400",
+      "../../assets/libllama-common.so",
+      "../../assets/libllama-common.so.0",
+      "../../assets/libllama-common.so.0.0.9400",
+      "../../assets/libmtmd.so",
+      "../../assets/libmtmd.so.0",
+      "../../assets/libmtmd.so.0.0.9400",
+      "../../assets/libggml.so",
+      "../../assets/libggml.so.0",
+      "../../assets/libggml.so.0.13.0",
+      "../../assets/libggml-base.so",
+      "../../assets/libggml-base.so.0",
+      "../../assets/libggml-base.so.0.13.0",
+      "../../assets/libggml-rpc.so",
+      "../../assets/libggml-cpu-alderlake.so",
+      "../../assets/libggml-cpu-cannonlake.so",
+      "../../assets/libggml-cpu-cascadelake.so",
+      "../../assets/libggml-cpu-cooperlake.so",
+      "../../assets/libggml-cpu-haswell.so",
+      "../../assets/libggml-cpu-icelake.so",
+      "../../assets/libggml-cpu-ivybridge.so",
+      "../../assets/libggml-cpu-piledriver.so",
+      "../../assets/libggml-cpu-sandybridge.so",
+      "../../assets/libggml-cpu-sapphirerapids.so",
+      "../../assets/libggml-cpu-skylakex.so",
+      "../../assets/libggml-cpu-sse42.so",
+      "../../assets/libggml-cpu-x64.so",
+      "../../assets/libggml-cpu-zen4.so"
     ],
     "linux": {
       "deb": {
@@ -76,12 +107,5 @@
       "nsis": null
     }
   },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCNzhGN0Y2OTdGNjExOUUKUldTZUVmYVg5dmQ0ZTVlQmQ2VDJ4S2dlbFNYTWJrYSt1WXd4MnB6RExrb1FBdHFvZmlRZTFHa2EK",
-      "endpoints": [
-        "https://github.com/UnpaidAttention/mnemos/releases/latest/download/latest.json"
-      ]
-    }
-  }
+  "plugins": {}
 }

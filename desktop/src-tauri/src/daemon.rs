@@ -66,9 +66,19 @@ pub async fn start(app: &AppHandle) -> Result<(), String> {
         // daemon's working `./assets` fallback and break the embedder.
         if assets.is_dir() {
             let assets_str = assets.to_string_lossy().to_string();
+            // Prepend the assets dir so the dynamically-linked llama-server
+            // can find its bundled libllama*.so / libggml*.so neighbors.
+            // Mirror the packaged install's /usr/bin/mnemos-llama-server wrapper.
+            let ld_path = match std::env::var("LD_LIBRARY_PATH") {
+                Ok(existing) if !existing.is_empty() => {
+                    format!("{assets_str}:{existing}")
+                }
+                _ => assets_str.clone(),
+            };
             cmd = cmd
                 .env("MNEMOS_BUNDLED_BIN_DIR", &assets_str)
-                .env("MNEMOS_BUNDLED_MODEL_DIR", &assets_str);
+                .env("MNEMOS_BUNDLED_MODEL_DIR", &assets_str)
+                .env("LD_LIBRARY_PATH", ld_path);
         }
     }
     let out = cmd

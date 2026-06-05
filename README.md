@@ -12,9 +12,25 @@ plans.
 
 ### Linux (zero setup)
 
-```
-sudo dpkg -i mnemos-daemon_X.Y.Z_amd64.deb       # Debian/Ubuntu
-sudo rpm -i mnemos-daemon-X.Y.Z-1.x86_64.rpm     # Fedora/RHEL
+> **NOTE: This repository is private. Release assets are not
+> anonymously downloadable. The `gh` CLI (authenticated) is required
+> for the install commands below. Public / anonymous install requires
+> making the repository (or a releases mirror) public — owner's
+> decision.**
+
+Download the release package with the `gh` CLI, then install the
+local file:
+
+```bash
+# Replace X.Y.Z with the version you want (e.g. 0.8.0).
+gh release download vX.Y.Z --repo UnpaidAttention/mnemos \
+    -p 'mnemos-daemon_*_amd64.deb'          # Debian/Ubuntu
+sudo dpkg -i mnemos-daemon_X.Y.Z_amd64.deb
+
+# Fedora/RHEL
+gh release download vX.Y.Z --repo UnpaidAttention/mnemos \
+    -p 'mnemos-daemon-*.x86_64.rpm'
+sudo rpm -i mnemos-daemon-X.Y.Z-1.x86_64.rpm
 ```
 
 The daemon package includes the bundled embedder (22 MB MiniLM-L6 GGUF
@@ -30,19 +46,24 @@ required.
 
 ### Desktop GUI (Linux)
 
-```
-sudo dpkg -i Mnemos_X.Y.Z_amd64.deb              # Debian/Ubuntu
-sudo rpm -i Mnemos-X.Y.Z-1.x86_64.rpm            # Fedora/RHEL
-# Or AppImage without install:
-chmod +x Mnemos_X.Y.Z_amd64.AppImage
-./Mnemos_X.Y.Z_amd64.AppImage
+```bash
+# Debian/Ubuntu
+gh release download vX.Y.Z --repo UnpaidAttention/mnemos \
+    -p 'Mnemos_*_amd64.deb'
+sudo dpkg -i Mnemos_X.Y.Z_amd64.deb
+
+# Fedora/RHEL
+gh release download vX.Y.Z --repo UnpaidAttention/mnemos \
+    -p 'Mnemos-*.x86_64.rpm'
+sudo rpm -i Mnemos-X.Y.Z-1.x86_64.rpm
 ```
 
-> Note: the desktop GUI's bundle does NOT yet include the local
-> embedder. For semantic recall in the desktop app, install the
-> `mnemos-daemon` package above (which includes the bundled
-> embedder), or set `MNEMOS_EMBEDDER=ollama` / `MNEMOS_EMBEDDER=openai`
-> via Settings.
+> AppImage is not currently produced (AppImage bundling of the
+> bundled embedder `.so` libs is deferred). Use `.deb` or `.rpm`.
+
+> The desktop `.deb`/`.rpm` now includes the bundled embedder
+> libraries. The daemon manages llama-server as a child process; no
+> separate daemon package install is required for the desktop bundle.
 
 ### Switching embedders or LLM
 
@@ -72,13 +93,24 @@ See [BUILD.md](BUILD.md).
 
 ### Auto-update
 
-Re-enabled in v0.8.0. The desktop app polls
-`https://github.com/UnpaidAttention/mnemos/releases/latest/download/latest.json`
-on launch and prompts to install via the `UpdateBanner` UI when a new
-version is available. Update manifests are ed25519-signed.
+**DEFERRED.** The Tauri in-app updater is disabled as of v0.8.0.
+Shipping the updater requires an AppImage with the bundled embedder
+`.so` libs staged correctly; that work is deferred to a future release.
+The `UpdateBanner` UI component and `mnemos_release_manifest` tooling
+remain in the tree for when AppImage bundling is re-enabled.
 
-The daemon (CLI + bundled embedder) updates via your package manager
-once a repository is configured (see [PACKAGING.md](PACKAGING.md) §
+Update via your package manager:
+
+```bash
+# Debian/Ubuntu — after downloading the new .deb
+sudo dpkg -i Mnemos_X.Y.Z_amd64.deb
+
+# Fedora/RHEL
+sudo rpm -U Mnemos-X.Y.Z-1.x86_64.rpm
+```
+
+The daemon (CLI + bundled embedder) similarly updates via package
+manager once a repository is configured (see [PACKAGING.md](PACKAGING.md) §
 "Linux package repositories").
 
 ## Sync, settings, doctor, adapters (v0.6.0)

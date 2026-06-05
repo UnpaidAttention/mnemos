@@ -176,22 +176,43 @@ jobs:
       - name: Build release-manifest tool
         run: cargo build --release --bin mnemos-release-manifest
 
-      - name: Generate latest.json
+      # CI guard: if the updater is re-enabled in tauri.conf.json (i.e. a
+      # "plugins.updater" block with endpoints is present) but no
+      # latest.json is produced, fail loudly so docs and reality cannot
+      # silently diverge again.  When the updater is disabled (current
+      # state) this step is a no-op and the release proceeds without a
+      # latest.json.
+      - name: Updater consistency guard + generate latest.json
         shell: bash
         run: |
           set -euo pipefail
-          # github.ref_name is set when tag-triggered; workflow_dispatch
-          # uses inputs.tag.
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${TAG#v}"
-          # `|| true`: with no AppImage (updater deferred) `ls` exits non-zero,
-          # which trips pipefail+errexit before the skip branch below.
+
+          # Detect whether the updater plugin is active in tauri.conf.json.
+          # "Active" = the plugins.updater block exists AND has a non-empty
+          # endpoints array.  The jq expression returns "true" or "false".
+          UPDATER_ENABLED=$(jq '
+            if (.plugins.updater // null) != null
+               and ((.plugins.updater.endpoints // []) | length) > 0
+            then "true" else "false" end
+          ' desktop/src-tauri/tauri.conf.json)
+
           LIN_FILE=$(ls release/*.AppImage.tar.gz 2>/dev/null | head -1 || true)
+
+          if [[ "$UPDATER_ENABLED" == "true" && -z "$LIN_FILE" ]]; then
+            echo "::error::UPDATER CONSISTENCY FAILURE: plugins.updater is enabled in" \
+              "tauri.conf.json but no *.AppImage.tar.gz was produced by this release." \
+              "Either re-enable AppImage bundling (and .so staging) or disable the" \
+              "updater plugin. Docs must match the actual release artifacts."
+            exit 1
+          fi
+
           if [[ -z "$LIN_FILE" ]]; then
-            echo "no AppImage.tar.gz found; skipping latest.json generation"
-            echo "(set TAURI_SIGNING_PRIVATE_KEY in secrets to enable signed updater artifacts)"
+            echo "Updater is disabled (no AppImage.tar.gz produced); skipping latest.json."
             exit 0
           fi
+
           SIG_FILE="${LIN_FILE}.sig"
           if [[ -f "$SIG_FILE" ]]; then
             LIN_SIG=$(cat "$SIG_FILE")
