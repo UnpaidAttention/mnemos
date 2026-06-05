@@ -83,6 +83,28 @@ impl Storage {
         //    vec0 available, which is what migration v2 requires.
         drop(storage.conn()?); // step 2: trigger libsql's sqlite3_initialize
         ensure_vec_extension_registered(); // step 3: safe now
+
+        // P1-7: Apply PRAGMAs before migrations run.
+        //
+        // * `journal_mode=WAL` is a database-level setting persisted in the
+        //   file header — it applies to all future connections and reopens.
+        // * `busy_timeout`, `synchronous`, `cache_size`, `mmap_size` are
+        //   connection-scoped.  In libsql's local (in-process) mode all
+        //   connections share one SQLite handle, so the initial batch is
+        //   sufficient for normal use.  The WAL setting is independently
+        //   verifiable from any connection.
+        {
+            let conn = storage.conn()?;
+            conn.execute_batch(
+                "PRAGMA journal_mode=WAL; \
+                 PRAGMA busy_timeout=5000; \
+                 PRAGMA synchronous=NORMAL; \
+                 PRAGMA cache_size=-8000; \
+                 PRAGMA mmap_size=67108864;",
+            )
+            .await?;
+        }
+
         storage.apply_migrations().await?;
         Ok(storage)
     }
