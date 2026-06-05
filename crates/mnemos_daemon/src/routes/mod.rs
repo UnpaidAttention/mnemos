@@ -27,7 +27,7 @@ pub mod ws;
 
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{from_fn_with_state, Next},
     response::Response,
     Router,
@@ -61,7 +61,33 @@ pub fn build_router(state: AppState) -> Router {
     // ws_router does its own query-param auth — do NOT wrap in bearer middleware.
     let ws_router: Router<AppState> = ws::router();
 
-    public.merge(authed).merge(ws_router).with_state(state)
+    // Explicit CORS allowlist instead of a permissive policy. The daemon binds
+    // loopback and serves bearer- and WS-token-authenticated traffic, so the
+    // only legitimate browser origin is the Tauri desktop webview (prod + the
+    // 1420 dev server). Tauri v2's webview origin is platform-dependent:
+    // tauri://localhost (macOS/iOS) and http://tauri.localhost (Linux/Windows).
+    // Non-browser clients (CLI, hooks via reqwest, the MCP stdio bridge) send no
+    // Origin header and are unaffected by CORS.
+    let cors = tower_http::cors::CorsLayer::new()
+        .allow_origin([
+            HeaderValue::from_static("tauri://localhost"),
+            HeaderValue::from_static("http://tauri.localhost"),
+            HeaderValue::from_static("http://localhost:1420"),
+        ])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
+
+    public
+        .merge(authed)
+        .merge(ws_router)
+        .layer(cors)
+        .with_state(state)
 }
 
 async fn bearer_auth(
