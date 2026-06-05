@@ -41,8 +41,18 @@ async fn start(json: bool) -> Result<()> {
         .open(&log)
         .with_context(|| format!("open log {}", log.display()))?;
     let log_err = log_file.try_clone()?;
-    let bin_name = "mnemosd";
-    let bin = which::which(bin_name).unwrap_or_else(|_| PathBuf::from(bin_name));
+    // P0-8: the installed binary is "mnemos-daemon" (systemd unit, .deb/rpm
+    // package, sidecar manifest, and resolve_daemon_bin all use that name).
+    // Fall back to the legacy "mnemosd" name so `cargo install` / dev builds
+    // still work if only the old name is on PATH.
+    let bin = which::which("mnemos-daemon")
+        .or_else(|_| which::which("mnemosd"))
+        .unwrap_or_else(|_| PathBuf::from("mnemos-daemon"));
+    let bin_name = bin
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("mnemos-daemon")
+        .to_string();
     let child = std::process::Command::new(bin)
         .arg("serve")
         .stdin(Stdio::null())

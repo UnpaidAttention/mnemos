@@ -40,6 +40,14 @@ async fn start_session(
     State(state): State<AppState>,
     Json(req): Json<StartSessionReq>,
 ) -> Result<(StatusCode, Json<StartSessionResp>), ApiError> {
+    // P0-6: autonomy.capture is the authoritative capture gate (daemon side).
+    // When capture is disabled the daemon refuses to create sessions so that
+    // no chunks can accumulate, regardless of what any client-side hook does.
+    if !state.config.autonomy.capture {
+        return Err(ApiError::conflict(
+            "capture is disabled (autonomy.capture = false)",
+        ));
+    }
     let id = new_session_id();
     let (conn, _g) = state.vault.storage().write_conn().await?;
     conn.execute(

@@ -26,8 +26,6 @@ use std::io::Read;
 use std::process::ExitCode;
 use std::time::Duration;
 
-const DAEMON_URL: &str = "http://127.0.0.1:7423";
-
 /// Maximum UTF-8 bytes we pass as `additionalContext` to Claude Code.
 /// Keeps the injected context inside a reasonable token budget (~2 000 tokens).
 const WORKING_SET_BYTE_CAP: usize = 8_000;
@@ -188,14 +186,30 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing session_id in hook payload — skipping"))?;
 
-    // ── 2. Idempotency: skip if already captured ──────────────────────────
+    // ── 2. Best-effort capture guard (P0-6 CLI side) ─────────────────────
+    // The daemon is the authoritative enforcement point (it rejects POST
+    // /v1/sessions with 409 when autonomy.capture = false).  This check is
+    // advisory: we skip the network round-trip early so we don't disturb the
+    // daemon, but we never rely on it as the security boundary.
+    // Fail-open: if the config cannot be loaded, proceed and let the daemon
+    // decide.
+    if let Ok(cfg) = mnemos_daemon::config::Config::load_default() {
+        if !cfg.autonomy.capture {
+            eprintln!(
+                "mnemos hook session-end: autonomy.capture = false — skipping capture (daemon is authoritative)"
+            );
+            return Ok(());
+        }
+    }
+
+    // ── 3. Idempotency: skip if already captured ──────────────────────────
     let state_path = idempotency_state_path()?;
     if already_captured(&state_path, session_id) {
         eprintln!("mnemos hook session-end: session {session_id} already captured — skipping");
         return Ok(());
     }
 
-    // ── 3. Ensure daemon is available ─────────────────────────────────────
+    // ── 4. Ensure daemon is available ─────────────────────────────────────
     let up = crate::daemon_ctl::ensure_daemon(Duration::from_secs(5)).await;
     if !up {
         return Err(anyhow::anyhow!(
@@ -205,7 +219,7 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
 
     let token = load_token().ok_or_else(|| anyhow::anyhow!("could not load bearer token"))?;
 
-    // ── 4. Read and parse transcript ──────────────────────────────────────
+    // ── 5. Read and parse transcript ──────────────────────────────────────
     let contents = std::fs::read_to_string(transcript_path)
         .with_context(|| format!("failed to read transcript at {transcript_path}"))?;
 
@@ -216,19 +230,19 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // ── 5. POST /v1/sessions ──────────────────────────────────────────────
+    // ── 6. POST /v1/sessions ──────────────────────────────────────────────
     let daemon_session_id = post_start_session(&token, cwd.as_deref()).await?;
 
-    // ── 6. POST chunks with bounded concurrency (best-effort per chunk) ───
+    // ── 7. POST chunks with bounded concurrency (best-effort per chunk) ───
     post_chunks(&token, &daemon_session_id, &turns).await;
 
-    // ── 7. Record capture now that start succeeded (idempotency boundary) ─
+    // ── 8. Record capture now that start succeeded (idempotency boundary) ─
     // We record here — before /end — so that if /end fails, the next hook
     // fire does NOT create a duplicate daemon session. Missing /end or
     // missing chunks are best-effort and not worth re-capturing.
     record_captured(&state_path, session_id);
 
-    // ── 8. POST /v1/sessions/{id}/end (best-effort, non-fatal) ───────────
+    // ── 9. POST /v1/sessions/{id}/end (best-effort, non-fatal) ───────────
     if let Err(e) = post_end_session(&token, &daemon_session_id).await {
         eprintln!("mnemos hook session-end: /end failed (session {daemon_session_id}): {e:#}");
     }
@@ -308,7 +322,10 @@ async fn post_start_session(token: &str, workspace: Option<&str>) -> anyhow::Res
         body.insert("workspace".into(), serde_json::json!(ws));
     }
     let resp = client
-        .post(format!("{DAEMON_URL}/v1/sessions"))
+        .post(format!(
+            "{}/v1/sessions",
+            crate::daemon_ctl::daemon_base_url()
+        ))
         .bearer_auth(token)
         .json(&serde_json::Value::Object(body))
         .send()
@@ -349,7 +366,10 @@ async fn post_chunks(token: &str, daemon_session_id: &str, turns: &[crate::trans
         eprintln!("mnemos hook session-end: could not build HTTP client for chunks");
         return;
     };
-    let url = format!("{DAEMON_URL}/v1/sessions/{daemon_session_id}/chunks");
+    let url = format!(
+        "{}/v1/sessions/{daemon_session_id}/chunks",
+        crate::daemon_ctl::daemon_base_url()
+    );
 
     let mut skipped = 0usize;
     let safe_turns: Vec<_> = turns
@@ -416,7 +436,10 @@ pub(crate) fn build_chunk_body(turn: &crate::transcript::Turn) -> serde_json::Va
 /// `POST /v1/sessions/{id}/end` — signals the daemon to distil the session.
 async fn post_end_session(token: &str, daemon_session_id: &str) -> anyhow::Result<()> {
     let client = make_client().ok_or_else(|| anyhow::anyhow!("failed to build HTTP client"))?;
-    let url = format!("{DAEMON_URL}/v1/sessions/{daemon_session_id}/end");
+    let url = format!(
+        "{}/v1/sessions/{daemon_session_id}/end",
+        crate::daemon_ctl::daemon_base_url()
+    );
     let resp = client
         .post(&url)
         .bearer_auth(token)
@@ -586,7 +609,7 @@ fn make_client() -> Option<reqwest::Client> {
 /// Fetch the working set from `GET /v1/working` and render it as plain text.
 /// Returns `None` on any network or parse error (fail-open).
 async fn fetch_working_set(token: &str, workspace: Option<&str>) -> Option<String> {
-    let mut url = format!("{DAEMON_URL}/v1/working");
+    let mut url = format!("{}/v1/working", crate::daemon_ctl::daemon_base_url());
     if let Some(ws) = workspace {
         url.push_str(&format!("?workspace={}", urlencoding::encode(ws)));
     }
@@ -734,7 +757,10 @@ fn render_recall_hits(hits: &[&RecallHit]) -> String {
 /// POST `query` to `POST /v1/memories/search` and return the deserialized hits.
 /// Returns `None` on any network or parse error (fail-open).
 async fn fetch_recall(token: &str, query: &str, workspace: Option<&str>) -> Option<Vec<RecallHit>> {
-    let url = format!("{DAEMON_URL}/v1/memories/search");
+    let url = format!(
+        "{}/v1/memories/search",
+        crate::daemon_ctl::daemon_base_url()
+    );
     let client = make_client()?;
     let mut body = serde_json::Map::new();
     body.insert("query".into(), serde_json::json!(query));

@@ -450,6 +450,14 @@ fn expand_tilde(p: &Path) -> Result<PathBuf> {
 pub struct AutonomyConfig {
     /// Whether the session-end hook captures transcripts at all.
     /// Defaults to `true`.
+    ///
+    /// # Authoritative enforcement path
+    ///
+    /// The **daemon** is the authoritative enforcement point: when `capture =
+    /// false`, `POST /v1/sessions` returns HTTP 409 Conflict and no session or
+    /// chunk rows are ever written.  The CLI hook (`mnemos hook session-end`)
+    /// performs a best-effort early exit *before* contacting the daemon, but
+    /// that check is advisory — only the daemon-side gate is guaranteed.
     pub capture: bool,
     /// Raw-chunk retention policy after the pipeline has distilled a session.
     ///

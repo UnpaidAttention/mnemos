@@ -30,6 +30,10 @@ impl ApiError {
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, msg)
     }
+
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, msg)
+    }
 }
 
 impl IntoResponse for ApiError {
