@@ -104,42 +104,37 @@ mod tests {
         );
     }
 
-    /// When MNEMOS_DAEMON_PORT is set, daemon_base_url() must honour it.
+    /// daemon_base_url() honours MNEMOS_DAEMON_PORT when set, and falls back to
+    /// the default port (7423) when absent. Both cases live in ONE test because
+    /// they mutate the process-global env var; splitting them into separate
+    /// `#[test]` fns let cargo's parallel runner interleave the mutations and
+    /// race (the "absent" case would observe the sibling's value). Sequencing
+    /// them in a single test removes the race without a serial-test dependency.
     #[test]
-    fn daemon_base_url_honours_mnemos_daemon_port_env_var() {
-        // Isolate env mutation to avoid polluting parallel tests.
-        // We use a port that is unlikely to be in use so the test is
-        // self-contained (no real socket needed — we only test URL formation).
+    fn daemon_base_url_honours_env_var_and_falls_back() {
         let key = "MNEMOS_DAEMON_PORT";
-        // Save previous value.
         let prev = std::env::var(key).ok();
+        let prev_cfg = std::env::var("MNEMOS_CONFIG_PATH").ok();
+
+        // Case 1: env var set -> honoured (URL formation only; no real socket).
         std::env::set_var(key, "19999");
-        let url = daemon_base_url();
-        // Restore previous value.
-        match prev {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
-        }
         assert_eq!(
-            url, "http://127.0.0.1:19999",
+            daemon_base_url(),
+            "http://127.0.0.1:19999",
             "daemon_base_url() must use the port from MNEMOS_DAEMON_PORT"
         );
-    }
 
-    /// When MNEMOS_DAEMON_PORT is absent, the default port (7423) is used.
-    #[test]
-    fn daemon_base_url_falls_back_to_default_port_when_env_absent() {
-        // Remove the env var for this test (best-effort; may already be absent).
-        let key = "MNEMOS_DAEMON_PORT";
-        let prev = std::env::var(key).ok();
+        // Case 2: env var absent + config pointed at a nonexistent file ->
+        // Config::load_default() yields Config::default() with port 7423.
         std::env::remove_var(key);
-        // Also point config away from any real user config so the test is hermetic.
-        let prev_cfg = std::env::var("MNEMOS_CONFIG_PATH").ok();
         std::env::set_var("MNEMOS_CONFIG_PATH", "/nonexistent/config.toml");
+        assert_eq!(
+            daemon_base_url(),
+            "http://127.0.0.1:7423",
+            "daemon_base_url() must fall back to default port 7423"
+        );
 
-        let url = daemon_base_url();
-
-        // Restore.
+        // Restore prior environment.
         match prev {
             Some(v) => std::env::set_var(key, v),
             None => std::env::remove_var(key),
@@ -148,11 +143,5 @@ mod tests {
             Some(v) => std::env::set_var("MNEMOS_CONFIG_PATH", v),
             None => std::env::remove_var("MNEMOS_CONFIG_PATH"),
         }
-        // When the config file doesn't exist, Config::load_default() returns
-        // Config::default() which has port 7423.
-        assert_eq!(
-            url, "http://127.0.0.1:7423",
-            "daemon_base_url() must fall back to default port 7423"
-        );
     }
 }
