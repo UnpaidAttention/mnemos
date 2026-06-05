@@ -60,6 +60,7 @@ async fn migration_is_idempotent() {
     let _ = Storage::open(&path).await.unwrap();
     let _ = Storage::open(&path).await.unwrap();
     let s = Storage::open(&path).await.unwrap();
-    // Schema version advances with each migration; v9 is now the latest.
-    assert_eq!(s.schema_version().await.unwrap(), 9);
+    // Schema version advances with each migration; v10 is now the latest
+    // (v10 = P1-4 FTS repair migration).
+    assert_eq!(s.schema_version().await.unwrap(), 10);
 }
