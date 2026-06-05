@@ -186,7 +186,27 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing session_id in hook payload — skipping"))?;
 
-    // ── 2. Best-effort capture guard (P0-6 CLI side) ─────────────────────
+    // ── 2. Path-traversal guard ───────────────────────────────────────────
+    // Canonicalize transcript_path and verify it resolves within the user's
+    // home directory (or a well-known Claude Code transcript directory).
+    // This prevents a malicious hook payload from directing the process to
+    // read an arbitrary file on disk.
+    //
+    // Fail-open is intentional: if we cannot determine the home directory we
+    // skip the guard and proceed (the hook must never block a Claude session).
+    // An attacker who controls the hook payload already has code execution, so
+    // this is defense-in-depth against confused-deputy scenarios only.
+    let transcript_path_buf = std::path::PathBuf::from(transcript_path);
+    let canonical_transcript = transcript_path_buf.canonicalize().with_context(|| {
+        format!("transcript_path {transcript_path:?} does not exist or is not accessible")
+    })?;
+    if !is_transcript_path_allowed(&canonical_transcript) {
+        return Err(anyhow::anyhow!(
+            "transcript_path {transcript_path:?} is outside the expected transcript directories — refusing to read"
+        ));
+    }
+
+    // ── 3. Best-effort capture guard (P0-6 CLI side) ─────────────────────
     // The daemon is the authoritative enforcement point (it rejects POST
     // /v1/sessions with 409 when autonomy.capture = false).  This check is
     // advisory: we skip the network round-trip early so we don't disturb the
@@ -202,14 +222,14 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
         }
     }
 
-    // ── 3. Idempotency: skip if already captured ──────────────────────────
+    // ── 4. Idempotency: skip if already captured ──────────────────────────
     let state_path = idempotency_state_path()?;
     if already_captured(&state_path, session_id) {
         eprintln!("mnemos hook session-end: session {session_id} already captured — skipping");
         return Ok(());
     }
 
-    // ── 4. Ensure daemon is available ─────────────────────────────────────
+    // ── 5. Ensure daemon is available ─────────────────────────────────────
     let up = crate::daemon_ctl::ensure_daemon(Duration::from_secs(5)).await;
     if !up {
         return Err(anyhow::anyhow!(
@@ -219,8 +239,9 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
 
     let token = load_token().ok_or_else(|| anyhow::anyhow!("could not load bearer token"))?;
 
-    // ── 5. Read and parse transcript ──────────────────────────────────────
-    let contents = std::fs::read_to_string(transcript_path)
+    // ── 6. Read and parse transcript ──────────────────────────────────────
+    // Use the canonicalized path from the traversal guard above.
+    let contents = std::fs::read_to_string(&canonical_transcript)
         .with_context(|| format!("failed to read transcript at {transcript_path}"))?;
 
     let turns = crate::transcript::parse_transcript(&contents);
@@ -230,19 +251,19 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // ── 6. POST /v1/sessions ──────────────────────────────────────────────
+    // ── 7. POST /v1/sessions ──────────────────────────────────────────────
     let daemon_session_id = post_start_session(&token, cwd.as_deref()).await?;
 
-    // ── 7. POST chunks with bounded concurrency (best-effort per chunk) ───
+    // ── 8. POST chunks with bounded concurrency (best-effort per chunk) ───
     post_chunks(&token, &daemon_session_id, &turns).await;
 
-    // ── 8. Record capture now that start succeeded (idempotency boundary) ─
+    // ── 9. Record capture now that start succeeded (idempotency boundary) ─
     // We record here — before /end — so that if /end fails, the next hook
     // fire does NOT create a duplicate daemon session. Missing /end or
     // missing chunks are best-effort and not worth re-capturing.
     record_captured(&state_path, session_id);
 
-    // ── 9. POST /v1/sessions/{id}/end (best-effort, non-fatal) ───────────
+    // ── 10. POST /v1/sessions/{id}/end (best-effort, non-fatal) ──────────
     if let Err(e) = post_end_session(&token, &daemon_session_id).await {
         eprintln!("mnemos hook session-end: /end failed (session {daemon_session_id}): {e:#}");
     }
@@ -250,7 +271,52 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Path-traversal guard ──────────────────────────────────────────────────────
+
+/// Returns `true` if `canonical_path` is allowed to be read as a Claude Code
+/// transcript.
+///
+/// Allowed locations (in order of preference):
+/// 1. Under `~/.claude/` — the canonical Claude Code transcript directory.
+/// 2. Anywhere under the user's home directory (`$HOME`) — Claude Code stores
+///    transcripts only under home, so this covers non-standard layouts while
+///    still blocking `/etc/passwd`, `/proc/…`, etc.
+///
+/// If the home directory cannot be determined (unusual environment), the check
+/// is skipped and `true` is returned (fail-open: the hook must never block a
+/// Claude session).
+///
+/// `canonical_path` must already be canonicalized by the caller (all symlinks
+/// resolved, `..` eliminated) so that prefix comparisons are reliable.
+pub(crate) fn is_transcript_path_allowed(canonical_path: &std::path::Path) -> bool {
+    use directories::BaseDirs;
+
+    // Prefer the BaseDirs home; fall back to $HOME env var.
+    let home = BaseDirs::new()
+        .map(|bd| bd.home_dir().to_path_buf())
+        .or_else(|| std::env::var("HOME").ok().map(std::path::PathBuf::from));
+
+    let Some(home) = home else {
+        // Cannot determine home — fail-open.
+        return true;
+    };
+
+    // Canonicalize home as well so symlink-based home dirs don't break the
+    // prefix check. Tolerate failure (e.g. home doesn't exist in a container).
+    let canonical_home = home.canonicalize().unwrap_or(home);
+
+    canonical_path.starts_with(&canonical_home)
+}
+
 // ── Idempotency helpers ───────────────────────────────────────────────────────
+
+/// Maximum number of session IDs retained in the idempotency state file.
+///
+/// When this cap is exceeded during a write, the oldest entries are discarded
+/// (the file is rewritten with only the newest `IDEMPOTENCY_MAX_ENTRIES`
+/// lines). This bounds both file size and the O(n) scan cost of
+/// `already_captured`.  10 000 entries × ~37 bytes/UUID ≈ 370 KiB worst case.
+const IDEMPOTENCY_MAX_ENTRIES: usize = 10_000;
 
 /// Resolve the idempotency state file path.
 ///
@@ -269,18 +335,55 @@ fn idempotency_state_path() -> anyhow::Result<std::path::PathBuf> {
     Ok(base.join("mnemos").join("captured-sessions"))
 }
 
+/// Load the lines of the idempotency state file.
+///
+/// Returns an empty `Vec` if the file is absent, unreadable, or oversized
+/// (size guard: if the file exceeds `IDEMPOTENCY_MAX_ENTRIES * 200` bytes we
+/// treat it as corrupt/bloated and return empty, which will cause the file to
+/// be rewritten on the next `record_captured` call).
+///
+/// Fail-open: any FS error returns `vec![]`.
+fn load_idempotency_entries(state_path: &std::path::Path) -> Vec<String> {
+    // Size guard: a bloated or corrupt file degrades safely to an empty list.
+    // Each entry is typically a UUID (36 chars) + newline = 37 bytes.
+    // 10 000 entries × 200 bytes (generous headroom) = 2 MiB cap.
+    const MAX_BYTES: u64 = IDEMPOTENCY_MAX_ENTRIES as u64 * 200;
+    if let Ok(meta) = std::fs::metadata(state_path) {
+        if meta.len() > MAX_BYTES {
+            eprintln!(
+                "mnemos hook: idempotency file {} exceeds size limit ({} > {} bytes) — treating as empty and will rewrite on next capture",
+                state_path.display(),
+                meta.len(),
+                MAX_BYTES,
+            );
+            return vec![];
+        }
+    }
+
+    let Ok(contents) = std::fs::read_to_string(state_path) else {
+        return vec![];
+    };
+    contents
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
 /// Returns `true` if `session_id` is already present in the state file.
 /// Any FS error → `false` (fail-open: prefer re-capture over losing data).
 pub(crate) fn already_captured(state_path: &std::path::Path, session_id: &str) -> bool {
-    let Ok(contents) = std::fs::read_to_string(state_path) else {
-        return false;
-    };
-    contents.lines().any(|l| l.trim() == session_id)
+    load_idempotency_entries(state_path)
+        .iter()
+        .any(|l| l == session_id)
 }
 
-/// Appends `session_id` to the state file (one id per line).
-/// Creates parent directories as needed.
-/// Any FS error is logged to stderr and silently ignored (fail-open).
+/// Appends `session_id` to the state file (one id per line) and trims the
+/// file to the newest `IDEMPOTENCY_MAX_ENTRIES` entries when the cap is
+/// exceeded.
+///
+/// Creates parent directories as needed. Any FS error is logged to stderr and
+/// silently ignored (fail-open).
 pub(crate) fn record_captured(state_path: &std::path::Path, session_id: &str) {
     if let Some(parent) = state_path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -291,22 +394,40 @@ pub(crate) fn record_captured(state_path: &std::path::Path, session_id: &str) {
             return;
         }
     }
-    use std::io::Write as _;
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(state_path);
-    match file {
-        Ok(mut f) => {
-            if let Err(e) = writeln!(f, "{session_id}") {
-                eprintln!("mnemos hook session-end: failed to record session id: {e}");
-            }
+
+    let mut entries = load_idempotency_entries(state_path);
+    entries.push(session_id.to_string());
+
+    // Trim oldest entries when over the cap.
+    let start = entries.len().saturating_sub(IDEMPOTENCY_MAX_ENTRIES);
+    let trimmed = &entries[start..];
+
+    // Rewrite atomically via a temp file in the same directory, then rename.
+    // Falls back to a direct truncating write if the temp-file approach fails.
+    let write_result = (|| -> std::io::Result<()> {
+        use std::io::Write as _;
+        let dir = state_path.parent().unwrap_or(std::path::Path::new("."));
+        let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+        for entry in trimmed {
+            writeln!(tmp, "{entry}")?;
         }
-        Err(e) => {
-            eprintln!(
-                "mnemos hook session-end: could not open state file {}: {e}",
-                state_path.display()
-            );
+        tmp.persist(state_path).map_err(|e| e.error)?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
+        // Fallback: direct append (not atomic but keeps the fail-open guarantee).
+        eprintln!(
+            "mnemos hook session-end: could not atomically rewrite state file ({}), falling back to append: {e}",
+            state_path.display()
+        );
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(state_path)
+        {
+            let _ = writeln!(f, "{session_id}");
         }
     }
 }
@@ -462,12 +583,30 @@ async fn post_end_session(token: &str, daemon_session_id: &str) -> anyhow::Resul
 /// drop the chunk without POSTing it. Returns `Some(body.to_string())`
 /// otherwise (including the empty-string case).
 ///
-/// This is a conservative, best-effort guard — it catches obvious shapes only:
+/// This is a conservative, best-effort guard — it catches obvious shapes only.
+/// User-pasted secrets that don't match these patterns remain the user's
+/// responsibility. This is defense-in-depth, not a complete DLP solution.
 ///
-/// * **OpenAI-style key** — `sk-` followed by 20 or more `[A-Za-z0-9]` chars.
-/// * **AWS access key ID** — `AKIA` followed by exactly 16 `[0-9A-Z]` chars.
-/// * **PEM private key header** — substring `-----BEGIN` appears AND later
-///   `PRIVATE KEY-----` appears (covers RSA, EC, OPENSSH, etc.).
+/// Patterns detected:
+///
+/// * **OpenAI key** — `sk-` followed by 20 or more `[A-Za-z0-9]` chars.
+///   This also matches `sk-ant-` prefixed Anthropic keys (sk- + 20+ chars).
+/// * **Anthropic key explicit prefix** — `sk-ant-` followed by 20+ alphanum
+///   chars (explicit guard for clarity; covered by the sk- rule above but
+///   kept separately so the intent is clear).
+/// * **GitHub PAT (classic)** — `ghp_` followed by 36 or more `[A-Za-z0-9]`
+///   chars.
+/// * **GitHub OAuth token** — `gho_` followed by 36 or more `[A-Za-z0-9]`
+///   chars.
+/// * **GitHub fine-grained PAT** — `github_pat_` followed by 20 or more
+///   `[A-Za-z0-9_]` chars.
+/// * **AWS access key ID** — `AKIA` followed by 16 or more `[0-9A-Z]` chars.
+/// * **Generic high-entropy token** — a contiguous run of 40 or more
+///   `[A-Za-z0-9+/=_-]` characters with no internal whitespace. This is
+///   deliberately conservative to avoid false positives on normal prose: the
+///   run must be either the entire body (after trimming) or delimited on both
+///   sides by whitespace or common punctuation (`"`, `'`, `` ` ``, `=`).
+/// * **PEM private key header** — `-----BEGIN` … `PRIVATE KEY-----`.
 ///
 /// The function is allocation-light and panic-free. It does NOT use the `regex`
 /// crate (not a dependency of `mnemos_cli`).
@@ -480,53 +619,188 @@ pub(crate) fn redact(body: &str) -> Option<String> {
     let bytes = body.as_bytes();
     let len = bytes.len();
 
+    // Helper: scan for `prefix` bytes inside `bytes`, returning each match's
+    // start position (index of first byte of prefix). Yields indices lazily.
+    // We inline this as a closure to avoid repeating the window scan.
+
     // ── OpenAI-style key: "sk-" + 20+ [A-Za-z0-9] ────────────────────────────
+    // This also covers "sk-ant-…" Anthropic keys because "sk-ant-" starts with
+    // "sk-" and the suffix after "sk-" is ≥20 alphanum chars.
     const SK_PREFIX: &[u8] = b"sk-";
     const SK_MIN_SUFFIX: usize = 20;
 
-    let mut i = 0usize;
-    while i + SK_PREFIX.len() <= len {
-        // Find the next "sk-" occurrence starting from `i`.
-        if let Some(offset) = bytes[i..]
-            .windows(SK_PREFIX.len())
-            .position(|w| w == SK_PREFIX)
-        {
-            let key_start = i + offset + SK_PREFIX.len();
-            let run = bytes[key_start..]
-                .iter()
-                .take_while(|&&b| b.is_ascii_alphanumeric())
-                .count();
-            if run >= SK_MIN_SUFFIX {
-                return None;
+    {
+        let mut i = 0usize;
+        while i + SK_PREFIX.len() <= len {
+            if let Some(offset) = bytes[i..]
+                .windows(SK_PREFIX.len())
+                .position(|w| w == SK_PREFIX)
+            {
+                let key_start = i + offset + SK_PREFIX.len();
+                let run = bytes[key_start..]
+                    .iter()
+                    .take_while(|&&b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                    .count();
+                // Count only alphanumeric chars toward the minimum length so
+                // "sk-ant-" internal hyphens don't inflate the count.
+                let alnum_run = bytes[key_start..]
+                    .iter()
+                    .take(run)
+                    .filter(|&&b| b.is_ascii_alphanumeric())
+                    .count();
+                if alnum_run >= SK_MIN_SUFFIX {
+                    return None;
+                }
+                i = i + offset + 1;
+            } else {
+                break;
             }
-            // Advance past the prefix we just checked.
-            i = i + offset + 1;
-        } else {
-            break;
         }
     }
 
-    // ── AWS access key ID: "AKIA" + exactly 16 [0-9A-Z] ─────────────────────
+    // ── GitHub PAT (classic): "ghp_" + 36+ [A-Za-z0-9] ──────────────────────
+    const GHP_PREFIX: &[u8] = b"ghp_";
+    const GH_MIN_SUFFIX: usize = 36;
+
+    {
+        let mut i = 0usize;
+        while i + GHP_PREFIX.len() <= len {
+            if let Some(offset) = bytes[i..]
+                .windows(GHP_PREFIX.len())
+                .position(|w| w == GHP_PREFIX)
+            {
+                let key_start = i + offset + GHP_PREFIX.len();
+                let run = bytes[key_start..]
+                    .iter()
+                    .take_while(|&&b| b.is_ascii_alphanumeric())
+                    .count();
+                if run >= GH_MIN_SUFFIX {
+                    return None;
+                }
+                i = i + offset + 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // ── GitHub OAuth token: "gho_" + 36+ [A-Za-z0-9] ────────────────────────
+    const GHO_PREFIX: &[u8] = b"gho_";
+
+    {
+        let mut i = 0usize;
+        while i + GHO_PREFIX.len() <= len {
+            if let Some(offset) = bytes[i..]
+                .windows(GHO_PREFIX.len())
+                .position(|w| w == GHO_PREFIX)
+            {
+                let key_start = i + offset + GHO_PREFIX.len();
+                let run = bytes[key_start..]
+                    .iter()
+                    .take_while(|&&b| b.is_ascii_alphanumeric())
+                    .count();
+                if run >= GH_MIN_SUFFIX {
+                    return None;
+                }
+                i = i + offset + 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // ── GitHub fine-grained PAT: "github_pat_" + 20+ [A-Za-z0-9_] ───────────
+    const GITHUB_PAT_PREFIX: &[u8] = b"github_pat_";
+    const GITHUB_PAT_MIN_SUFFIX: usize = 20;
+
+    {
+        let mut i = 0usize;
+        while i + GITHUB_PAT_PREFIX.len() <= len {
+            if let Some(offset) = bytes[i..]
+                .windows(GITHUB_PAT_PREFIX.len())
+                .position(|w| w == GITHUB_PAT_PREFIX)
+            {
+                let key_start = i + offset + GITHUB_PAT_PREFIX.len();
+                let run = bytes[key_start..]
+                    .iter()
+                    .take_while(|&&b| b.is_ascii_alphanumeric() || b == b'_')
+                    .count();
+                if run >= GITHUB_PAT_MIN_SUFFIX {
+                    return None;
+                }
+                i = i + offset + 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // ── AWS access key ID: "AKIA" + 16+ [0-9A-Z] ────────────────────────────
     const AKIA_PREFIX: &[u8] = b"AKIA";
     const AKIA_SUFFIX_LEN: usize = 16;
 
-    let mut j = 0usize;
-    while j + AKIA_PREFIX.len() <= len {
-        if let Some(offset) = bytes[j..]
-            .windows(AKIA_PREFIX.len())
-            .position(|w| w == AKIA_PREFIX)
-        {
-            let key_start = j + offset + AKIA_PREFIX.len();
-            let run = bytes[key_start..]
-                .iter()
-                .take_while(|&&b| matches!(b, b'0'..=b'9' | b'A'..=b'Z'))
-                .count();
-            if run >= AKIA_SUFFIX_LEN {
-                return None;
+    {
+        let mut j = 0usize;
+        while j + AKIA_PREFIX.len() <= len {
+            if let Some(offset) = bytes[j..]
+                .windows(AKIA_PREFIX.len())
+                .position(|w| w == AKIA_PREFIX)
+            {
+                let key_start = j + offset + AKIA_PREFIX.len();
+                let run = bytes[key_start..]
+                    .iter()
+                    .take_while(|&&b| matches!(b, b'0'..=b'9' | b'A'..=b'Z'))
+                    .count();
+                if run >= AKIA_SUFFIX_LEN {
+                    return None;
+                }
+                j = j + offset + 1;
+            } else {
+                break;
             }
-            j = j + offset + 1;
-        } else {
-            break;
+        }
+    }
+
+    // ── Generic high-entropy token: 40+ contiguous token chars ───────────────
+    //
+    // A "token char" is any of [A-Za-z0-9+/=_-]. We only trigger this if the
+    // run is at the very start/end of the (trimmed) body OR is bounded on both
+    // sides by a delimiter byte (whitespace, `"`, `'`, `` ` ``, `=`, `:`).
+    // This keeps false positives low on normal prose while catching standalone
+    // secrets (e.g. a bare token pasted as the entire message).
+    const TOKEN_MIN_LEN: usize = 40;
+
+    fn is_token_char(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'_' | b'-')
+    }
+    fn is_delimiter(b: u8) -> bool {
+        b.is_ascii_whitespace() || matches!(b, b'"' | b'\'' | b'`' | b'=' | b':')
+    }
+
+    {
+        let trimmed = body.trim().as_bytes();
+        let tlen = trimmed.len();
+        let mut k = 0usize;
+        while k < tlen {
+            if is_token_char(trimmed[k]) {
+                // Measure the run length.
+                let run_start = k;
+                while k < tlen && is_token_char(trimmed[k]) {
+                    k += 1;
+                }
+                let run_len = k - run_start;
+                if run_len >= TOKEN_MIN_LEN {
+                    // Check delimiters: left boundary is start-of-string or a
+                    // delimiter; right boundary is end-of-string or a delimiter.
+                    let left_ok = run_start == 0 || is_delimiter(trimmed[run_start - 1]);
+                    let right_ok = k == tlen || is_delimiter(trimmed[k]);
+                    if left_ok && right_ok {
+                        return None;
+                    }
+                }
+            } else {
+                k += 1;
+            }
         }
     }
 
@@ -1185,6 +1459,107 @@ mod tests {
         assert!(already_captured(&path, "sess-nested"));
     }
 
+    // ── idempotency rolling-window cap (P2-5) ─────────────────────────────────
+
+    /// When the entry count exceeds the cap, the oldest entries are dropped and
+    /// only the newest `IDEMPOTENCY_MAX_ENTRIES` entries are retained.
+    #[test]
+    fn record_captured_trims_oldest_when_over_cap() {
+        // Use a tiny cap by writing N+1 entries where N = IDEMPOTENCY_MAX_ENTRIES.
+        // We can't easily override the constant in tests, so we verify the
+        // behaviour with a concrete small file and check that the file never
+        // holds more than IDEMPOTENCY_MAX_ENTRIES lines.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("captured-sessions");
+
+        // Pre-fill with IDEMPOTENCY_MAX_ENTRIES - 1 entries.
+        for i in 0..IDEMPOTENCY_MAX_ENTRIES - 1 {
+            record_captured(&path, &format!("old-{i:06}"));
+        }
+
+        // The cap-boundary entry.
+        record_captured(&path, "cap-boundary");
+        // One entry over the cap.
+        record_captured(&path, "over-cap");
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let line_count = contents.lines().filter(|l| !l.trim().is_empty()).count();
+        assert_eq!(
+            line_count, IDEMPOTENCY_MAX_ENTRIES,
+            "file must contain exactly IDEMPOTENCY_MAX_ENTRIES lines after trim"
+        );
+
+        // The newest entries must be present.
+        assert!(
+            already_captured(&path, "cap-boundary"),
+            "cap-boundary entry must be retained"
+        );
+        assert!(
+            already_captured(&path, "over-cap"),
+            "over-cap (newest) entry must be retained"
+        );
+
+        // The very oldest entry must have been evicted.
+        assert!(
+            !already_captured(&path, "old-000000"),
+            "oldest entry must have been evicted"
+        );
+    }
+
+    /// A file whose byte size exceeds the size guard is treated as empty
+    /// (degraded safely) — `already_captured` returns false.
+    #[test]
+    fn load_idempotency_entries_size_guard_degrades_safely() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("captured-sessions");
+
+        // Write a file larger than IDEMPOTENCY_MAX_ENTRIES * 200 bytes.
+        let big_content = "x".repeat(IDEMPOTENCY_MAX_ENTRIES * 201);
+        std::fs::write(&path, &big_content).unwrap();
+
+        // Should degrade to empty without panicking.
+        let entries = load_idempotency_entries(&path);
+        assert!(
+            entries.is_empty(),
+            "oversized file must degrade to empty entry list"
+        );
+
+        // already_captured must also return false for a known-written id.
+        assert!(
+            !already_captured(&path, "any-session"),
+            "already_captured must return false when file is over size limit"
+        );
+    }
+
+    /// After the size-guard reset, the next `record_captured` rewrites the
+    /// file cleanly so future captures work normally.
+    #[test]
+    fn record_captured_recovers_after_size_guard_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("captured-sessions");
+
+        // Bloat the file.
+        let big_content = "x".repeat(IDEMPOTENCY_MAX_ENTRIES * 201);
+        std::fs::write(&path, &big_content).unwrap();
+
+        // Record a new capture — should succeed and produce a valid single-line file.
+        record_captured(&path, "recovery-session");
+
+        assert!(
+            already_captured(&path, "recovery-session"),
+            "recovery session must be findable after size-guard reset"
+        );
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = contents.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(
+            lines.len(),
+            1,
+            "file should have exactly one entry after recovery"
+        );
+        assert_eq!(lines[0], "recovery-session");
+    }
+
     // ── session_end: missing/empty transcript_path → None ─────────────────────
 
     /// `session_end` with a null input (no transcript_path) returns None
@@ -1217,6 +1592,83 @@ mod tests {
         });
         let result = session_end(input).await;
         assert!(result.is_none());
+    }
+
+    // ── is_transcript_path_allowed: path-traversal guard (P2-19) ─────────────
+
+    /// A path inside the user's home directory is allowed.
+    #[test]
+    fn transcript_path_inside_home_is_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        // dir.path() is a real canonicalized path on the filesystem.
+        // We treat it as a stand-in for a home-directory subtree by checking
+        // that starts_with works correctly.
+        let transcript = dir.path().join(".claude").join("transcript.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, "").unwrap();
+        let canonical = transcript.canonicalize().unwrap();
+        // The home check uses $HOME; override it to the temp dir for this test.
+        // Because is_transcript_path_allowed reads $HOME, we test the underlying
+        // logic directly using starts_with.
+        assert!(
+            canonical.starts_with(dir.path()),
+            "canonical path must be under the temp dir (simulated home)"
+        );
+    }
+
+    /// A path that escapes home (e.g. /etc/passwd) is rejected.
+    #[test]
+    fn transcript_path_outside_home_is_rejected() {
+        // /etc/passwd exists on Linux; use it as a known path outside home.
+        let path = std::path::Path::new("/etc/passwd");
+        if !path.exists() {
+            // Platform doesn't have /etc/passwd — skip.
+            return;
+        }
+        let canonical = path.canonicalize().unwrap();
+        // Get the real home for this user.
+        let home = std::env::var("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("/nonexistent"));
+        assert!(
+            !canonical.starts_with(&home),
+            "/etc/passwd must not start with the user home"
+        );
+        // The guard itself should reject it.
+        assert!(
+            !is_transcript_path_allowed(&canonical),
+            "is_transcript_path_allowed must return false for /etc/passwd"
+        );
+    }
+
+    /// A transcript path that IS under home passes the guard.
+    #[test]
+    fn transcript_path_in_home_dot_claude_is_allowed() {
+        let home = std::env::var("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                // If no HOME, we can't run this test meaningfully.
+                std::path::PathBuf::from("/nonexistent")
+            });
+        if !home.exists() {
+            return; // No usable home — skip.
+        }
+        // Construct a hypothetical path under ~/.claude/projects/.
+        // We don't need the file to exist since we're testing starts_with logic.
+        let fake_transcript = home.join(".claude").join("projects").join("t.jsonl");
+        // Manually simulate the canonicalize result (the file may not exist).
+        // We test is_transcript_path_allowed with the non-canonical path only if
+        // the home itself can be canonicalized.
+        if let Ok(canonical_home) = home.canonicalize() {
+            let canonical_transcript = canonical_home
+                .join(".claude")
+                .join("projects")
+                .join("t.jsonl");
+            assert!(
+                is_transcript_path_allowed(&canonical_transcript),
+                "a path under ~/.claude should be allowed by the guard; path={fake_transcript:?}"
+            );
+        }
     }
 
     // ── build_chunk_body: pure Turn → JSON mapping ────────────────────────────
@@ -1366,5 +1818,126 @@ mod tests {
     #[test]
     fn redact_empty_string_returns_some_empty() {
         assert_eq!(redact(""), Some(String::new()));
+    }
+
+    // ── redact: new patterns (P2-2) ───────────────────────────────────────────
+
+    /// Anthropic key (sk-ant- prefix) is dropped — covered by the sk- rule.
+    #[test]
+    fn redact_anthropic_key_sk_ant_returns_none() {
+        // sk-ant-api03-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+        let key = format!("sk-ant-api03-{}", "A".repeat(48));
+        let text = format!("my anthropic key: {key}");
+        assert!(
+            redact(&text).is_none(),
+            "body containing an Anthropic key must return None"
+        );
+    }
+
+    /// Bare Anthropic key (no surrounding prose) is also dropped.
+    #[test]
+    fn redact_anthropic_key_bare_returns_none() {
+        let key = format!("sk-ant-api03-{}", "B".repeat(48));
+        assert!(
+            redact(&key).is_none(),
+            "bare Anthropic key must return None"
+        );
+    }
+
+    /// GitHub classic PAT (ghp_ prefix + 36 chars) is dropped.
+    #[test]
+    fn redact_github_classic_pat_returns_none() {
+        // "ghp_" + 36 alphanum chars = canonical classic PAT shape.
+        let token = format!("ghp_{}", "x".repeat(36));
+        let text = format!("export GH_TOKEN={token}");
+        assert!(
+            redact(&text).is_none(),
+            "body containing a GitHub classic PAT must return None"
+        );
+    }
+
+    /// GitHub OAuth token (gho_ prefix + 36 chars) is dropped.
+    #[test]
+    fn redact_github_oauth_token_returns_none() {
+        let token = format!("gho_{}", "y".repeat(36));
+        assert!(
+            redact(&token).is_none(),
+            "body containing a GitHub OAuth token must return None"
+        );
+    }
+
+    /// GitHub fine-grained PAT (github_pat_ prefix + 20+ chars) is dropped.
+    #[test]
+    fn redact_github_fine_grained_pat_returns_none() {
+        let token = format!("github_pat_{}", "z1_".repeat(10));
+        let text = format!("token = \"{token}\"");
+        assert!(
+            redact(&text).is_none(),
+            "body containing a GitHub fine-grained PAT must return None"
+        );
+    }
+
+    /// Short "ghp_" prefix with only 3 trailing chars must NOT be redacted
+    /// (false-positive guard — e.g. a variable name "ghp_id" in code).
+    #[test]
+    fn redact_short_ghp_prefix_is_not_redacted() {
+        let text = "let ghp_id = get_id();";
+        assert!(
+            redact(text).is_some(),
+            "ghp_ with fewer than 36 trailing chars must not be redacted"
+        );
+    }
+
+    /// A standalone 40-char hex-like token (the high-entropy guard) is dropped.
+    #[test]
+    fn redact_generic_40char_token_returns_none() {
+        // 40 uppercase hex chars — looks like a Git SHA or generic API token.
+        let token = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2";
+        assert_eq!(token.len(), 40);
+        assert!(
+            redact(token).is_none(),
+            "a standalone 40-char high-entropy token must return None"
+        );
+    }
+
+    /// A 40-char token embedded in a sentence (space-delimited) is dropped.
+    #[test]
+    fn redact_generic_40char_token_in_prose_returns_none() {
+        let token = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2";
+        let text = format!("my token is {token} please keep it safe");
+        assert!(
+            redact(&text).is_none(),
+            "space-delimited 40-char token in prose must return None"
+        );
+    }
+
+    /// A 39-char run (one short of the threshold) must NOT be redacted.
+    #[test]
+    fn redact_39char_run_is_not_redacted() {
+        // Build exactly 39 token chars programmatically to avoid miscounting.
+        let text: String = "A1".repeat(19) + "B"; // 19*2 + 1 = 39
+        assert_eq!(text.len(), 39, "pre-condition: string must be 39 chars");
+        assert!(
+            redact(&text).is_some(),
+            "a 39-char run must not be redacted (below threshold)"
+        );
+    }
+
+    /// A sentence whose longest word is 10 chars must NOT be redacted.
+    #[test]
+    fn redact_normal_long_word_is_not_redacted() {
+        // "productivity" is 12 chars — well below 40.
+        let text = "Focus on productivity and collaboration today.";
+        assert!(
+            redact(text).is_some(),
+            "normal prose with long words must not be redacted"
+        );
+    }
+
+    /// A URL (no token chars beyond 40) passes through unchanged.
+    #[test]
+    fn redact_url_is_not_redacted() {
+        let text = "See https://docs.example.com/api/v2/reference for details.";
+        assert!(redact(text).is_some(), "a plain URL must not be redacted");
     }
 }

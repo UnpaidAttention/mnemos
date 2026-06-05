@@ -9,7 +9,14 @@ use std::path::Path;
 
 const TOKEN_BYTES: usize = 32;
 
-/// Returns the token at `path`, creating it if absent. On Unix, sets mode 0600.
+/// Returns the token at `path`, creating it if absent.
+///
+/// On Unix the file is created atomically with mode 0600 via
+/// `OpenOptions::create_new(true).mode(0o600)`, which means the file is
+/// never world-readable — not even for the brief window between creation
+/// and a subsequent `set_permissions` call (TOCTOU window eliminated).
+///
+/// On non-Unix platforms the file is created with default permissions.
 pub fn ensure_token(path: &Path) -> Result<String> {
     if path.exists() {
         return load_token(path);
@@ -21,15 +28,27 @@ pub fn ensure_token(path: &Path) -> Result<String> {
     let mut bytes = [0u8; TOKEN_BYTES];
     rand::thread_rng().fill_bytes(&mut bytes);
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    std::fs::write(path, &hex).with_context(|| format!("write token {}", path.display()))?;
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(path)?.permissions();
-        perms.set_mode(0o600);
-        std::fs::set_permissions(path, perms)?;
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
+        // Create atomically with mode 0600 — no world-readable window.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("create token file {}", path.display()))?;
+        file.write_all(hex.as_bytes())
+            .with_context(|| format!("write token {}", path.display()))?;
     }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, &hex).with_context(|| format!("write token {}", path.display()))?;
+    }
+
     Ok(hex)
 }
 

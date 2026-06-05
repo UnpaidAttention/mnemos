@@ -109,6 +109,10 @@ async fn hook_session_end_ingests_transcript_into_daemon() {
         // and the idempotency file doesn't pollute the real user profile.
         .env("XDG_CONFIG_HOME", &config_dir)
         .env("XDG_STATE_HOME", &state_dir)
+        // Override HOME to the temp root so the path-traversal guard (P2-19)
+        // accepts transcripts written to tmp.path() during tests.  In production
+        // HOME is the real user home and transcripts live under ~/.claude/.
+        .env("HOME", tmp.path())
         // Suppress all log noise from hook / daemon in test output.
         .env("MNEMOS_LOG", "error")
         .args(["hook", "session-end"])

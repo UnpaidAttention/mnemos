@@ -23,15 +23,20 @@ pub async fn daemon_status(app: AppHandle) -> Result<daemon::DaemonStatus, Strin
 
 /// Run `mnemos service enable` to install the background service so hooks fire
 /// outside active CLI sessions. Returns `{ enabled: true }` on success.
+///
+/// Uses `sidecar("mnemos")` (consistent with `daemon.rs`) rather than
+/// `command("mnemos")` to avoid PATH-hijacking: the sidecar is resolved from
+/// the app bundle, not from the user's `$PATH`.
 #[tauri::command]
 pub async fn enable_service(app: AppHandle) -> Result<serde_json::Value, String> {
     let output = app
         .shell()
-        .command("mnemos")
+        .sidecar("mnemos")
+        .map_err(|e| format!("failed to resolve mnemos sidecar: {e}"))?
         .args(["service", "enable"])
         .output()
         .await
-        .map_err(|e| format!("failed to launch mnemos: {e}"))?;
+        .map_err(|e| format!("failed to launch mnemos sidecar: {e}"))?;
     if output.status.success() {
         Ok(serde_json::json!({ "enabled": true }))
     } else {
