@@ -12,10 +12,17 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
   const [serviceState, setServiceState] = useState<"idle" | "enabling" | "done" | "skipped">(
     "idle",
   );
+  const [finishError, setFinishError] = useState<string | null>(null);
 
   const finish = async () => {
-    await client.completeFirstRun();
-    onClose();
+    setFinishError(null);
+    try {
+      await client.completeFirstRun();
+      onClose();
+    } catch {
+      // Non-fatal: allow the user to retry; wizard stays visible
+      setFinishError("Could not reach the daemon. Please try again.");
+    }
   };
 
   const handleEnableService = async () => {
@@ -123,11 +130,14 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
               give them persistent memory.
             </p>
             <Connections />
+            {finishError && (
+              <p role="alert" className="label text-tier-procedural">{finishError}</p>
+            )}
             <div className="flex justify-between">
               <button className="label text-text-muted" onClick={() => setStep(2)}>
                 Back
               </button>
-              <Button onClick={finish}>Finish setup</Button>
+              <Button onClick={() => void finish()}>Finish setup</Button>
             </div>
           </>
         )}

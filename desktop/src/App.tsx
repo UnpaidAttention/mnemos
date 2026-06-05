@@ -15,7 +15,10 @@ export default function App() {
   // null = unchecked, true = show wizard, false = wizard dismissed
   const [firstRunShown, setFirstRunShown] = useState<boolean | null>(null);
   useEffect(() => {
-    void client.getFirstRun().then((r) => setFirstRunShown(r.completed_at == null));
+    void client
+      .getFirstRun()
+      .then((r) => setFirstRunShown(r.completed_at == null))
+      .catch(() => setFirstRunShown(false));
   }, []);
   return (
     <ThemeProvider>

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 // Sigma needs WebGL which jsdom doesn't provide — mock it so the
 // full app tree (including Graph view) can render in tests.
@@ -33,21 +33,22 @@ vi.mock("./api/client", async () => {
   }
   const stubResponse = async <T,>(value: T): Promise<T> => value;
   const client = {
-    listMemories: () => stubResponse([]),
-    listEntities: () => stubResponse([]),
-    listReflections: () => stubResponse([]),
-    listAudit: () => stubResponse([]),
-    listWorking: () => stubResponse([]),
-    pipelines: () => stubResponse({}),
-    communities: () => stubResponse({ communities: [], summaries: [] }),
-    graph: () => stubResponse({ nodes: [], edges: [] }),
-    getDoctor: () =>
+    listMemories: vi.fn(() => stubResponse([])),
+    listEntities: vi.fn(() => stubResponse([])),
+    listReflections: vi.fn(() => stubResponse([])),
+    listAudit: vi.fn(() => stubResponse([])),
+    listWorking: vi.fn(() => stubResponse([])),
+    pipelines: vi.fn(() => stubResponse({})),
+    communities: vi.fn(() => stubResponse({ communities: [], summaries: [] })),
+    graph: vi.fn(() => stubResponse({ nodes: [], edges: [] })),
+    getDoctor: vi.fn(() =>
       stubResponse({
         checks: [],
         report: { files_scanned: 0, db_rows: 0, issues: [] },
         migration_hint: null,
       }),
-    getSyncStatus: () =>
+    ),
+    getSyncStatus: vi.fn(() =>
       stubResponse({
         backend: "none",
         ready: false,
@@ -56,14 +57,17 @@ vi.mock("./api/client", async () => {
         last_pulled_at: null,
         last_error: null,
       }),
-    getFirstRun: () =>
+    ),
+    getFirstRun: vi.fn(() =>
       stubResponse({ completed_at: "2026-01-01T00:00:00Z" }),
-    completeFirstRun: () => stubResponse({ completed: true as const }),
-    getConfig: () => stubResponse({}),
-    getEmbedRebuildStatus: () =>
+    ),
+    completeFirstRun: vi.fn(() => stubResponse({ completed: true as const })),
+    getConfig: vi.fn(() => stubResponse({})),
+    getEmbedRebuildStatus: vi.fn(() =>
       stubResponse({ status: "idle" as const }),
-    startEmbedRebuild: () => stubResponse({ started: true }),
-    abortEmbedRebuild: () => stubResponse({ aborted: true }),
+    ),
+    startEmbedRebuild: vi.fn(() => stubResponse({ started: true })),
+    abortEmbedRebuild: vi.fn(() => stubResponse({ aborted: true })),
   };
   return { client, ApiError };
 });
@@ -74,8 +78,29 @@ vi.mock("./api/ws", () => ({
 }));
 
 import App from "./App";
+import { client } from "./api/client";
+
+beforeEach(() => {
+  // Reset getFirstRun to the default resolved state so existing tests pass
+  vi.mocked(client.getFirstRun).mockResolvedValue({ completed_at: "2026-01-01T00:00:00Z" });
+});
 
 test("renders the app shell with the mnemos brand", async () => {
   render(<App />);
   expect(await screen.findByText(/mnemos/i)).toBeInTheDocument();
+});
+
+// P1-17 — getFirstRun() failure must not leave firstRunShown null forever
+// (which would block the app from rendering the main UI).
+// The .catch handler should fall back to setFirstRunShown(false) so the main
+// router renders instead of staying in an unchecked null state.
+test("getFirstRun rejection does not trap the app — main UI still renders (P1-17)", async () => {
+  vi.mocked(client.getFirstRun).mockRejectedValueOnce(new Error("daemon down"));
+  render(<App />);
+  // The brand header must still become visible even when the daemon is unreachable
+  expect(await screen.findByText(/mnemos/i)).toBeInTheDocument();
+  // The FirstRun wizard must NOT be shown (firstRunShown was set false by the catch)
+  await waitFor(() => {
+    expect(screen.queryByText(/set up your memory vault/i)).not.toBeInTheDocument();
+  });
 });

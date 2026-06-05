@@ -147,12 +147,25 @@ function setAt(obj: Cfg, path: string[], value: unknown): Cfg {
 
 export function Settings() {
   const [cfg, setCfg] = useState<Cfg | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
-    void client.getConfig().then(setCfg);
+    void client
+      .getConfig()
+      .then(setCfg)
+      .catch(() => setLoadError("Could not reach the daemon"));
   }, []);
+
+  if (loadError) {
+    return (
+      <div className="p-6">
+        <p role="alert" className="label text-tier-procedural">{loadError}</p>
+      </div>
+    );
+  }
 
   if (!cfg) {
     return (
@@ -164,9 +177,12 @@ export function Settings() {
 
   const save = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await client.putConfig(cfg);
       setSavedAt(new Date().toISOString());
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
     }
@@ -183,6 +199,9 @@ export function Settings() {
           </Button>
         </div>
       </div>
+      {saveError && (
+        <p role="alert" className="label text-tier-procedural">{saveError}</p>
+      )}
       <StorageSettings />
       <AutonomySettings />
       <Card className="p-4">
