@@ -6,7 +6,31 @@
 
 > **Linux only** in this release. macOS and Windows support is planned.
 
-### Prerequisites
+### Option A: Download the installer (fastest)
+
+Download the latest package from the [Releases page](https://github.com/UnpaidAttention/mnemos/releases/latest):
+
+**Debian / Ubuntu:**
+```bash
+# Download from the releases page, then:
+sudo dpkg -i Mnemos_0.8.0_amd64.deb
+```
+
+**Fedora / RHEL:**
+```bash
+sudo rpm -i Mnemos-0.8.0-1.x86_64.rpm
+```
+
+Launch **Mnemos** from your application launcher. Done.
+
+---
+
+### Option B: Build from source
+
+<details>
+<summary>Click to expand build instructions</summary>
+
+#### Prerequisites
 
 | Tool | Version | Install |
 |------|---------|---------|
@@ -27,7 +51,7 @@ sudo dnf install -y gtk3-devel webkit2gtk4.1-devel libsoup3-devel \
   librsvg2-devel libappindicator-gtk3-devel patchelf openssl-devel
 ```
 
-### Setup (one-time)
+#### Setup (one-time)
 
 ```bash
 git clone https://github.com/UnpaidAttention/mnemos.git
@@ -47,29 +71,22 @@ cd desktop
 pnpm install
 ```
 
-### Launch the Desktop App
+#### Launch the Desktop App
 
 ```bash
 cd desktop
 pnpm tauri dev
 ```
 
-The Mnemos desktop window opens with a first-run wizard that walks you through connecting your AI tools. Everything works out of the box — semantic search, the knowledge graph, and the learning pipeline are all included.
-
-### Build a Standalone Installer (optional)
+#### Build a standalone installer (optional)
 
 ```bash
-cd desktop
 pnpm tauri build
+# Outputs .deb/.rpm in desktop/src-tauri/target/release/bundle/
 ```
 
-This outputs installable packages in `desktop/src-tauri/target/release/bundle/`:
-- `.deb` for Debian/Ubuntu
-- `.rpm` for Fedora/RHEL
+</details>
 
-Install with `sudo dpkg -i Mnemos_0.8.0_amd64.deb` or `sudo rpm -i Mnemos-0.8.0-1.x86_64.rpm`.
-
----
 
 ## What You Get
 
