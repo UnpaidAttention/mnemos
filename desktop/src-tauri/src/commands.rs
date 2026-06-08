@@ -593,22 +593,18 @@ pub async fn install_update(app: AppHandle, asset_url: String, asset_name: Strin
     app.emit("update-progress", "installing").map_err(|e| e.to_string())?;
 
     // 2. Install using the appropriate package manager with pkexec (graphical sudo)
-    let install_cmd = if asset_name.ends_with(".rpm") {
-        vec!["pkexec", "rpm", "-U", "--force"]
-    } else {
-        vec!["pkexec", "dpkg", "-i"]
-    };
-
     let pkg_path_str = pkg_path.to_string_lossy().to_string();
-    let mut args: Vec<&str> = install_cmd;
-    args.push(&pkg_path_str);
+    let is_rpm = asset_name.ends_with(".rpm");
 
-    let program = args.remove(0);
     let pkg_path_clone = pkg_path.clone();
     let status = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(program)
-            .args(&args)
-            .stdout(std::process::Stdio::null())
+        let mut cmd = std::process::Command::new("pkexec");
+        if is_rpm {
+            cmd.args(["rpm", "-U", "--force", &pkg_path_str]);
+        } else {
+            cmd.args(["dpkg", "-i", &pkg_path_str]);
+        }
+        cmd.stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .status()
     })
