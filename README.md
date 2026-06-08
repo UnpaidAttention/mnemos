@@ -159,6 +159,63 @@ mnemos daemon restart
 
 Override the vault root: `--vault <path>` or `MNEMOS_VAULT=<path>`.
 
+## Troubleshooting
+
+### "Embedder failed" / "Bundled LLM server not reachable" in Doctor tab
+
+The desktop app bundles the embedder assets, but the daemon needs to find them. If the daemon was started outside the desktop app (e.g. from a terminal), it won't know where the bundled files are.
+
+**Fix — symlink the bundled assets to the XDG location:**
+
+```bash
+# Find where the .deb installed the assets:
+ASSETS_DIR="/usr/lib/Mnemos/_up_/_up_/assets"
+
+# Create the XDG symlink so the daemon can find them:
+mkdir -p ~/.local/share/mnemos
+ln -sf "$ASSETS_DIR" ~/.local/share/mnemos/assets
+
+# Restart the daemon:
+mnemos daemon restart
+# Or from the desktop app: Settings → Restart Daemon
+```
+
+**Alternative — use the desktop app to manage the daemon:**
+
+The desktop app automatically sets the correct paths when it starts the daemon. If you always launch Mnemos from the app menu (not manually from terminal), the embedder should work automatically.
+
+**Alternative — use Ollama instead of the bundled embedder:**
+
+```bash
+# Install Ollama (https://ollama.ai)
+ollama pull nomic-embed-text
+
+# Configure Mnemos to use Ollama:
+export MNEMOS_EMBEDDER=ollama
+mnemos daemon restart
+```
+
+### Memories not being captured during sessions
+
+Check that:
+1. The MCP server is connected — verify in **Settings → Connections**
+2. The daemon is running — check the **Doctor** tab
+3. An LLM is configured for the learning pipeline — check **Settings → LLM**
+
+The learning pipeline requires an LLM (Ollama or OpenAI) to extract facts from sessions. The bundled embedder handles *search*, but *learning* needs a chat model:
+
+```bash
+# Option A: Use Ollama (free, local)
+ollama pull llama3.2
+export MNEMOS_LLM=ollama
+
+# Option B: Use OpenAI
+export MNEMOS_LLM=openai
+export OPENAI_API_KEY=sk-...
+
+mnemos daemon restart
+```
+
 ## Advanced
 
 - **[BUILD.md](BUILD.md)** — Full build guide, cross-compilation, code-signing, packaging
