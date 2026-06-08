@@ -8,16 +8,15 @@
 
 ### Option A: Download the installer (fastest)
 
-Download the latest package from the [Releases page](https://github.com/UnpaidAttention/mnemos/releases/latest):
-
 **Debian / Ubuntu:**
 ```bash
-# Download from the releases page, then:
+wget https://github.com/UnpaidAttention/mnemos/releases/download/v0.8.0/Mnemos_0.8.0_amd64.deb
 sudo dpkg -i Mnemos_0.8.0_amd64.deb
 ```
 
 **Fedora / RHEL:**
 ```bash
+wget https://github.com/UnpaidAttention/mnemos/releases/download/v0.8.0/Mnemos-0.8.0-1.x86_64.rpm
 sudo rpm -i Mnemos-0.8.0-1.x86_64.rpm
 ```
 
