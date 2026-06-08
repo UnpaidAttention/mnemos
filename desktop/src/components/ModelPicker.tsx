@@ -144,9 +144,7 @@ export function ModelPicker({
                 : "hover:bg-surface-hover"
             }`}
             onClick={() => {
-              if (isInstalled || m.provider === "bundled") {
-                onSelect(m.tag);
-              }
+              onSelect(m.tag);
             }}
             id={`model-${m.tag.replace(/[:.]/g, "-")}`}
           >

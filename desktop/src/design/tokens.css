@@ -51,14 +51,14 @@ body {
   font-weight: 300;
   -webkit-font-smoothing: antialiased;
 }
-/* Force form elements to inherit theme colors in dark mode */
+/* Force form elements to use theme colors — ensures readability in dark mode */
 input, select, textarea, option {
-  color: var(--text);
-  background-color: var(--surface);
+  color: var(--text) !important;
 }
-select option {
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] option {
   background-color: var(--surface-raised);
-  color: var(--text);
+  color: var(--text) !important;
 }
 h1, h2, h3, .display { font-family: "Fraunces Variable", Georgia, serif; font-weight: 800; letter-spacing: -0.02em; }
 .label { letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.72rem; color: var(--text-muted); }
