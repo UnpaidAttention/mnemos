@@ -182,13 +182,30 @@ export function Settings() {
     return () => { unlisten?.(); };
   }, []);
 
+  const [pullError, setPullError] = useState<string | null>(null);
+
   const handlePull = async (tag: string) => {
     setPullingModel(tag);
     setPullProgress(0);
+    setPullError(null);
     try {
+      // Check if Ollama is running first
+      if (!ollamaStatus?.installed) {
+        setPullError("Ollama is not installed. Install it first using the button above.");
+        setPullingModel(null);
+        return;
+      }
+      if (!ollamaStatus?.running) {
+        setPullError("Ollama is not running. Start it with: ollama serve");
+        setPullingModel(null);
+        return;
+      }
       await pullModel(tag);
       await refreshOllama();
-    } catch (e) { console.error("pull failed", e); }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setPullError(`Download failed: ${msg}`);
+    }
     setPullingModel(null);
   };
 
@@ -266,7 +283,21 @@ export function Settings() {
               pullProgress={pullProgress}
               onPull={handlePull}
             />
-            {!ollamaStatus?.running && selectedEmbedder !== "bundled" && (
+            {pullError && (
+              <p role="alert" className="label text-tier-procedural mt-2">{pullError}</p>
+            )}
+            {!ollamaStatus?.installed && (
+              <div className="mt-2 p-2 rounded bg-tier-working/10 text-sm">
+                <span className="font-semibold">Ollama not installed.</span> Required for non-bundled models.
+                <Button className="ml-2 text-xs" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
+                  {ollamaInstalling ? "Installing…" : "Install Ollama"}
+                </Button>
+              </div>
+            )}
+            {ollamaStatus?.installed && !ollamaStatus?.running && (
+              <p className="label text-tier-working mt-2">Ollama is installed but not running. Start it with: <code className="mono">ollama serve</code></p>
+            )}
+            {!ollamaStatus?.running && selectedEmbedder !== "bundled" && !ollamaStatus?.installed && (
               <Button className="mt-2" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
                 {ollamaInstalling ? "Installing Ollama…" : "Install Ollama"}
               </Button>
@@ -308,7 +339,21 @@ export function Settings() {
               pullProgress={pullProgress}
               onPull={handlePull}
             />
-            {!ollamaStatus?.running && selectedLlm !== "bundled" && (
+            {pullError && (
+              <p role="alert" className="label text-tier-procedural mt-2">{pullError}</p>
+            )}
+            {!ollamaStatus?.installed && (
+              <div className="mt-2 p-2 rounded bg-tier-working/10 text-sm">
+                <span className="font-semibold">Ollama not installed.</span> Required for non-bundled models.
+                <Button className="ml-2 text-xs" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
+                  {ollamaInstalling ? "Installing…" : "Install Ollama"}
+                </Button>
+              </div>
+            )}
+            {ollamaStatus?.installed && !ollamaStatus?.running && (
+              <p className="label text-tier-working mt-2">Ollama is installed but not running. Start it with: <code className="mono">ollama serve</code></p>
+            )}
+            {!ollamaStatus?.running && selectedLlm !== "bundled" && !ollamaStatus?.installed && (
               <Button className="mt-2" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
                 {ollamaInstalling ? "Installing Ollama…" : "Install Ollama"}
               </Button>

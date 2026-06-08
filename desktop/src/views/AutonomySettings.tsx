@@ -108,6 +108,7 @@ export function AutonomySettings() {
           <span className="label">Retention</span>
           <select
             className="bg-surface border border-border rounded-md px-2 py-1 text-sm w-full max-w-xs"
+            style={{ color: "var(--text)", backgroundColor: "var(--surface)" }}
             value={cfg.retention}
             onChange={(e) => {
               setCfg({
@@ -118,8 +119,8 @@ export function AutonomySettings() {
             }}
             aria-label="Retention"
           >
-            <option value="distill-and-prune">Distill and prune (recommended)</option>
-            <option value="keep-raw">Keep raw chunks</option>
+            <option value="distill-and-prune" style={{ color: "var(--text)", backgroundColor: "var(--surface-raised)" }}>Distill and prune (recommended)</option>
+            <option value="keep-raw" style={{ color: "var(--text)", backgroundColor: "var(--surface-raised)" }}>Keep raw chunks</option>
           </select>
           <span className="label">
             {cfg.retention === "distill-and-prune"
