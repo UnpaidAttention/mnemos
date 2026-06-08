@@ -297,12 +297,23 @@ pub async fn install_ollama(app: AppHandle) -> Result<(), String> {
     // Try pkexec (graphical sudo) first, fall back to running without sudo
     // (the install script handles the sudo internally in most cases).
     let script_path = tmp_script.clone();
-    let status = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("bash")
-            .arg(&script_path)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
+    let output = tokio::task::spawn_blocking(move || {
+        // First try with pkexec (graphical sudo prompt)
+        let result = std::process::Command::new("pkexec")
+            .args(["bash", &script_path.to_string_lossy()])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output();
+
+        // If pkexec fails (e.g. user cancelled), try without sudo
+        match result {
+            Ok(out) if out.status.success() => Ok(out),
+            _ => std::process::Command::new("bash")
+                .arg(&script_path)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .output(),
+        }
     })
     .await
     .map_err(|e| format!("join: {e}"))?
@@ -310,8 +321,10 @@ pub async fn install_ollama(app: AppHandle) -> Result<(), String> {
 
     let _ = std::fs::remove_file(&tmp_script);
 
-    if !status.success() {
-        return Err("Ollama installation failed. You may need to install manually: curl -fsSL https://ollama.com/install.sh | sh".into());
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = if stderr.is_empty() { "unknown error".to_string() } else { stderr.to_string() };
+        return Err(format!("Ollama installation failed: {}. Manual install: curl -fsSL https://ollama.com/install.sh | sh", detail));
     }
 
     // Wait for the Ollama service to start (the installer starts it).

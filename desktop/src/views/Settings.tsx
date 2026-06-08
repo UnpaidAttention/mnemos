@@ -209,9 +209,26 @@ export function Settings() {
     setPullingModel(null);
   };
 
+  const [ollamaError, setOllamaError] = useState<string | null>(null);
+  const [ollamaInstallMsg, setOllamaInstallMsg] = useState<string | null>(null);
+
   const handleInstallOllama = async () => {
     setOllamaInstalling(true);
-    try { await installOllama(); await refreshOllama(); } catch (e) { console.error(e); }
+    setOllamaError(null);
+    setOllamaInstallMsg("Downloading Ollama installer…");
+    try {
+      setOllamaInstallMsg("Installing Ollama (you may see a password prompt)…");
+      await installOllama();
+      setOllamaInstallMsg("Starting Ollama service…");
+      await refreshOllama();
+      setOllamaInstallMsg("✓ Ollama installed successfully!");
+      // Clear success message after 5 seconds
+      setTimeout(() => setOllamaInstallMsg(null), 5000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOllamaError(`Ollama install failed: ${msg}`);
+      setOllamaInstallMsg(null);
+    }
     setOllamaInstalling(false);
   };
 
@@ -286,12 +303,22 @@ export function Settings() {
             {pullError && (
               <p role="alert" className="label text-tier-procedural mt-2">{pullError}</p>
             )}
+            {ollamaError && (
+              <p role="alert" className="label text-tier-procedural mt-2">{ollamaError}</p>
+            )}
             {!ollamaStatus?.installed && (
-              <div className="mt-2 p-2 rounded bg-tier-working/10 text-sm">
-                <span className="font-semibold">Ollama not installed.</span> Required for non-bundled models.
-                <Button className="ml-2 text-xs" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
-                  {ollamaInstalling ? "Installing…" : "Install Ollama"}
-                </Button>
+              <div className="mt-2 p-2 rounded bg-tier-working/10 text-sm space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold">Ollama not installed.</span> Required for non-bundled models.
+                  <Button className="ml-2 text-xs" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
+                    {ollamaInstalling ? "Installing…" : "Install Ollama"}
+                  </Button>
+                </div>
+                {ollamaInstallMsg && (
+                  <p className={`label text-xs ${ollamaInstallMsg.startsWith("✓") ? "text-accent" : "text-tier-working"}`}>
+                    {ollamaInstallMsg}
+                  </p>
+                )}
               </div>
             )}
             {ollamaStatus?.installed && !ollamaStatus?.running && (
@@ -343,11 +370,18 @@ export function Settings() {
               <p role="alert" className="label text-tier-procedural mt-2">{pullError}</p>
             )}
             {!ollamaStatus?.installed && (
-              <div className="mt-2 p-2 rounded bg-tier-working/10 text-sm">
-                <span className="font-semibold">Ollama not installed.</span> Required for non-bundled models.
-                <Button className="ml-2 text-xs" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
-                  {ollamaInstalling ? "Installing…" : "Install Ollama"}
-                </Button>
+              <div className="mt-2 p-2 rounded bg-tier-working/10 text-sm space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold">Ollama not installed.</span> Required for non-bundled models.
+                  <Button className="ml-2 text-xs" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
+                    {ollamaInstalling ? "Installing…" : "Install Ollama"}
+                  </Button>
+                </div>
+                {ollamaInstallMsg && (
+                  <p className={`label text-xs ${ollamaInstallMsg.startsWith("✓") ? "text-accent" : "text-tier-working"}`}>
+                    {ollamaInstallMsg}
+                  </p>
+                )}
               </div>
             )}
             {ollamaStatus?.installed && !ollamaStatus?.running && (
