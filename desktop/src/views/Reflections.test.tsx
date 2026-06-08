@@ -29,7 +29,10 @@ test("Promote-to-procedural posts to the promote endpoint", async () => {
     ),
   );
   renderWithQuery(<Reflections />);
-  // Wait for the first reflection card + its promote button to render.
+  // Wait for the first reflection card to render, then expand it.
+  const title = await screen.findByText(/Reflection \(insight\)/i);
+  await userEvent.click(title);
+  // Now the promote button should be visible.
   const buttons = await screen.findAllByRole("button", {
     name: /promote to procedural/i,
   });
@@ -49,6 +52,9 @@ test("promote failure surfaces an error near the button (P2-15)", async () => {
     ),
   );
   renderWithQuery(<Reflections />);
+  // Expand the card first to reveal the promote button.
+  const title = await screen.findByText(/Reflection \(insight\)/i);
+  await userEvent.click(title);
   const buttons = await screen.findAllByRole("button", {
     name: /promote to procedural/i,
   });

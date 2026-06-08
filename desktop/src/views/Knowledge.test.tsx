@@ -78,7 +78,9 @@ describe("Knowledge", () => {
 
   it("calls forgetMemory when delete is clicked", async () => {
     renderWithQuery(<Knowledge />);
-    // wait for list to render then click delete on first item in memories tab
+    // Wait for list to render, then expand the row to reveal the Delete button
+    const title = await screen.findByText("Rust is fast");
+    await userEvent.click(title);
     const deleteBtns = await screen.findAllByRole("button", { name: /delete/i });
     await userEvent.click(deleteBtns[0]);
     await waitFor(() => expect(client.forgetMemory).toHaveBeenCalled());

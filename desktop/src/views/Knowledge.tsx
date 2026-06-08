@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { client } from "../api/client";
-import { Button, Card, Skeleton } from "../design/primitives";
+import { useUiStore } from "../store/ui";
+import { Button, Card, Skeleton, TierChip } from "../design/primitives";
 import type { Memory } from "../api/types";
 
 type Tab = "memories" | "corrections" | "hardened";
@@ -18,26 +20,103 @@ function MemoryRow({
   memory: Memory;
   onDelete: (id: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const select = useUiStore((s) => s.select);
+  const invalid = !!memory.invalid_at;
+
   return (
-    <div className="flex items-start justify-between gap-4 py-2 border-b border-border last:border-b-0">
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <div className="flex items-center gap-2">
-          <div className="font-body text-sm font-medium truncate">{memory.title}</div>
-          {memory.source_tool && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface border border-border text-text-muted font-mono">
-              {memory.source_tool}
-            </span>
-          )}
-        </div>
-        <div className="label truncate max-w-prose">{memory.body}</div>
-      </div>
-      <Button
-        variant="ghost"
-        className="shrink-0 text-tier-procedural hover:text-tier-procedural"
-        onClick={() => onDelete(memory.id)}
+    <div
+      className={`border-b border-border last:border-b-0 ${invalid ? "opacity-60" : ""}`}
+    >
+      {/* Summary row */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-start justify-between gap-4 py-3 w-full text-left hover:bg-surface-raised/40 transition-colors duration-100 px-1 rounded"
       >
-        Delete
-      </Button>
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="text-text-muted text-xs">{expanded ? "▾" : "▸"}</span>
+            <div className={`font-body text-sm font-medium truncate ${invalid ? "line-through" : ""}`}>
+              {memory.title}
+            </div>
+            <TierChip tier={memory.tier} />
+            {memory.source_tool && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface border border-border text-text-muted font-mono">
+                {memory.source_tool}
+              </span>
+            )}
+          </div>
+          <div className="label truncate max-w-prose pl-5">{memory.body.slice(0, 120)}{memory.body.length > 120 ? "…" : ""}</div>
+        </div>
+        <span className="label mono text-[0.65rem] text-text-muted shrink-0 pt-1">
+          {memory.valid_at.slice(0, 10)}
+        </span>
+      </button>
+
+      {/* Expanded detail panel */}
+      {expanded && (
+        <div className="px-6 pb-4 space-y-3 border-l-2 border-accent/30 ml-2">
+          {/* Full body */}
+          <div className="text-sm font-body whitespace-pre-wrap bg-surface rounded-md p-3 border border-border max-h-64 overflow-y-auto">
+            {memory.body}
+          </div>
+
+          {/* Metadata grid */}
+          <dl className="grid grid-cols-3 gap-x-6 gap-y-1 text-xs">
+            <div className="flex justify-between">
+              <dt className="text-text-muted">Strength</dt>
+              <dd className="mono">{memory.strength.toFixed(2)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-text-muted">Importance</dt>
+              <dd className="mono">{memory.importance.toFixed(2)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-text-muted">Accesses</dt>
+              <dd className="mono">{memory.access_count}</dd>
+            </div>
+          </dl>
+
+          {/* Tags */}
+          {memory.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {memory.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="label mono text-[0.65rem] text-text-muted border border-border rounded-sm px-1.5 py-0.5"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center gap-3 pt-1">
+            <Link
+              to={`/editor/${memory.id}` as "/"}
+              className="label text-accent hover:underline text-xs"
+            >
+              Open in editor →
+            </Link>
+            <button
+              onClick={() => select(memory.id)}
+              className="label text-accent hover:underline text-xs"
+            >
+              Inspect
+            </button>
+            {!invalid && (
+              <Button
+                variant="ghost"
+                className="shrink-0 text-tier-procedural hover:text-tier-procedural text-xs ml-auto"
+                onClick={() => onDelete(memory.id)}
+              >
+                Delete
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -195,6 +274,9 @@ export function Knowledge() {
           ))}
         </select>
       </div>
+
+      {/* Hint */}
+      <p className="text-xs text-text-muted">Click any row to expand details, view the full body, and manage the memory.</p>
 
       {/* Content */}
       {loading ? (
