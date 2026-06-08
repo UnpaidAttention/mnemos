@@ -64,9 +64,11 @@ export function Reflections() {
       </div>
 
       {!data?.length && (
-        <p className="text-text-muted">
-          No reflections yet. They form automatically as the system learns, or
-          trigger one now.
+        <p className="text-text-muted font-body">
+          No reflections yet. Mnemos synthesizes reflections from your semantic
+          memories as your knowledge base grows. Click{" "}
+          <strong>Reflect now</strong> to generate one manually, or wait for the
+          system to generate them automatically after pipeline runs.
         </p>
       )}
 

@@ -25,7 +25,7 @@ struct Check {
 
 /// Latest schema version expected by this binary. Bumped to v9 by Plan 9
 /// Task 1 (bundled embedder adds `vault_meta.embedder_kind`).
-const LATEST_SCHEMA: u32 = 9;
+const LATEST_SCHEMA: u32 = 10;
 
 async fn schema_version(state: &AppState) -> Check {
     match state.vault.storage().schema_version().await {
@@ -244,6 +244,45 @@ async fn llm_reachable(state: &AppState) -> Check {
             status: "ok",
             detail: "mock".into(),
         },
+        LlmKind::Bundled => {
+            let url = format!("{}/health", state.config.llm.url.trim_end_matches('/'));
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    return Check {
+                        name: "llm",
+                        status: "fail",
+                        detail: e.to_string(),
+                    }
+                }
+            };
+            match client.get(&url).send().await {
+                Ok(r) if r.status().is_success() => Check {
+                    name: "llm",
+                    status: "ok",
+                    detail: format!(
+                        "bundled LLM (Qwen3-0.6B) reachable at {}",
+                        state.config.llm.url
+                    ),
+                },
+                Ok(r) => Check {
+                    name: "llm",
+                    status: "warn",
+                    detail: format!(
+                        "bundled LLM server returned HTTP {} (may still be loading model)",
+                        r.status()
+                    ),
+                },
+                Err(e) => Check {
+                    name: "llm",
+                    status: "warn",
+                    detail: format!("bundled LLM server not yet reachable: {e}"),
+                },
+            }
+        }
         LlmKind::Ollama => {
             let url = format!("{}/api/tags", state.config.llm.url.trim_end_matches('/'));
             let client = match reqwest::Client::builder()

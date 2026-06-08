@@ -9,7 +9,7 @@ async fn build_app_full_without_llm_has_no_pipeline_handle() {
 
     let tmp = TempDir::new().unwrap();
     let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
-    let (_app, state, handle, sync, _bundled) =
+    let (_app, state, handle, sync, _bundled, _bundled_llm) =
         build_app_full(Config::default(), vault, None, None)
             .await
             .unwrap();

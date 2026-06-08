@@ -219,6 +219,7 @@ impl Vault {
             }
             insert_memory_vec(&self.storage, &id, &vector).await?;
         }
+        self.trigger_index_log_update().await;
         Ok(id)
     }
 
@@ -310,6 +311,7 @@ impl Vault {
             Some(json!({"reason": reason})),
         )
         .await?;
+        self.trigger_index_log_update().await;
         Ok(())
     }
 
@@ -370,6 +372,7 @@ impl Vault {
             Some(json!({ "tags": mem.tags, "importance": mem.importance })),
         )
         .await?;
+        self.trigger_index_log_update().await;
         get_memory(&self.storage, id).await
     }
 
@@ -437,6 +440,7 @@ impl Vault {
             Some(json!({ "tier": mem.tier.as_str() })),
         )
         .await?;
+        self.trigger_index_log_update().await;
         get_memory(&self.storage, id).await
     }
 
@@ -469,6 +473,48 @@ impl Vault {
             add_memory_link(&self.storage, &id, src, "reflects_on").await?;
         }
         Ok(id)
+    }
+
+    /// Write a synthesis-tier memory and link it back to its source memories
+    /// with `synthesized_from` edges.
+    pub async fn remember_synthesis(
+        &self,
+        body: &str,
+        title: Option<String>,
+        tags: Vec<String>,
+        synthesized_from: &[String],
+        provenance: Vec<Provenance>,
+    ) -> Result<String> {
+        let id = self
+            .remember(
+                body,
+                RememberOpts {
+                    title,
+                    tier: Tier::Reflection,
+                    kind: MemoryType::Synthesis,
+                    tags,
+                    provenance,
+                    source_tool: Some("mnemos-synthesis".into()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        for src in synthesized_from {
+            add_memory_link(&self.storage, &id, src, "synthesized_from").await?;
+        }
+        Ok(id)
+    }
+
+    /// Read a custom schema file (`mnemos_schema.md`) from the vault root path if it exists.
+    pub fn load_custom_schema(&self) -> Option<String> {
+        let schema_path = self.paths.root.join("mnemos_schema.md");
+        std::fs::read_to_string(schema_path).ok()
+    }
+
+    async fn trigger_index_log_update(&self) {
+        if let Err(e) = crate::pipeline::index_log::update_index_log(&self.storage, &self.paths).await {
+            tracing::warn!("failed to update index/log: {e}");
+        }
     }
 
     /// Store a [`Correction`][crate::correction::Correction] as a Procedural-tier memory.

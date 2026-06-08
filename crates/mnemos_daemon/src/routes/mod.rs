@@ -87,6 +87,9 @@ pub fn build_router(state: AppState) -> Router {
         .merge(authed)
         .merge(ws_router)
         .layer(cors)
+        // Global body size cap (10 MB). Individual routes may raise this
+        // locally (e.g. vault import uses a higher limit).
+        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
         .with_state(state)
 }
 

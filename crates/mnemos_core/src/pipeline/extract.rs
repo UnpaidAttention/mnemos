@@ -21,7 +21,11 @@ struct ExtractOut {
 /// Run fact extraction over a session's chunks.
 ///
 /// Returns an empty vector when there are no chunks (no LLM call is made).
-pub async fn extract_facts(chunks: &[Chunk], llm: &dyn LlmProvider) -> Result<Vec<CandidateFact>> {
+pub async fn extract_facts(
+    chunks: &[Chunk],
+    llm: &dyn LlmProvider,
+    custom_schema: Option<&str>,
+) -> Result<Vec<CandidateFact>> {
     if chunks.is_empty() {
         return Ok(vec![]);
     }
@@ -33,7 +37,12 @@ pub async fn extract_facts(chunks: &[Chunk], llm: &dyn LlmProvider) -> Result<Ve
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let req = CompletionRequest::new(EXTRACT_SYSTEM, transcript);
+    let mut system_prompt = EXTRACT_SYSTEM.to_string();
+    if let Some(schema) = custom_schema {
+        system_prompt.push_str("\n\nCustom Schema Guidelines:\n");
+        system_prompt.push_str(schema);
+    }
+    let req = CompletionRequest::new(&system_prompt, transcript);
     let raw = llm.complete(&req).await?;
     let parsed: ExtractOut = serde_json::from_str(extract_json(&raw))
         .map_err(|e| MnemosError::Internal(format!("extract parse failed: {e}; raw={raw}")))?;
@@ -73,14 +82,14 @@ mod tests {
             chunk("user", "FACT: Shaun prefers Rust over Go"),
             chunk("assistant", "noted, no fact here"),
         ];
-        let facts = extract_facts(&chunks, &MockLlm::new()).await.unwrap();
+        let facts = extract_facts(&chunks, &MockLlm::new(), None).await.unwrap();
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].text, "Shaun prefers Rust over Go");
     }
 
     #[tokio::test]
     async fn empty_chunks_yield_no_facts() {
-        let facts = extract_facts(&[], &MockLlm::new()).await.unwrap();
+        let facts = extract_facts(&[], &MockLlm::new(), None).await.unwrap();
         assert!(facts.is_empty());
     }
 }

@@ -171,6 +171,9 @@ pub struct LlmConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmKind {
+    /// Bundled llama-server with a small GGUF model (Qwen3-0.6B).
+    /// Runs on CPU, no external dependencies.
+    Bundled,
     Ollama,
     OpenAi,
     Mock,
@@ -179,13 +182,13 @@ pub enum LlmKind {
 
 impl Default for LlmConfig {
     fn default() -> Self {
-        // Fresh installs default to no LLM: reflections and community
-        // summaries silently skip until the user opts into Ollama or OpenAI
-        // via `MNEMOS_LLM` or config.toml.
+        // Fresh installs default to the bundled Qwen3-0.6B model so the
+        // learning pipeline (reflections, entity extraction, community
+        // summaries) works out of the box with zero configuration.
         Self {
-            kind: LlmKind::None,
-            url: "http://localhost:11434".into(),
-            model: "llama3.2".into(),
+            kind: LlmKind::Bundled,
+            url: "http://127.0.0.1:7425".into(),
+            model: "Qwen3-0.6B".into(),
             timeout_secs: 120,
         }
     }
@@ -410,11 +413,12 @@ fn apply_env_overrides(cfg: &mut Config) {
     }
     if let Ok(v) = std::env::var("MNEMOS_LLM") {
         cfg.llm.kind = match v.as_str() {
+            "bundled" => LlmKind::Bundled,
             "ollama" => LlmKind::Ollama,
             "openai" => LlmKind::OpenAi,
             "mock" => LlmKind::Mock,
             "none" => LlmKind::None,
-            _ => LlmKind::None,
+            _ => LlmKind::Bundled,
         };
     }
     if let Ok(v) = std::env::var("MNEMOS_LLM_URL") {

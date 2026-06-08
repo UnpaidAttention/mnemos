@@ -28,8 +28,16 @@ export function Timeline() {
       new Date(m.valid_at).getTime(),
       m.invalid_at ? new Date(m.invalid_at).getTime() : Date.now(),
     ]);
-    const min = times.length ? Math.min(...times) : Date.now() - 86_400_000;
-    const max = times.length ? Math.max(...times, Date.now()) : Date.now();
+    let min = times.length ? Math.min(...times) : Date.now() - 86_400_000;
+    let max = times.length ? Math.max(...times, Date.now()) : Date.now();
+    // Enforce a minimum 24-hour domain so bars are always visible even when
+    // all memories share nearly identical timestamps (e.g. bulk import).
+    const MIN_RANGE_MS = 86_400_000; // 24 hours
+    if (max - min < MIN_RANGE_MS) {
+      const mid = (min + max) / 2;
+      min = mid - MIN_RANGE_MS / 2;
+      max = mid + MIN_RANGE_MS / 2;
+    }
     const sc = scaleTime({ domain: [new Date(min), new Date(max)], range: [LABEL_PAD, W - 20] });
     const svgH = Math.max(120, mems.length * ROW + TOP_PAD + AXIS_H);
     return { scale: sc, height: svgH, rangeMin: min, rangeMax: max };
@@ -115,7 +123,7 @@ export function Timeline() {
             const rawX2 = m.invalid_at
               ? scale(new Date(m.invalid_at))
               : scale(new Date(rangeMax));
-            const x2 = Math.max(x1 + 2, rawX2);
+            const x2 = Math.max(x1 + 6, rawX2);
             const y = TOP_PAD + i * ROW;
             const invalid = !!m.invalid_at;
             return (

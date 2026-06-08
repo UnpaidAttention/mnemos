@@ -57,7 +57,7 @@ impl OllamaEmbedder {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()
-            .expect("reqwest client build");
+            .expect("failed to build reqwest HTTP client (TLS init failure?)");
         Self { config, client }
     }
 }

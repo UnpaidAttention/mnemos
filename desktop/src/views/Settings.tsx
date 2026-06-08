@@ -48,7 +48,7 @@ const SCHEMA: Section[] = [
         key: "kind",
         label: "Backend",
         kind: "select",
-        options: ["ollama", "openai", "mock", "none"],
+        options: ["bundled", "ollama", "openai", "mock", "none"],
       },
       { key: "url", label: "URL", kind: "text" },
       { key: "model", label: "Model", kind: "text" },
@@ -151,12 +151,17 @@ export function Settings() {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [versionInfo, setVersionInfo] = useState<{ version: string; git_hash: string } | null>(null);
 
   useEffect(() => {
     void client
       .getConfig()
       .then(setCfg)
       .catch(() => setLoadError("Could not reach the daemon"));
+    void client
+      .getHealth()
+      .then(setVersionInfo)
+      .catch(() => {/* ignore */});
   }, []);
 
   if (loadError) {
@@ -294,6 +299,11 @@ export function Settings() {
         </Card>
       ))}
       <VaultIO />
+      {versionInfo && (
+        <p className="label text-text-muted text-center text-xs pt-4">
+          Mnemos v{versionInfo.version} · {versionInfo.git_hash}
+        </p>
+      )}
     </div>
   );
 }

@@ -74,16 +74,15 @@ fn reweight_defaults_match_recall_opts() {
 }
 
 #[test]
-fn llm_defaults_to_none() {
-    // Fresh installs default to `LlmKind::None` (Plan 9 Task 8). Reflections
-    // and community summaries silently skip until the user opts in via
-    // `MNEMOS_LLM=ollama` or `MNEMOS_LLM=openai`.
+fn llm_defaults_to_bundled() {
+    // Fresh installs default to `LlmKind::Bundled` so the learning pipeline
+    // (reflections, entity extraction, community summaries) works out of the
+    // box with zero configuration.
     use mnemos_daemon::config::{Config, LlmKind};
     let cfg = Config::default();
-    assert_eq!(cfg.llm.kind, LlmKind::None);
-    // The url/model defaults remain set so opting in via env keeps working.
-    assert_eq!(cfg.llm.model, "llama3.2");
-    assert!(cfg.llm.url.contains("11434"));
+    assert_eq!(cfg.llm.kind, LlmKind::Bundled);
+    assert_eq!(cfg.llm.model, "Qwen3-0.6B");
+    assert!(cfg.llm.url.contains("7425"));
 }
 
 #[test]

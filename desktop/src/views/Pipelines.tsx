@@ -19,17 +19,34 @@ export function Pipelines() {
   const [busy, setBusy] = useState<string | null>(null);
   // P2-15: surface trigger errors near the maintenance buttons
   const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [backfillResult, setBackfillResult] = useState<{
+    memories_processed: number;
+    entities_linked: number;
+    edges_created: number;
+    reflections_created: number;
+    communities_found: number;
+    errors: number;
+  } | null>(null);
 
-  const trigger = async (which: "decay" | "communities") => {
+  const trigger = async (which: "decay" | "communities" | "backfill") => {
     setTriggerError(null);
     setBusy(which);
     try {
       if (which === "decay") {
         await client.runDecay();
-      } else {
+      } else if (which === "communities") {
         await client.runCommunities();
+      } else {
+        const result = await client.runBackfill();
+        setBackfillResult(result);
       }
       await qc.invalidateQueries({ queryKey: ["pipelines"] });
+      // Refresh graph + entities after backfill/communities
+      if (which === "backfill" || which === "communities") {
+        await qc.invalidateQueries({ queryKey: ["graph"] });
+        await qc.invalidateQueries({ queryKey: ["entities"] });
+        await qc.invalidateQueries({ queryKey: ["reflections"] });
+      }
     } catch (err) {
       setTriggerError(
         err instanceof Error ? err.message : `Failed to run ${which}`,
@@ -80,7 +97,7 @@ export function Pipelines() {
 
       <div className="space-y-2">
         <div className="label">Maintenance</div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button
             variant="ghost"
             onClick={() => void trigger("decay")}
@@ -96,6 +113,14 @@ export function Pipelines() {
           >
             {busy === "communities" ? "Detecting…" : "Detect communities"}
           </Button>
+          <Button
+            variant="ghost"
+            onClick={() => void trigger("backfill")}
+            disabled={busy === "backfill" || !data.enabled}
+            title={!data.enabled ? "Enable an LLM model to run backfill" : "Retroactively extract entities and relationships from all existing memories"}
+          >
+            {busy === "backfill" ? "Processing…" : "Backfill entities"}
+          </Button>
         </div>
         {triggerError && (
           <p
@@ -106,14 +131,31 @@ export function Pipelines() {
             {triggerError}
           </p>
         )}
+        {backfillResult && (
+          <Card className="p-4 mt-2">
+            <div className="label mb-2">Backfill results</div>
+            <div className="flex gap-6 flex-wrap">
+              <Stat label="memories" value={backfillResult.memories_processed} />
+              <Stat label="entities" value={backfillResult.entities_linked} />
+              <Stat label="edges" value={backfillResult.edges_created} />
+              <Stat label="reflections" value={backfillResult.reflections_created} />
+              <Stat label="communities" value={backfillResult.communities_found} />
+              {backfillResult.errors > 0 && (
+                <Stat label="errors" value={backfillResult.errors} />
+              )}
+            </div>
+          </Card>
+        )}
       </div>
 
       <div className="space-y-2">
         <div className="label">Recent runs</div>
         {data.recent.length === 0 ? (
           <p className="text-text-muted text-sm font-body">
-            No pipeline runs recorded yet. Runs appear here after the first
-            ingestion session completes.
+            The learning pipeline is active and monitoring for conversations.
+            Pipeline runs appear here automatically as you use MCP-connected
+            tools like Claude Code or Codex. If you have existing memories,
+            click <strong>Backfill entities</strong> above to process them.
           </p>
         ) : (
           <ul className="text-sm mono space-y-1">

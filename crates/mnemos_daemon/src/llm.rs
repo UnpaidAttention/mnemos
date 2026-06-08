@@ -3,7 +3,7 @@
 use crate::config::{Config, LlmKind};
 use mnemos_core::providers::mock_llm::MockLlm;
 use mnemos_core::providers::ollama_llm::{OllamaLlm, OllamaLlmConfig};
-use mnemos_core::providers::openai_llm::{self, OpenAiLlm};
+use mnemos_core::providers::openai_llm::{self, OpenAiLlm, OpenAiLlmConfig};
 use mnemos_core::providers::LlmProvider;
 use std::sync::Arc;
 
@@ -12,6 +12,30 @@ pub fn build_llm_for_daemon(cfg: &Config) -> Option<Arc<dyn LlmProvider>> {
     match cfg.llm.kind {
         LlmKind::None => None,
         LlmKind::Mock => Some(Arc::new(MockLlm::new())),
+        LlmKind::Bundled => {
+            // The bundled llama-server exposes an OpenAI-compatible
+            // /v1/chat/completions endpoint on the configured port.
+            let base_url = cfg.llm.url.clone();
+            let oc = OpenAiLlmConfig {
+                base_url: if base_url.is_empty() {
+                    "http://127.0.0.1:7425".into()
+                } else {
+                    base_url
+                },
+                // llama-server does not require an API key, but the
+                // OpenAiLlm client rejects an empty key. Use a dummy.
+                api_key: "bundled".into(),
+                model: cfg.llm.model.clone(),
+                timeout_secs: cfg.llm.timeout_secs,
+            };
+            match OpenAiLlm::new(&oc) {
+                Ok(llm) => Some(Arc::new(llm)),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to init bundled LLM client; learning pipeline disabled");
+                    None
+                }
+            }
+        }
         LlmKind::Ollama => {
             let oc = OllamaLlmConfig {
                 base_url: cfg.llm.url.clone(),
@@ -28,12 +52,9 @@ pub fn build_llm_for_daemon(cfg: &Config) -> Option<Arc<dyn LlmProvider>> {
         }
         LlmKind::OpenAi => match openai_llm::config_from_env() {
             Ok(mut oc) => {
-                // Allow config.toml `llm.model` to override the env model when
-                // it's set to a non-default value.
                 if !cfg.llm.model.is_empty() && cfg.llm.model != "llama3.2" {
                     oc.model = cfg.llm.model.clone();
                 }
-                // Propagate the user-configured timeout (P1-14).
                 oc.timeout_secs = cfg.llm.timeout_secs;
                 match OpenAiLlm::new(&oc) {
                     Ok(llm) => Some(Arc::new(llm)),

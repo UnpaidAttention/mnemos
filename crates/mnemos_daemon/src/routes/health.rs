@@ -65,6 +65,7 @@ pub async fn get_health(State(state): State<AppState>) -> Json<Value> {
             "status": "ok",
             "service": "mnemosd",
             "version": env!("CARGO_PKG_VERSION"),
+            "git_hash": option_env!("GIT_HASH").unwrap_or("dev"),
             "embedder": e,
         })
     } else {
@@ -72,6 +73,7 @@ pub async fn get_health(State(state): State<AppState>) -> Json<Value> {
             "status": "ok",
             "service": "mnemosd",
             "version": env!("CARGO_PKG_VERSION"),
+            "git_hash": option_env!("GIT_HASH").unwrap_or("dev"),
         })
     })
 }

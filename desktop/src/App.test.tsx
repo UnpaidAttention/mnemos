@@ -12,6 +12,7 @@ vi.mock("graphology", () => ({
   default: class {
     order = 0;
     addNode() {}
+    mergeNode() {}
     addEdge() {}
     hasNode() { return true; }
   },

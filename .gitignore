@@ -18,3 +18,8 @@ crates/mnemos_daemon/README.md
 crates/mnemos_daemon/CHANGELOG.md
 desktop/src-tauri/updater-private.pem
 desktop/src-tauri/updater-private.pem.pub
+/check
+/rust_out
+/test_vault/
+
+.claude/

@@ -79,8 +79,12 @@ export function Graph() {
             <div className="max-w-sm">
               <p className="display text-xl mb-3">No entities yet</p>
               <p className="text-text-muted text-sm">
-                Entities form as the learning pipeline links memories.
-                Add some memories and run the pipeline to populate the graph.
+                The knowledge graph builds as entities and relationships are
+                extracted from your memories. Go to the{" "}
+                <strong>Pipelines</strong> tab and click{" "}
+                <strong>Backfill entities</strong> to populate the graph from
+                existing memories, or use MCP-connected tools to create new
+                conversations.
               </p>
             </div>
           </div>

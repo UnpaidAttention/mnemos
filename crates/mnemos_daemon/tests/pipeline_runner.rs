@@ -78,7 +78,7 @@ async fn wait_for_pipeline(
 async fn runner_turns_session_end_into_semantic_memory() {
     let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
     let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
-    let (_app, state, handle, _sync, _bundled) = build_app_full(
+    let (_app, state, handle, _sync, _bundled, _bundled_llm) = build_app_full(
         Config::default(),
         vault,
         None,
@@ -167,7 +167,7 @@ async fn distill_and_prune_deletes_chunks_after_pipeline() {
         "default retention must be distill-and-prune"
     );
 
-    let (_app, state, handle, _sync, _bundled) =
+    let (_app, state, handle, _sync, _bundled, _bundled_llm) =
         build_app_full(cfg, vault, None, Some(Arc::new(MockLlm::new())))
             .await
             .unwrap();
@@ -215,7 +215,7 @@ async fn keep_raw_retains_chunks_after_pipeline() {
     let mut cfg = Config::default();
     cfg.autonomy.retention = RetentionPolicy::KeepRaw;
 
-    let (_app, state, handle, _sync, _bundled) =
+    let (_app, state, handle, _sync, _bundled, _bundled_llm) =
         build_app_full(cfg, vault, None, Some(Arc::new(MockLlm::new())))
             .await
             .unwrap();

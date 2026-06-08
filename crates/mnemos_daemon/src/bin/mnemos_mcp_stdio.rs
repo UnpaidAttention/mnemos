@@ -53,6 +53,9 @@ async fn run() -> Result<()> {
         .build()?;
     let mcp_url = format!("{}/mcp", url.trim_end_matches('/'));
 
+    // ── Auto-start daemon if unreachable ──────────────────────────────────
+    ensure_daemon_running(&client, &url).await;
+
     let stdin = std::io::stdin();
     let stdout_handle = std::io::stdout();
 
@@ -232,6 +235,69 @@ fn write_frame<W: Write>(w: &mut W, body: &[u8]) -> Result<()> {
     w.write_all(b"\n")?;
     w.flush()?;
     Ok(())
+}
+
+// ── Daemon auto-start ─────────────────────────────────────────────────────────
+
+/// Check if the daemon is reachable. If not, attempt to start it via systemctl
+/// or direct spawn, then wait up to 15 seconds for the health endpoint.
+async fn ensure_daemon_running(_client: &reqwest::Client, base_url: &str) {
+    let health_url = format!("{}/health", base_url.trim_end_matches('/'));
+
+    // Quick probe: if the daemon is already running, return immediately.
+    let probe = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(500))
+        .build();
+    if let Ok(c) = &probe {
+        if let Ok(r) = c.get(&health_url).send().await {
+            if r.status().is_success() {
+                return; // daemon is already running
+            }
+        }
+    }
+
+    eprintln!("mnemos-mcp-stdio: daemon not running, attempting to start...");
+
+    // Try systemctl first (Linux with systemd user services).
+    let systemctl_ok = std::process::Command::new("systemctl")
+        .args(["--user", "start", "mnemosd"])
+        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !systemctl_ok {
+        // Fallback: spawn the daemon directly as a background process.
+        // Try common binary names.
+        for bin in &["mnemos-daemon", "mnemosd"] {
+            if let Ok(child) = std::process::Command::new(bin)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                // Detach — we don't want to wait for it.
+                std::mem::forget(child);
+                eprintln!("mnemos-mcp-stdio: spawned {bin} directly");
+                break;
+            }
+        }
+    }
+
+    // Wait up to 15 seconds for the daemon to become healthy.
+    for _ in 0..30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(c) = &probe {
+            if let Ok(r) = c.get(&health_url).send().await {
+                if r.status().is_success() {
+                    eprintln!("mnemos-mcp-stdio: daemon is now running");
+                    return;
+                }
+            }
+        }
+    }
+    eprintln!("mnemos-mcp-stdio: warning: daemon did not start within 15s, proceeding anyway");
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

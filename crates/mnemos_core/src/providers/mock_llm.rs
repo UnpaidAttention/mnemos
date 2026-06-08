@@ -146,6 +146,36 @@ impl LlmProvider for MockLlm {
                 })
                 .collect();
             json!({ "relations": relations }).to_string()
+        } else if req.system.contains("TASK=lint") {
+            let mut contradictions = Vec::new();
+            let mut gaps = Vec::new();
+            for l in content.lines() {
+                if let Some(i) = l.find("CONTRADICTION:") {
+                    let rest = &l[i + "CONTRADICTION:".len()..];
+                    let parts: Vec<&str> = rest.split('|').collect();
+                    if parts.len() >= 3 {
+                        contradictions.push(json!({
+                            "id_a": parts[0].trim(),
+                            "id_b": parts[1].trim(),
+                            "reason": parts[2..].join("|").trim()
+                        }));
+                    }
+                }
+                if let Some(i) = l.find("GAP:") {
+                    let rest = &l[i + "GAP:".len()..];
+                    let parts: Vec<&str> = rest.split('|').collect();
+                    if parts.len() >= 2 {
+                        gaps.push(json!({
+                            "topic": parts[0].trim(),
+                            "reason": parts[1..].join("|").trim()
+                        }));
+                    }
+                }
+            }
+            json!({
+                "contradictions": contradictions,
+                "gaps": gaps
+            }).to_string()
         } else {
             content
         };
@@ -220,5 +250,27 @@ mod tests {
         let r: serde_json::Value = serde_json::from_str(&rels).unwrap();
         assert_eq!(r["relations"].as_array().unwrap().len(), 1);
         assert_eq!(r["relations"][0]["relation"], "uses");
+    }
+
+    #[tokio::test]
+    async fn mock_lint() {
+        let llm = MockLlm::new();
+        let out = llm
+            .complete(&CompletionRequest::new(
+                "TASK=lint",
+                "CONTRADICTION: mem_1 | mem_2 | conflicts on language preference\nGAP: python scripting | missing python environment details",
+            ))
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let contradictions = v["contradictions"].as_array().unwrap();
+        let gaps = v["gaps"].as_array().unwrap();
+        assert_eq!(contradictions.len(), 1);
+        assert_eq!(contradictions[0]["id_a"], "mem_1");
+        assert_eq!(contradictions[0]["id_b"], "mem_2");
+        assert_eq!(contradictions[0]["reason"], "conflicts on language preference");
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0]["topic"], "python scripting");
+        assert_eq!(gaps[0]["reason"], "missing python environment details");
     }
 }

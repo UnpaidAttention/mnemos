@@ -38,8 +38,9 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <Card className="w-[40rem] p-6 space-y-4">
-        <div className="label">Welcome · step {step + 1} of 4</div>
+      <Card className="w-[40rem] max-h-[80vh] p-6 flex flex-col">
+        <div className="label shrink-0">Welcome · step {step + 1} of 4</div>
+        <div className="space-y-4 overflow-y-auto min-h-0 flex-1 mt-4">
         {step === 0 && (
           <>
             <h1 className="display text-2xl">Set up your memory vault</h1>
@@ -133,7 +134,7 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
             {finishError && (
               <p role="alert" className="label text-tier-procedural">{finishError}</p>
             )}
-            <div className="flex justify-between">
+            <div className="flex justify-between pt-2">
               <button className="label text-text-muted" onClick={() => setStep(2)}>
                 Back
               </button>
@@ -141,6 +142,7 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
             </div>
           </>
         )}
+        </div>
       </Card>
     </div>
   );

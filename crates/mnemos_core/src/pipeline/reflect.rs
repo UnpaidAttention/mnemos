@@ -43,11 +43,35 @@ pub async fn reflect(
     if sources.is_empty() {
         return Ok(vec![]);
     }
-    let corpus = sources
+    // Build corpus from source memories, truncating to fit within the LLM
+    // context window.  ~4 chars per token; system prompt is ~200 tokens;
+    // leave headroom → target ~6000 tokens of user content ≈ 24_000 chars.
+    const MAX_CORPUS_CHARS: usize = 24_000;
+    const MAX_BODY_CHARS: usize = 500;
+    let mut corpus = sources
         .iter()
         .map(|m| format!("- {}", m.body))
         .collect::<Vec<_>>()
         .join("\n");
+    // If over budget, truncate each memory body.
+    if corpus.len() > MAX_CORPUS_CHARS {
+        corpus = sources
+            .iter()
+            .map(|m| {
+                let body = if m.body.len() > MAX_BODY_CHARS {
+                    format!("{}…", &m.body[..MAX_BODY_CHARS])
+                } else {
+                    m.body.clone()
+                };
+                format!("- {body}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    // If still over budget, keep only the first N memories that fit.
+    if corpus.len() > MAX_CORPUS_CHARS {
+        corpus.truncate(MAX_CORPUS_CHARS);
+    }
     let raw = llm
         .complete(&CompletionRequest::new(REFLECT_SYSTEM, corpus))
         .await?;

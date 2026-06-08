@@ -44,6 +44,12 @@ export class MnemosClient {
     private tokenFn: () => Promise<string> = async () => "dev-token",
   ) {}
 
+  /** Fetch the unauthenticated /health endpoint for version info. */
+  async getHealth(): Promise<{ version: string; git_hash: string; status: string }> {
+    const res = await fetch(`${this.baseUrl}/health`);
+    return (await res.json()) as { version: string; git_hash: string; status: string };
+  }
+
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
     const token = await this.tokenFn();
     const res = await fetch(`${this.baseUrl}${path}`, {
@@ -104,6 +110,7 @@ export class MnemosClient {
   pipelines() { return this.req<PipelineStatus>("GET", "/v1/pipelines"); }
   runDecay() { return this.req<{ scanned: number; decayed: number; invalidated: number }>("POST", "/v1/maintenance/decay", {}); }
   runCommunities() { return this.req<{ summaries: string[] }>("POST", "/v1/maintenance/communities", {}); }
+  runBackfill() { return this.req<{ memories_processed: number; entities_linked: number; edges_created: number; reflections_created: number; communities_found: number; errors: number }>("POST", "/v1/maintenance/backfill", {}); }
   async listEntities(limit = 100): Promise<Entity[]> {
     return (await this.req<{ entities: Entity[] }>("GET", `/v1/entities?limit=${limit}`)).entities;
   }

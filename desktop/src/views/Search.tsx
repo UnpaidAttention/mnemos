@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { useSearch } from "../api/queries";
 import { useUiStore } from "../store/ui";
 import { RankBars } from "../components/RankBars";
@@ -92,6 +93,17 @@ export function Search() {
                 <TierChip tier={h.memory.tier} />
               </button>
               <RankBars explain={h.explain} />
+              <div className="flex items-center gap-3 border-t border-border/60 pt-2">
+                <Link
+                  to={`/editor/${h.memory.id}` as "/"}
+                  className="label text-accent hover:underline"
+                >
+                  edit
+                </Link>
+                <span className="label mono text-[0.65rem] text-text-muted opacity-70">
+                  {h.memory.valid_at.slice(0, 10)}
+                </span>
+              </div>
             </Card>
           );
         })}

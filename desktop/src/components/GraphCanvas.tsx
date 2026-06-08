@@ -20,7 +20,7 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect }: Gra
 
   useEffect(() => {
     if (!ref.current) return;
-    const g = new Graph();
+    const g = new Graph({ multi: true, type: "directed" });
     const maxPpr = Math.max(0.0001, ...Object.values(pprScores ?? {}));
 
     data.nodes.forEach((n, i) => {
@@ -30,7 +30,7 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect }: Gra
         colorByCommunity && communityIdx >= 0
           ? COMMUNITY_COLORS[communityIdx % COMMUNITY_COLORS.length]
           : KIND_COLOR;
-      g.addNode(n.id, {
+      g.mergeNode(n.id, {
         label: n.name,
         x: Math.cos((i / Math.max(1, data.nodes.length)) * 2 * Math.PI),
         y: Math.sin((i / Math.max(1, data.nodes.length)) * 2 * Math.PI),

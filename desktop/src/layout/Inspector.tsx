@@ -1,4 +1,5 @@
 import { FileSearch } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { useUiStore } from "../store/ui";
 import { useMemory, useAudit } from "../api/queries";
 import { TierChip } from "../design/primitives";
@@ -29,7 +30,15 @@ export function Inspector() {
       {mem && (
         <div className="space-y-3">
           <h2 className={`display text-base ${mem.invalid_at ? "line-through opacity-60" : ""}`}>{mem.title}</h2>
-          <TierChip tier={mem.tier} />
+          <div className="flex items-center gap-2">
+            <TierChip tier={mem.tier} />
+            <Link
+              to={`/editor/${mem.id}` as "/"}
+              className="label text-accent hover:underline text-xs"
+            >
+              Open in editor →
+            </Link>
+          </div>
           <dl className="text-sm space-y-1">
             <div className="flex justify-between"><dt className="text-text-muted">strength</dt><dd className="mono">{mem.strength.toFixed(2)}</dd></div>
             <div className="flex justify-between"><dt className="text-text-muted">importance</dt><dd className="mono">{mem.importance.toFixed(2)}</dd></div>

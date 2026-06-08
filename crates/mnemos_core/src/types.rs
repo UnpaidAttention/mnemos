@@ -15,6 +15,8 @@ pub enum MemoryType {
     Project,
     Entity,
     CommunitySummary,
+    SourceSummary,
+    Synthesis,
 }
 
 /// Provenance link: which session and chunks the memory was derived from.

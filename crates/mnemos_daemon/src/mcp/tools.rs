@@ -112,6 +112,38 @@ pub fn descriptors() -> Vec<Value> {
                 "required": ["wrong", "right", "why"]
             }
         }),
+        json!({
+            "name": "persist_synthesis",
+            "description": "Save a synthesized answer, summary, or comparison back to the vault.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string" },
+                    "content": { "type": "string" },
+                    "sources": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["title", "content", "sources"]
+            }
+        }),
+        json!({
+            "name": "ingest_source",
+            "description": "Ingest a raw file or document, summarize it, and extract key facts.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "lint_vault",
+            "description": "Trigger a semantic linter health check on the vault.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
     ]
 }
 
@@ -126,6 +158,9 @@ pub async fn call(state: &AppState, name: &str, args: &Value) -> anyhow::Result<
         "reflect" => reflect_tool(state, args).await,
         "list_reflections" => list_reflections_tool(state, args).await,
         "correct" => correct(state, args).await,
+        "persist_synthesis" => persist_synthesis(state, args).await,
+        "ingest_source" => ingest_source(state, args).await,
+        "lint_vault" => lint_vault(state, args).await,
         other => Err(anyhow::anyhow!("unknown tool: {other}")),
     }
 }
@@ -285,4 +320,129 @@ fn tool_content_json(value: Value) -> Value {
             "text": value.to_string()
         }]
     })
+}
+
+async fn persist_synthesis(state: &AppState, args: &Value) -> anyhow::Result<Value> {
+    let title = args["title"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("title required"))?
+        .to_string();
+    let content = args["content"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("content required"))?
+        .to_string();
+    let sources_json = args["sources"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("sources array required"))?;
+        
+    let mut sources = Vec::new();
+    for v in sources_json {
+        if let Some(s) = v.as_str() {
+            sources.push(s.to_string());
+        }
+    }
+    
+    let id = state.vault.remember_synthesis(
+        &content,
+        Some(title),
+        vec!["synthesis".to_string()],
+        &sources,
+        vec![]
+    )
+    .await?;
+
+    Ok(tool_content_json(json!({
+        "status": "success",
+        "synthesis_id": id
+    })))
+}
+
+async fn ingest_source(state: &AppState, args: &Value) -> anyhow::Result<Value> {
+    let path_str = args["path"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("path required"))?;
+    let path = std::path::Path::new(path_str);
+    
+    let content = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to read source file: {e}"))?;
+        
+    let llm = state
+        .llm
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("no LLM configured; ingestion unavailable"))?;
+
+    let chunk = mnemos_core::types::Chunk {
+        id: mnemos_core::id::new_memory_id(),
+        session_id: "sess_source_ingest".into(),
+        speaker: Some("source_document".into()),
+        ordinal: 0,
+        body: content.clone(),
+        created_at: chrono::Utc::now(),
+        source_tool: Some("ingest_source".into()),
+        source_meta: Some(serde_json::json!({ "file_path": path_str })),
+    };
+
+    let custom_schema = state.vault.load_custom_schema();
+    let facts = mnemos_core::pipeline::extract::extract_facts(
+        &[chunk],
+        llm.as_ref(),
+        custom_schema.as_deref()
+    )
+    .await?;
+
+    let prov = mnemos_core::types::Provenance {
+        session: Some("sess_source_ingest".into()),
+        chunks: vec![path_str.to_string()],
+    };
+
+    let mut added_ids = Vec::new();
+    for fact in &facts {
+        let (_op, new_id) = mnemos_core::pipeline::resolve::resolve_and_apply(
+            &state.vault,
+            fact,
+            prov.clone(),
+            llm.as_ref()
+        )
+        .await?;
+        if let Some(id) = new_id {
+            added_ids.push(id);
+        }
+    }
+
+    let summary_title = format!("Summary of {}", path.file_name().unwrap_or_default().to_string_lossy());
+    let summary_prompt = mnemos_core::providers::CompletionRequest::new(
+        "Generate a concise one-paragraph summary of the following document content.",
+        &content,
+    );
+    let summary_body = llm.complete(&summary_prompt).await?;
+    let summary_id = state.vault.remember(
+        &summary_body,
+        mnemos_core::vault::RememberOpts {
+            title: Some(summary_title),
+            tier: mnemos_core::Tier::Reflection,
+            kind: mnemos_core::types::MemoryType::SourceSummary,
+            tags: vec!["source-summary".to_string()],
+            source_tool: Some("ingest_source".into()),
+            ..Default::default()
+        }
+    )
+    .await?;
+
+    Ok(tool_content_json(json!({
+        "status": "success",
+        "summary_id": summary_id,
+        "facts_extracted": facts.len(),
+        "facts_added": added_ids
+    })))
+}
+
+async fn lint_vault(state: &AppState, _args: &Value) -> anyhow::Result<Value> {
+    let llm = state
+        .llm
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("no LLM configured; linting unavailable"))?;
+        
+    let result = mnemos_core::pipeline::lint::run_lint(state.vault.storage(), llm.as_ref()).await?;
+    Ok(tool_content_json(serde_json::to_value(result)?))
 }

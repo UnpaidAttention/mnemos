@@ -10,6 +10,8 @@ pub mod extract;
 pub mod graph;
 pub mod reflect;
 pub mod resolve;
+pub mod index_log;
+pub mod lint;
 
 use serde::{Deserialize, Serialize};
 

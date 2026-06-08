@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "@tanstack/react-router";
+import { useParams, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemory } from "../api/queries";
 import { client } from "../api/client";
@@ -7,6 +7,7 @@ import { CodeMirrorView } from "../components/CodeMirror";
 import { Button, Skeleton, TierChip } from "../design/primitives";
 
 export function Editor({ id: idProp }: { id?: string }) {
+  const navigate = useNavigate();
   const params = useParams({ strict: false }) as { id?: string };
   const id = idProp ?? params.id ?? null;
   const { data: mem, isLoading, isError } = useMemory(id);
@@ -64,6 +65,19 @@ export function Editor({ id: idProp }: { id?: string }) {
 
   return (
     <div className="p-6 space-y-4 max-w-3xl">
+      {/* Breadcrumb navigation */}
+      <nav className="flex items-center gap-2 text-sm text-text-muted" aria-label="Breadcrumb">
+        <button
+          onClick={() => void navigate({ to: "/" })}
+          className="hover:text-accent transition-colors duration-100"
+          aria-label="Back to Browser"
+        >
+          ← Browser
+        </button>
+        <span aria-hidden>/</span>
+        <span className="truncate text-text">{mem.title}</span>
+      </nav>
+
       {invalid && (
         <div
           className="border border-dashed border-tier-procedural rounded-md px-3 py-2 text-sm text-tier-procedural"

@@ -53,6 +53,13 @@ pub fn default_binary_path() -> PathBuf {
     if let Ok(env) = std::env::var("MNEMOS_BUNDLED_BIN_DIR") {
         return PathBuf::from(env).join("llama-server");
     }
+    // XDG data home: ~/.local/share/mnemos/assets/llama-server
+    if let Some(xdg) = xdg_assets_dir() {
+        let p = xdg.join("llama-server");
+        if p.exists() {
+            return p;
+        }
+    }
     // Packaged install: wrapper at /usr/bin/mnemos-llama-server sets
     // LD_LIBRARY_PATH=/usr/lib/mnemos so the dynamically-linked binary can
     // find its bundled .so neighbors.
@@ -78,11 +85,31 @@ pub fn default_model_path() -> PathBuf {
     if let Ok(env) = std::env::var("MNEMOS_BUNDLED_MODEL_DIR") {
         return PathBuf::from(env).join("all-MiniLM-L6-v2.Q8_0.gguf");
     }
+    // XDG data home: ~/.local/share/mnemos/assets/all-MiniLM-L6-v2.Q8_0.gguf
+    if let Some(xdg) = xdg_assets_dir() {
+        let p = xdg.join("all-MiniLM-L6-v2.Q8_0.gguf");
+        if p.exists() {
+            return p;
+        }
+    }
     let install = PathBuf::from("/usr/lib/mnemos/all-MiniLM-L6-v2.Q8_0.gguf");
     if install.exists() {
         return install;
     }
     PathBuf::from("assets/all-MiniLM-L6-v2.Q8_0.gguf")
+}
+
+/// Resolve `$XDG_DATA_HOME/mnemos/assets/` (defaults to `~/.local/share/mnemos/assets/`).
+pub fn xdg_assets_dir() -> Option<PathBuf> {
+    let base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            directories::BaseDirs::new()
+                .map(|b| b.data_dir().to_path_buf())
+        })?;
+    Some(base.join("mnemos").join("assets"))
 }
 
 /// Handle returned by [`spawn`]. Drop or call [`BundledHandle::shutdown`] to

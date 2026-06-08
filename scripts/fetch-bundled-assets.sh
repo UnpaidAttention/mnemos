@@ -75,7 +75,7 @@ else
     echo "✓ $TARGET_BINARY (cached)"
 fi
 
-# Model file
+# Embedder model file
 TARGET_MODEL="assets/${MODEL_NAME}"
 if [[ ! -f "$TARGET_MODEL" ]]; then
     echo "=== fetching ${MODEL_NAME} ==="
@@ -90,9 +90,38 @@ if [[ "$MODEL_SHA256" != "<FILL_AFTER_FIRST_DOWNLOAD>" ]]; then
     verify_sha "$TARGET_MODEL" "$MODEL_SHA256"
 fi
 
+# ── LLM model (Qwen3-0.6B Q4_K_M) ──────────────────────────────────────────
+# Used by the bundled LLM server for the learning pipeline (entity extraction,
+# reflections, community summaries). ~462 MB quantized — runs well on CPU.
+LLM_MODEL_NAME="Qwen3-0.6B-Q4_K_M.gguf"
+LLM_MODEL_URL="https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-Q4_K_M.gguf"
+LLM_MODEL_SHA256="<FILL_AFTER_FIRST_DOWNLOAD>"
+
+TARGET_LLM="assets/${LLM_MODEL_NAME}"
+if [[ ! -f "$TARGET_LLM" ]]; then
+    echo "=== fetching ${LLM_MODEL_NAME} ==="
+    curl -fL --retry 3 -o "$TARGET_LLM" "$LLM_MODEL_URL"
+    echo "✓ $TARGET_LLM"
+else
+    echo "✓ $TARGET_LLM (cached)"
+fi
+
+if [[ "$LLM_MODEL_SHA256" != "<FILL_AFTER_FIRST_DOWNLOAD>" ]]; then
+    verify_sha "$TARGET_LLM" "$LLM_MODEL_SHA256"
+fi
+
+# ── Symlink for env-var resolution ───────────────────────────────────────────
+# MNEMOS_BUNDLED_BIN_DIR resolves to <dir>/llama-server, but the fetched binary
+# is llama-server-linux-x86_64. Create a symlink to bridge the naming gap.
+if [[ -f "$TARGET_BINARY" ]] && [[ ! -e "assets/llama-server" ]]; then
+    ln -sf "$(basename "$TARGET_BINARY")" "assets/llama-server"
+    echo "✓ assets/llama-server → $(basename "$TARGET_BINARY")"
+fi
+
 echo
 echo "=== summary ==="
-ls -la assets/
+ls -la assets/*.gguf assets/llama-server* 2>/dev/null
 echo
 echo "Total size:"
-du -ch assets/llama-server-linux-x86_64 assets/${MODEL_NAME} | tail -1
+du -ch assets/llama-server-linux-x86_64 assets/${MODEL_NAME} assets/${LLM_MODEL_NAME} 2>/dev/null | tail -1
+

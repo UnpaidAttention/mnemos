@@ -34,11 +34,16 @@ impl PipelineHandle {
 }
 
 /// Spawn the runner. It processes `SessionEnded` events until told to stop.
+/// On startup, it first catches up any sessions with `processed_at IS NULL`
+/// (e.g. from previous failed runs or daemon restarts).
 pub fn spawn(state: AppState) -> PipelineHandle {
     let (tx, mut rx) = watch::channel(false);
     // Subscribe BEFORE spawning so no events are missed between spawn and first poll.
     let mut events = state.events.subscribe();
     let join = tokio::spawn(async move {
+        // Catch-up: retry any sessions that were never successfully processed.
+        catch_up(&state).await;
+
         loop {
             tokio::select! {
                 _ = rx.changed() => {
@@ -58,46 +63,122 @@ pub fn spawn(state: AppState) -> PipelineHandle {
     PipelineHandle { join, shutdown: tx }
 }
 
+/// Find and process any sessions whose `processed_at` is still NULL.
+/// Waits for the LLM to become available before processing.
+async fn catch_up(state: &AppState) {
+    // Wait for the LLM to become available (it starts asynchronously).
+    if state.llm.is_none() {
+        tracing::info!("catch-up: no LLM configured, skipping");
+        return;
+    }
+    // Await the readiness signal from the bundled LLM health check (or
+    // immediate for non-bundled providers).  Uses watch::Receiver::wait_for
+    // which returns immediately if the value is already true.
+    let mut rx = state.llm_ready_rx.clone();
+    if tokio::time::timeout(
+        std::time::Duration::from_secs(200),
+        rx.wait_for(|ready| *ready),
+    )
+    .await
+    .is_err()
+    {
+        tracing::warn!("catch-up: LLM not ready after 200s, skipping");
+        return;
+    }
+
+    let ids = match unprocessed_session_ids(state).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(error = %e, "catch-up: failed to query unprocessed sessions");
+            return;
+        }
+    };
+    if ids.is_empty() {
+        return;
+    }
+    tracing::info!(count = ids.len(), "catch-up: retrying unprocessed sessions");
+    for id in ids {
+        process_session(state, &id).await;
+    }
+}
+
+/// Query the DB for session IDs that have `processed_at IS NULL` and an
+/// `ended_at` timestamp (i.e. the session finished but wasn't processed).
+async fn unprocessed_session_ids(state: &AppState) -> anyhow::Result<Vec<String>> {
+    let conn = state.vault.storage().conn()?;
+    let mut rows = conn
+        .query(
+            "SELECT id FROM sessions WHERE processed_at IS NULL AND ended_at IS NOT NULL ORDER BY started_at ASC",
+            params![],
+        )
+        .await?;
+    let mut ids = Vec::new();
+    while let Some(r) = rows.next().await? {
+        ids.push(r.get::<String>(0)?);
+    }
+    Ok(ids)
+}
+
 async fn process_session(state: &AppState, session_id: &str) {
     let Some(llm) = state.llm.clone() else {
         return;
     };
-    match run_pipeline(state, session_id, llm.as_ref()).await {
-        Ok(n) => {
-            state
-                .pipeline_status
-                .record(RecentRun {
+    // Retry with exponential backoff on transient failures.
+    const MAX_RETRIES: u32 = 3;
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..=MAX_RETRIES {
+        match run_pipeline(state, session_id, llm.as_ref()).await {
+            Ok(n) => {
+                state
+                    .pipeline_status
+                    .record(RecentRun {
+                        session_id: session_id.to_string(),
+                        facts_added: n,
+                        ok: true,
+                        at: Utc::now().to_rfc3339(),
+                    })
+                    .await;
+                state.events.publish(Event::PipelineCompleted {
                     session_id: session_id.to_string(),
                     facts_added: n,
-                    ok: true,
-                    at: Utc::now().to_rfc3339(),
-                })
-                .await;
-            state.events.publish(Event::PipelineCompleted {
-                session_id: session_id.to_string(),
-                facts_added: n,
-            });
-            maybe_reflect(state, llm.as_ref(), n).await;
-            maybe_mine_and_harden(state, llm.as_ref(), session_id).await;
-            maybe_prune_chunks(state, session_id).await;
-        }
-        Err(e) => {
-            tracing::error!(session_id = %session_id, error = %e, "pipeline failed");
-            state
-                .pipeline_status
-                .record(RecentRun {
-                    session_id: session_id.to_string(),
-                    facts_added: 0,
-                    ok: false,
-                    at: Utc::now().to_rfc3339(),
-                })
-                .await;
-            state.events.publish(Event::PipelineFailed {
-                session_id: session_id.to_string(),
-                error: e.to_string(),
-            });
+                });
+                maybe_reflect(state, llm.as_ref(), n).await;
+                maybe_mine_and_harden(state, llm.as_ref(), session_id).await;
+                maybe_prune_chunks(state, session_id).await;
+                return;
+            }
+            Err(e) => {
+                if attempt < MAX_RETRIES {
+                    let delay = std::time::Duration::from_secs(1 << (attempt + 1));
+                    tracing::warn!(
+                        session_id = %session_id,
+                        attempt = attempt + 1,
+                        retry_in = ?delay,
+                        error = %e,
+                        "pipeline failed, retrying"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                last_err = Some(e);
+            }
         }
     }
+    // All retries exhausted.
+    let e = last_err.unwrap();
+    tracing::error!(session_id = %session_id, error = %e, "pipeline failed after {MAX_RETRIES} retries");
+    state
+        .pipeline_status
+        .record(RecentRun {
+            session_id: session_id.to_string(),
+            facts_added: 0,
+            ok: false,
+            at: Utc::now().to_rfc3339(),
+        })
+        .await;
+    state.events.publish(Event::PipelineFailed {
+        session_id: session_id.to_string(),
+        error: e.to_string(),
+    });
 }
 
 async fn run_pipeline(
@@ -114,7 +195,8 @@ async fn run_pipeline(
         return Ok(0);
     }
     let chunk_ids: Vec<String> = chunks.iter().map(|c| c.id.clone()).collect();
-    let facts = extract_facts(&chunks, llm).await?;
+    let custom_schema = state.vault.load_custom_schema();
+    let facts = extract_facts(&chunks, llm, custom_schema.as_deref()).await?;
     let prov = Provenance {
         session: Some(session_id.to_string()),
         chunks: chunk_ids,

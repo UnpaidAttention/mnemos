@@ -1,0 +1,11 @@
+[Unit]
+Description=Mnemos Memory Daemon Socket
+Documentation=https://github.com/YourOrg/mnemos
+
+[Socket]
+ListenStream=127.0.0.1:7423
+# Accept connections only from localhost for security.
+FreeBind=yes
+
+[Install]
+WantedBy=sockets.target

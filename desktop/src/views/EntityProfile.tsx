@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "@tanstack/react-router";
+import { useParams, useNavigate } from "@tanstack/react-router";
 import { useUiStore } from "../store/ui";
 import { useEntity } from "../api/queries";
 import { EntityNeighborhood } from "../components/EntityNeighborhood";
@@ -12,6 +12,7 @@ export function EntityProfile({ id: idProp }: { id?: string }) {
   const { data, isLoading, isError } = useEntity(id);
   const select = useUiStore((s) => s.select);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const navigate = useNavigate();
 
   if (!id || isLoading) {
     return (
@@ -37,6 +38,19 @@ export function EntityProfile({ id: idProp }: { id?: string }) {
 
   return (
     <div className="p-6 space-y-4 max-w-3xl">
+      {/* Breadcrumb navigation */}
+      <nav className="flex items-center gap-2 text-sm text-text-muted" aria-label="Breadcrumb">
+        <button
+          onClick={() => void navigate({ to: "/graph" as "/" })}
+          className="hover:text-accent transition-colors duration-100"
+          aria-label="Back to Graph"
+        >
+          ← Graph
+        </button>
+        <span aria-hidden>/</span>
+        <span className="truncate text-text">{data.name}</span>
+      </nav>
+
       <h1 className="display text-2xl">{data.name}</h1>
       {data.description && (
         <p className="text-text-muted">{data.description}</p>
