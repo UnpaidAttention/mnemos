@@ -6,7 +6,7 @@ import { AutonomySettings } from "./AutonomySettings";
 import { Button, Card, Skeleton } from "../design/primitives";
 import { Connections } from "./Connections";
 import { ModelPicker, EMBEDDER_MODELS, LLM_MODELS } from "../components/ModelPicker";
-import { checkOllama, installOllama, pullModel, applyLlmConfig, applyEmbedderConfig, OllamaStatus } from "../api/tauri";
+import { checkOllama, installOllama, pullModel, applyLlmConfig, applyEmbedderConfig, checkForUpdates, installUpdate, OllamaStatus, UpdateInfo } from "../api/tauri";
 
 type Field =
   | { key: string; label: string; kind: "text" | "password" }
@@ -133,6 +133,12 @@ export function Settings() {
   const [pullProgress, setPullProgress] = useState(0);
   const [changingEmbedder, setChangingEmbedder] = useState(false);
   const [changingLlm, setChangingLlm] = useState(false);
+
+  // Update state
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   const refreshOllama = useCallback(async () => {
     try {
@@ -411,11 +417,89 @@ export function Settings() {
         </Card>
       ))}
       <VaultIO />
-      {versionInfo && (
-        <p className="label text-text-muted text-center text-xs pt-4">
-          Mnemos v{versionInfo.version} · {versionInfo.git_hash}
-        </p>
-      )}
+
+      {/* ── Updates ── */}
+      <Card className="p-4">
+        <div className="space-y-3">
+          <div className="display text-base">Updates</div>
+          <div className="flex items-center gap-3">
+            {versionInfo && (
+              <span className="label text-text-muted text-xs">
+                Current: v{versionInfo.version} · {versionInfo.git_hash}
+              </span>
+            )}
+            <Button
+              disabled={checkingUpdates}
+              onClick={async () => {
+                setCheckingUpdates(true);
+                setUpdateError(null);
+                try {
+                  const info = await checkForUpdates();
+                  if (info) setUpdateInfo(info);
+                } catch (e) {
+                  setUpdateError(e instanceof Error ? e.message : "Check failed");
+                }
+                setCheckingUpdates(false);
+              }}
+            >
+              {checkingUpdates ? "Checking…" : "Check for updates"}
+            </Button>
+          </div>
+
+          {updateError && (
+            <p role="alert" className="label text-tier-procedural">{updateError}</p>
+          )}
+
+          {updateInfo && !updateInfo.update_available && (
+            <p className="label text-accent">✓ You&apos;re on the latest version (v{updateInfo.current_version})</p>
+          )}
+
+          {updateInfo && updateInfo.update_available && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-accent font-semibold text-sm">
+                  Update available: v{updateInfo.latest_version}
+                </span>
+                {updateInfo.asset_name && (
+                  <span className="label text-text-muted text-xs">
+                    ({updateInfo.asset_name})
+                  </span>
+                )}
+              </div>
+              {updateInfo.release_notes && (
+                <p className="text-text-muted text-xs font-body whitespace-pre-line max-h-24 overflow-y-auto">
+                  {updateInfo.release_notes}
+                </p>
+              )}
+              {updateInfo.asset_url && updateInfo.asset_name && (
+                <Button
+                  disabled={installingUpdate}
+                  onClick={async () => {
+                    setInstallingUpdate(true);
+                    setUpdateError(null);
+                    try {
+                      await installUpdate(updateInfo.asset_url!, updateInfo.asset_name!);
+                    } catch (e) {
+                      setUpdateError(e instanceof Error ? e.message : "Install failed");
+                    }
+                    setInstallingUpdate(false);
+                  }}
+                >
+                  {installingUpdate ? "Installing update…" : `Install v${updateInfo.latest_version}`}
+                </Button>
+              )}
+              {!updateInfo.asset_url && (
+                <p className="label text-text-muted text-xs">
+                  No package found for your system. Visit the{" "}
+                  <a href={updateInfo.release_url} target="_blank" rel="noreferrer" className="text-accent underline">
+                    release page
+                  </a>.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }

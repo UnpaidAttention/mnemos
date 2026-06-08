@@ -447,3 +447,184 @@ pub async fn apply_embedder_config(
 
     Ok(())
 }
+
+// ─── In-app updates ────────────────────────────────────────────────────
+
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const GITHUB_REPO: &str = "UnpaidAttention/mnemos";
+
+#[derive(Serialize)]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub update_available: bool,
+    pub release_url: String,
+    pub release_notes: String,
+    /// Which asset to download: .deb or .rpm filename
+    pub asset_name: Option<String>,
+    pub asset_url: Option<String>,
+}
+
+/// Detect the Linux distro family: "debian" (.deb) or "fedora" (.rpm).
+fn detect_distro() -> &'static str {
+    // Check /etc/os-release for ID_LIKE or ID
+    if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+        let lower = content.to_lowercase();
+        if lower.contains("fedora") || lower.contains("rhel") || lower.contains("centos") || lower.contains("suse") {
+            return "fedora";
+        }
+    }
+    // Also check if rpm command exists
+    if std::process::Command::new("rpm").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        if !std::process::Command::new("dpkg").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+            return "fedora";
+        }
+    }
+    "debian"
+}
+
+/// Simple semver comparison: returns true if `latest` is newer than `current`.
+fn is_newer(current: &str, latest: &str) -> bool {
+    let parse = |s: &str| -> (u32, u32, u32) {
+        let s = s.trim_start_matches('v');
+        let mut parts = s.split('.');
+        let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        (major, minor, patch)
+    };
+    parse(latest) > parse(current)
+}
+
+/// Check GitHub releases for a newer version.
+#[tauri::command]
+pub async fn check_for_updates() -> Result<UpdateInfo, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("mnemos-desktop")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
+    let resp = client.get(&url).send().await.map_err(|e| format!("GitHub API: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned {}", resp.status()));
+    }
+
+    let release: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
+
+    let latest_tag = release.get("tag_name")
+        .and_then(|t| t.as_str())
+        .unwrap_or("v0.0.0")
+        .to_string();
+    let latest_version = latest_tag.trim_start_matches('v').to_string();
+    let update_available = is_newer(CURRENT_VERSION, &latest_version);
+    let release_url = release.get("html_url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
+    let release_notes = release.get("body")
+        .and_then(|b| b.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Find the right asset for this distro
+    let distro = detect_distro();
+    let ext = if distro == "fedora" { ".rpm" } else { ".deb" };
+
+    let (asset_name, asset_url) = release.get("assets")
+        .and_then(|a| a.as_array())
+        .and_then(|assets| {
+            assets.iter().find(|a| {
+                a.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|n| n.ends_with(ext))
+                    .unwrap_or(false)
+            })
+        })
+        .map(|asset| {
+            let name = asset.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+            let url = asset.get("browser_download_url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+            (Some(name), Some(url))
+        })
+        .unwrap_or((None, None));
+
+    Ok(UpdateInfo {
+        current_version: CURRENT_VERSION.to_string(),
+        latest_version,
+        update_available,
+        release_url,
+        release_notes,
+        asset_name,
+        asset_url,
+    })
+}
+
+/// Download and install an update package.
+#[tauri::command]
+pub async fn install_update(app: AppHandle, asset_url: String, asset_name: String) -> Result<(), String> {
+    use tauri::Emitter;
+    app.emit("update-progress", "downloading").map_err(|e| e.to_string())?;
+
+    // 1. Download the package to a temp location
+    let tmp_dir = std::env::temp_dir().join("mnemos-update");
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("create temp dir: {e}"))?;
+    let pkg_path = tmp_dir.join(&asset_name);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .user_agent("mnemos-desktop")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client.get(&asset_url)
+        .send()
+        .await
+        .map_err(|e| format!("download: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", resp.status()));
+    }
+
+    let bytes = resp.bytes().await.map_err(|e| format!("read body: {e}"))?;
+    std::fs::write(&pkg_path, &bytes).map_err(|e| format!("write package: {e}"))?;
+
+    app.emit("update-progress", "installing").map_err(|e| e.to_string())?;
+
+    // 2. Install using the appropriate package manager with pkexec (graphical sudo)
+    let install_cmd = if asset_name.ends_with(".rpm") {
+        vec!["pkexec", "rpm", "-U", "--force"]
+    } else {
+        vec!["pkexec", "dpkg", "-i"]
+    };
+
+    let pkg_path_str = pkg_path.to_string_lossy().to_string();
+    let mut args: Vec<&str> = install_cmd;
+    args.push(&pkg_path_str);
+
+    let program = args.remove(0);
+    let pkg_path_clone = pkg_path.clone();
+    let status = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(program)
+            .args(&args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .status()
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+    .map_err(|e| format!("run installer: {e}"))?;
+
+    // Clean up
+    let _ = std::fs::remove_file(&pkg_path_clone);
+    let _ = std::fs::remove_dir(&tmp_dir);
+
+    if !status.success() {
+        return Err("Installation failed. You may need to install manually.".into());
+    }
+
+    app.emit("update-progress", "done").map_err(|e| e.to_string())?;
+
+    Ok(())
+}

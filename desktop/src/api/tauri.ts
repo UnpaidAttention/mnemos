@@ -76,3 +76,25 @@ export function applyLlmConfig(kind: string, model: string): Promise<null> {
 export function applyEmbedderConfig(kind: string, model: string, dim: number): Promise<null> {
   return invokeSafe("apply_embedder_config", { kind, model, dim });
 }
+
+// ─── In-app updates ────────────────────────────────────────────────────
+
+export interface UpdateInfo {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_url: string;
+  release_notes: string;
+  asset_name: string | null;
+  asset_url: string | null;
+}
+
+/** Check GitHub releases for a newer version. */
+export function checkForUpdates(): Promise<UpdateInfo | null> {
+  return invokeSafe<UpdateInfo>("check_for_updates");
+}
+
+/** Download and install an update package. */
+export function installUpdate(assetUrl: string, assetName: string): Promise<null> {
+  return invokeSafe("install_update", { assetUrl, assetName });
+}

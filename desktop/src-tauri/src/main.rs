@@ -35,6 +35,8 @@ fn main() {
             commands::pull_model,
             commands::apply_llm_config,
             commands::apply_embedder_config,
+            commands::check_for_updates,
+            commands::install_update,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
