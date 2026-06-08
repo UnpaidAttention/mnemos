@@ -248,7 +248,7 @@ export function Settings() {
 
       {/* ── Embedder model picker ── */}
       <Card className="p-4">
-        <details className="space-y-3">
+        <details open className="space-y-3">
           <summary className="display text-base cursor-pointer">Search Model (Embedder)</summary>
           <div className="pt-2">
             <ModelPicker
@@ -290,7 +290,7 @@ export function Settings() {
 
       {/* ── LLM model picker ── */}
       <Card className="p-4">
-        <details className="space-y-3">
+        <details open className="space-y-3">
           <summary className="display text-base cursor-pointer">Learning Model (Chat LLM)</summary>
           <div className="pt-2">
             <ModelPicker
@@ -343,7 +343,7 @@ export function Settings() {
                     <span className="label">{f.label}</span>
                     {f.kind === "text" && (
                       <input
-                        className="bg-surface border border-border rounded-md px-2 py-1 mono text-sm"
+                    className="bg-surface border border-border rounded-md px-2 py-1 mono text-sm text-text"
                         value={String(v ?? "")}
                         onChange={(e) => onChange(e.target.value)}
                       />
@@ -351,7 +351,7 @@ export function Settings() {
                     {f.kind === "password" && (
                       <input
                         type="password"
-                        className="bg-surface border border-border rounded-md px-2 py-1 mono text-sm"
+                        className="bg-surface border border-border rounded-md px-2 py-1 mono text-sm text-text"
                         value={String(v ?? "")}
                         onChange={(e) => onChange(e.target.value)}
                       />
@@ -359,7 +359,7 @@ export function Settings() {
                     {f.kind === "number" && (
                       <input
                         type="number"
-                        className="bg-surface border border-border rounded-md px-2 py-1 mono text-sm"
+                        className="bg-surface border border-border rounded-md px-2 py-1 mono text-sm text-text"
                         value={Number(v ?? 0)}
                         min={f.min}
                         max={f.max}
@@ -392,12 +392,12 @@ export function Settings() {
                     )}
                     {f.kind === "select" && (
                       <select
-                        className="bg-surface border border-border rounded-md px-2 py-1 text-sm"
+                        className="bg-surface border border-border rounded-md px-2 py-1 text-sm text-text"
                         value={String(v ?? "")}
                         onChange={(e) => onChange(e.target.value)}
                       >
                         {f.options.map((o) => (
-                          <option key={o} value={o}>
+                          <option key={o} value={o} className="bg-surface text-text">
                             {o}
                           </option>
                         ))}
