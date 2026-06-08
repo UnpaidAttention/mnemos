@@ -6,7 +6,7 @@ import { AutonomySettings } from "./AutonomySettings";
 import { Button, Card, Skeleton } from "../design/primitives";
 import { Connections } from "./Connections";
 import { ModelPicker, EMBEDDER_MODELS, LLM_MODELS } from "../components/ModelPicker";
-import { checkOllama, installOllama, pullModel, applyLlmConfig, applyEmbedderConfig, checkForUpdates, installUpdate, readModelConfig, OllamaStatus, UpdateInfo } from "../api/tauri";
+import { checkOllama, installOllama, pullModel, applyLlmConfig, checkForUpdates, installUpdate, readModelConfig, OllamaStatus, UpdateInfo } from "../api/tauri";
 
 type Field =
   | { key: string; label: string; kind: "text" | "password" }
@@ -338,7 +338,7 @@ export function Settings() {
               </Button>
             )}
             <p className="text-text-muted text-xs mt-1">
-              ⚠ Changing embedder model requires re-indexing all memories. This may take a while.
+              ⚠ Changing embedder model will re-index all memories. This runs in the background and is safe to abort.
             </p>
             <div className="flex items-center justify-end gap-3 mt-3">
               {applyMsg && applyMsg.includes("Embedder") && (
@@ -348,26 +348,20 @@ export function Settings() {
                 disabled={changingEmbedder}
                 onClick={async () => {
                   const m = EMBEDDER_MODELS.find((e) => e.tag === selectedEmbedder);
-                  const newDim = m?.dim ?? 384;
-                  // Warn about dimension mismatch
-                  const currentDim = selectedEmbedder === "bundled" ? 384 : (m?.dim ?? 768);
-                  if (currentDim !== 384) {
-                    // Different dimension — vault will need re-indexing
-                    const ok = window.confirm(
-                      `Switching to ${m?.name ?? selectedEmbedder} (${currentDim}d) will require re-indexing all memories. Continue?`
-                    );
-                    if (!ok) return;
-                  }
+                  const targetKind = m?.provider === "ollama" ? "ollama" : "bundled";
+                  const targetModel = m?.provider === "ollama" ? m.tag : "all-MiniLM-L6-v2";
+                  const targetDim = m?.dim ?? 384;
+
+                  const ok = window.confirm(
+                    `Switch to ${m?.name ?? selectedEmbedder} (${targetDim}d)? All memories will be re-indexed in the background.`
+                  );
+                  if (!ok) return;
+
                   setChangingEmbedder(true);
                   setApplyMsg(null);
                   try {
-                    if (m && m.provider === "ollama") {
-                      await applyEmbedderConfig("ollama", m.tag, m.dim ?? 768);
-                    } else {
-                      await applyEmbedderConfig("bundled", "", 384);
-                    }
-                    setApplyMsg("✓ Embedder applied!");
-                    setTimeout(() => setApplyMsg(null), 5000);
+                    await client.startEmbedRebuild(targetKind, targetModel, targetDim);
+                    setApplyMsg("✓ Embedder migration started! Check the Migration tab for progress.");
                   } catch (e) {
                     const msg = e instanceof Error ? e.message : String(e);
                     setApplyMsg(`Embedder error: ${msg}`);
@@ -375,7 +369,7 @@ export function Settings() {
                   setChangingEmbedder(false);
                 }}
               >
-                {changingEmbedder ? "Applying…" : "Apply embedder"}
+                {changingEmbedder ? "Starting…" : "Apply embedder"}
               </Button>
             </div>
           </div>
