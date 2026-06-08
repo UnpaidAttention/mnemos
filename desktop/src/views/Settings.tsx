@@ -337,6 +337,9 @@ export function Settings() {
                 {ollamaInstalling ? "Installing Ollama…" : "Install Ollama"}
               </Button>
             )}
+            <p className="text-text-muted text-xs mt-1">
+              ⚠ Changing embedder model requires re-indexing all memories. This may take a while.
+            </p>
             <div className="flex items-center justify-end gap-3 mt-3">
               {applyMsg && applyMsg.includes("Embedder") && (
                 <span className={`label text-xs ${applyMsg.startsWith("✓") ? "text-accent" : "text-tier-procedural"}`}>{applyMsg}</span>
@@ -344,10 +347,20 @@ export function Settings() {
               <Button
                 disabled={changingEmbedder}
                 onClick={async () => {
+                  const m = EMBEDDER_MODELS.find((e) => e.tag === selectedEmbedder);
+                  const newDim = m?.dim ?? 384;
+                  // Warn about dimension mismatch
+                  const currentDim = selectedEmbedder === "bundled" ? 384 : (m?.dim ?? 768);
+                  if (currentDim !== 384) {
+                    // Different dimension — vault will need re-indexing
+                    const ok = window.confirm(
+                      `Switching to ${m?.name ?? selectedEmbedder} (${currentDim}d) will require re-indexing all memories. Continue?`
+                    );
+                    if (!ok) return;
+                  }
                   setChangingEmbedder(true);
                   setApplyMsg(null);
                   try {
-                    const m = EMBEDDER_MODELS.find((e) => e.tag === selectedEmbedder);
                     if (m && m.provider === "ollama") {
                       await applyEmbedderConfig("ollama", m.tag, m.dim ?? 768);
                     } else {
