@@ -37,9 +37,26 @@ pub fn build_llm_for_daemon(cfg: &Config) -> Option<Arc<dyn LlmProvider>> {
             }
         }
         LlmKind::Ollama => {
+            // Default to gemma4:12b when user hasn't explicitly set a model,
+            // or is still using the bundled model name from the default config.
+            let model = if cfg.llm.model.is_empty()
+                || cfg.llm.model == "Qwen3-0.6B"
+                || cfg.llm.model == "llama3.2"
+            {
+                "gemma4:12b".to_string()
+            } else {
+                cfg.llm.model.clone()
+            };
+            let url = if cfg.llm.url.is_empty()
+                || cfg.llm.url == "http://127.0.0.1:7425"
+            {
+                "http://localhost:11434".to_string()
+            } else {
+                cfg.llm.url.clone()
+            };
             let oc = OllamaLlmConfig {
-                base_url: cfg.llm.url.clone(),
-                model: cfg.llm.model.clone(),
+                base_url: url,
+                model,
                 timeout_secs: cfg.llm.timeout_secs,
             };
             match OllamaLlm::new(oc) {

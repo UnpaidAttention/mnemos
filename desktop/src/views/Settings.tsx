@@ -41,7 +41,7 @@ const SCHEMA: Section[] = [
     ],
   },
   {
-    title: "LLM",
+    title: "LLM (Learning Pipeline)",
     path: ["llm"],
     fields: [
       {
@@ -50,8 +50,8 @@ const SCHEMA: Section[] = [
         kind: "select",
         options: ["bundled", "ollama", "openai", "mock", "none"],
       },
-      { key: "url", label: "URL", kind: "text" },
-      { key: "model", label: "Model", kind: "text" },
+      { key: "url", label: "URL (e.g. http://localhost:11434 for Ollama)", kind: "text" },
+      { key: "model", label: "Model (e.g. gemma4:12b)", kind: "text" },
       { key: "timeout_secs", label: "Timeout (s)", kind: "number" },
     ],
   },

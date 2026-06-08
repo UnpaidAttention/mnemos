@@ -139,12 +139,36 @@ mnemos daemon start|stop|status|logs       # daemon management
 
 Settings are managed through the desktop app (**Settings** tab), or manually in `~/.config/mnemos/config.toml`.
 
-### Switching the Embedder or LLM
+### Learning Pipeline (LLM)
+
+The learning pipeline extracts facts from your AI sessions automatically. It needs a chat model. Three options:
+
+| Option | Model | Size | Setup |
+|--------|-------|------|-------|
+| **Bundled** (default) | Qwen3-0.6B | 462 MB, runs on CPU | Works out of the box — no setup needed |
+| **Ollama + Gemma 4** (recommended) | gemma4:12b | ~8 GB | Better quality; needs Ollama installed |
+| **OpenAI** | gpt-4o-mini | Cloud | Needs API key |
+
+**To switch to Ollama + Gemma 4 (recommended for best results):**
+
+```bash
+# 1. Install Ollama (https://ollama.ai)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 2. Pull the Gemma 4 model
+ollama pull gemma4:12b
+
+# 3. Switch Mnemos to use Ollama
+export MNEMOS_LLM=ollama
+mnemos daemon restart
+```
+
+Mnemos will automatically use `gemma4:12b` as the default model when Ollama is selected.
+
+### Switching the Embedder
 
 ```bash
 export MNEMOS_EMBEDDER=ollama       # bundled / ollama / openai / mock / none
-export MNEMOS_LLM=openai             # ollama / openai / mock / none
-export OPENAI_API_KEY=sk-...         # if using openai
 mnemos daemon restart
 ```
 

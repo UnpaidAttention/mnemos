@@ -43,6 +43,7 @@
     "resources": [
       "../../assets/llama-server-linux-x86_64",
       "../../assets/all-MiniLM-L6-v2.Q8_0.gguf",
+      "../../assets/Qwen3-0.6B-Q4_K_M.gguf",
       "../../assets/libllama-server-impl.so",
       "../../assets/libllama.so",
       "../../assets/libllama.so.0",
