@@ -10,60 +10,60 @@ plans.
 > `.deb`/`.rpm` also Linux-only. macOS and Windows still blocked on
 > upstream issues (see CHANGELOG § "Known limitations").
 
-### Linux (zero setup)
-
-> **NOTE: This repository is private. Release assets are not
-> anonymously downloadable. The `gh` CLI (authenticated) is required
-> for the install commands below. Public / anonymous install requires
-> making the repository (or a releases mirror) public — owner's
-> decision.**
-
-Download the release package with the `gh` CLI, then install the
-local file:
+### Quick start (build from source)
 
 ```bash
-# Replace X.Y.Z with the version you want (e.g. 0.8.0).
-gh release download vX.Y.Z --repo UnpaidAttention/mnemos \
-    -p 'mnemos-daemon_*_amd64.deb'          # Debian/Ubuntu
-sudo dpkg -i mnemos-daemon_X.Y.Z_amd64.deb
+# Prerequisites: Rust (stable ≥ 1.78), Node.js 20+, pnpm 9+
+# Debian/Ubuntu: sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev libappindicator3-dev patchelf libssl-dev
 
-# Fedora/RHEL
-gh release download vX.Y.Z --repo UnpaidAttention/mnemos \
-    -p 'mnemos-daemon-*.x86_64.rpm'
-sudo rpm -i mnemos-daemon-X.Y.Z-1.x86_64.rpm
-```
+git clone https://github.com/UnpaidAttention/mnemos.git
+cd mnemos
 
-The daemon package includes the bundled embedder (22 MB MiniLM-L6 GGUF
-+ llama.cpp's llama-server). Then:
+# Build the CLI + daemon
+cargo build --release -p mnemos_cli -p mnemos_daemon
+cp target/release/mnemos target/release/mnemosd ~/.cargo/bin/
 
-```
+# Start the daemon
+mnemosd &
+
+# Use it
 mnemos remember "User prefers Tauri"
 mnemos recall "what does the user like"
 ```
 
-Semantic recall works immediately. No Ollama install, no API key
-required.
+Semantic recall works immediately with the bundled embedder. No Ollama install, no API key required.
 
-### Desktop GUI (Linux)
+### Desktop GUI (build from source)
 
 ```bash
-# Debian/Ubuntu
-gh release download vX.Y.Z --repo UnpaidAttention/mnemos \
-    -p 'Mnemos_*_amd64.deb'
+cd desktop
+pnpm install
+pnpm tauri dev        # development mode with hot reload
+# Or build production bundles:
+pnpm tauri build      # outputs .deb/.rpm in src-tauri/target/release/bundle/
+```
+
+### Linux packages (pre-built)
+
+> v0.8.0 ships **Linux only** for the desktop bundle. macOS and Windows
+> are blocked on upstream issues (see CHANGELOG § "Known limitations").
+
+Download release packages from the [releases page][releases]:
+
+```bash
+# Daemon (Debian/Ubuntu) — replace X.Y.Z with the version
+sudo dpkg -i mnemos-daemon_X.Y.Z_amd64.deb
+
+# Desktop GUI (Debian/Ubuntu)
 sudo dpkg -i Mnemos_X.Y.Z_amd64.deb
 
 # Fedora/RHEL
-gh release download vX.Y.Z --repo UnpaidAttention/mnemos \
-    -p 'Mnemos-*.x86_64.rpm'
+sudo rpm -i mnemos-daemon-X.Y.Z-1.x86_64.rpm
 sudo rpm -i Mnemos-X.Y.Z-1.x86_64.rpm
 ```
 
-> AppImage is not currently produced (AppImage bundling of the
-> bundled embedder `.so` libs is deferred). Use `.deb` or `.rpm`.
-
-> The desktop `.deb`/`.rpm` now includes the bundled embedder
-> libraries. The daemon manages llama-server as a child process; no
-> separate daemon package install is required for the desktop bundle.
+The daemon package includes the bundled embedder (22 MB MiniLM-L6 GGUF
++ llama.cpp's llama-server).
 
 ### Switching embedders or LLM
 
@@ -85,7 +85,7 @@ mnemos embed-rebuild --target bundled   # or ollama / openai
 The migration is atomic and audit-logged; see [BUILD.md](BUILD.md)
 § "Switching embedders".
 
-### Build from source
+### Full build guide
 
 See [BUILD.md](BUILD.md).
 
