@@ -42,3 +42,37 @@ export function moveVault(newPath: string): Promise<{ moved_to: string } | null>
 export function enableService(): Promise<{ enabled: boolean } | null> {
   return invokeSafe<{ enabled: boolean }>("enable_service");
 }
+
+// ─── Ollama + model management ─────────────────────────────────────────
+
+export interface OllamaStatus {
+  installed: boolean;
+  running: boolean;
+  version: string | null;
+  models: string[];
+}
+
+/** Detect if Ollama is installed + running, list downloaded models. */
+export function checkOllama(): Promise<OllamaStatus | null> {
+  return invokeSafe<OllamaStatus>("check_ollama");
+}
+
+/** Download and install Ollama. Emits 'ollama-install-progress' events. */
+export function installOllama(): Promise<null> {
+  return invokeSafe("install_ollama");
+}
+
+/** Pull (download) an Ollama model. Emits 'model-pull-progress' events. */
+export function pullModel(model: string): Promise<null> {
+  return invokeSafe("pull_model", { model });
+}
+
+/** Write [llm] config and restart daemon. */
+export function applyLlmConfig(kind: string, model: string): Promise<null> {
+  return invokeSafe("apply_llm_config", { kind, model });
+}
+
+/** Write [embedder] config and restart daemon. */
+export function applyEmbedderConfig(kind: string, model: string, dim: number): Promise<null> {
+  return invokeSafe("apply_embedder_config", { kind, model, dim });
+}

@@ -6,12 +6,22 @@ import { vi } from "vitest";
 import { renderWithQuery } from "../test/renderWithQuery";
 import { FirstRun } from "./FirstRun";
 
-// Mock enableService from tauri so it resolves in test env
+// Mock tauri API so all commands resolve in test env
 vi.mock("../api/tauri", () => ({
   pickVaultDir: vi.fn(),
   daemonStatus: vi.fn(),
   moveVault: vi.fn(),
   enableService: vi.fn().mockResolvedValue({ enabled: true }),
+  checkOllama: vi.fn().mockResolvedValue({
+    installed: false,
+    running: false,
+    version: null,
+    models: [],
+  }),
+  installOllama: vi.fn().mockResolvedValue(null),
+  pullModel: vi.fn().mockResolvedValue(null),
+  applyLlmConfig: vi.fn().mockResolvedValue(null),
+  applyEmbedderConfig: vi.fn().mockResolvedValue(null),
 }));
 
 const server = setupServer(
@@ -26,48 +36,56 @@ beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-/** Helper: navigate from step 0 to step 3 (connections). */
-async function goToStep3() {
-  // step 0 → 1 (embedder)
+/**
+ * Navigate from step 0 through to the finish screen (step 5).
+ * Uses bundled models (no Ollama) for both embedder and LLM.
+ */
+async function goToFinish() {
+  // step 0 → 1 (search model)
   await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
-  await screen.findByText(/bundled embedder ready/i);
-  // step 1 → 2 (background service)
+  await screen.findByRole("heading", { name: /choose search model/i });
+  // step 1 → 2 (learning model) — bundled is default, just continue
+  await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
+  await screen.findByRole("heading", { name: /choose learning model/i });
+  // step 2 → 3 (background service) — bundled is default, just continue
   await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
   await screen.findByRole("heading", { name: /enable background memory/i });
   // enable service, then continue
   await userEvent.click(await screen.findByRole("button", { name: /enable background service/i }));
   await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
-  // now on step 3
+  // step 4 (connect tools) → step 5 (done)
   await screen.findByRole("heading", { name: /connect your ai tools/i });
+  await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
+  await screen.findByRole("heading", { name: /you.re all set/i });
 }
 
-test("step 1 confirms bundled embedder is ready", async () => {
+test("step 1 shows search model picker with bundled option", async () => {
   renderWithQuery(<FirstRun onClose={() => {}} />);
   await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
-  expect(await screen.findByText(/bundled embedder ready/i)).toBeInTheDocument();
-  expect(screen.queryByText(/checking ollama/i)).not.toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /choose search model/i })).toBeInTheDocument();
+  expect(screen.getByText(/MiniLM-L6-v2/)).toBeInTheDocument();
 });
 
-test("step 2 is the background service step", async () => {
+test("step 2 shows learning model picker", async () => {
   renderWithQuery(<FirstRun onClose={() => {}} />);
   // step 0 → 1
   await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
-  await screen.findByText(/bundled embedder ready/i);
+  await screen.findByRole("heading", { name: /choose search model/i });
   // step 1 → 2
   await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
-  expect(await screen.findByRole("heading", { name: /enable background memory/i })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /choose learning model/i })).toBeInTheDocument();
+  expect(screen.getByText(/Qwen3 0.6B/)).toBeInTheDocument();
 });
 
-test("wizard completes via finish setup from connections step", async () => {
+test("wizard completes via finish setup from done step", async () => {
   const onClose = vi.fn();
   renderWithQuery(<FirstRun onClose={onClose} />);
-  await goToStep3();
+  await goToFinish();
   await userEvent.click(await screen.findByRole("button", { name: /finish setup/i }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
 });
 
-// P1-17 — finish() error: wizard stays visible and shows an alert instead of trapping the user
-test("shows an error alert on step 3 when completeFirstRun fails (P1-17)", async () => {
+test("shows an error alert when completeFirstRun fails", async () => {
   server.use(
     http.post("http://localhost:7423/v1/first-run/complete", () =>
       HttpResponse.error(),
@@ -75,23 +93,17 @@ test("shows an error alert on step 3 when completeFirstRun fails (P1-17)", async
   );
   const onClose = vi.fn();
   renderWithQuery(<FirstRun onClose={onClose} />);
-  await goToStep3();
+  await goToFinish();
   await userEvent.click(await screen.findByRole("button", { name: /finish setup/i }));
 
-  // Error alert must appear
   const alert = await screen.findByRole("alert");
   expect(alert).toBeInTheDocument();
   expect(alert).toHaveTextContent(/could not reach the daemon/i);
-
-  // onClose must NOT have been called — wizard is still shown
   expect(onClose).not.toHaveBeenCalled();
-
-  // The Finish setup button is still rendered so the user can retry
   expect(screen.getByRole("button", { name: /finish setup/i })).toBeInTheDocument();
 });
 
-// P1-17 — finish() retry: successful retry clears the error and calls onClose
-test("clears error and completes wizard on successful retry (P1-17)", async () => {
+test("clears error and completes wizard on successful retry", async () => {
   let callCount = 0;
   server.use(
     http.post("http://localhost:7423/v1/first-run/complete", () => {
@@ -102,7 +114,7 @@ test("clears error and completes wizard on successful retry (P1-17)", async () =
   );
   const onClose = vi.fn();
   renderWithQuery(<FirstRun onClose={onClose} />);
-  await goToStep3();
+  await goToFinish();
 
   // First click → error
   await userEvent.click(await screen.findByRole("button", { name: /finish setup/i }));
@@ -111,6 +123,5 @@ test("clears error and completes wizard on successful retry (P1-17)", async () =
   // Second click → success
   await userEvent.click(screen.getByRole("button", { name: /finish setup/i }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
-  // Alert is gone after success
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
 });

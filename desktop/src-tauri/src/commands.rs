@@ -1,4 +1,5 @@
 use crate::{config_io, daemon, vault_move};
+use futures_util::StreamExt;
 use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
@@ -199,4 +200,250 @@ pub async fn move_vault(app: AppHandle, new_path: String) -> Result<MoveResult, 
     Ok(MoveResult {
         moved_to: target.to_string_lossy().into_owned(),
     })
+}
+
+// ─── Ollama + model management ─────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct OllamaStatus {
+    pub installed: bool,
+    pub running: bool,
+    pub version: Option<String>,
+    pub models: Vec<String>,
+}
+
+/// Detect if Ollama is installed, running, and which models are available.
+#[tauri::command]
+pub async fn check_ollama() -> Result<OllamaStatus, String> {
+    // 1. Check if ollama binary exists.
+    let installed = std::process::Command::new("which")
+        .arg("ollama")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !installed {
+        return Ok(OllamaStatus {
+            installed: false,
+            running: false,
+            version: None,
+            models: vec![],
+        });
+    }
+
+    // 2. Get version.
+    let version = std::process::Command::new("ollama")
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        });
+
+    // 3. Check if the Ollama API is reachable + list models.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let (running, models) = match client.get("http://localhost:11434/api/tags").send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let models = body
+                .get("models")
+                .and_then(|m| m.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(String::from))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            (true, models)
+        }
+        _ => (false, vec![]),
+    };
+
+    Ok(OllamaStatus {
+        installed,
+        running,
+        version,
+        models,
+    })
+}
+
+/// Install Ollama using the official installer. Requires user to approve sudo.
+#[tauri::command]
+pub async fn install_ollama(app: AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    app.emit("ollama-install-progress", "downloading").map_err(|e| e.to_string())?;
+
+    // Download the install script first, then run it with pkexec for graphical sudo.
+    let tmp_script = std::env::temp_dir().join("ollama-install.sh");
+    let script_bytes = reqwest::get("https://ollama.com/install.sh")
+        .await
+        .map_err(|e| format!("download install script: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("read install script: {e}"))?;
+    std::fs::write(&tmp_script, &script_bytes)
+        .map_err(|e| format!("write install script: {e}"))?;
+
+    app.emit("ollama-install-progress", "installing").map_err(|e| e.to_string())?;
+
+    // Try pkexec (graphical sudo) first, fall back to running without sudo
+    // (the install script handles the sudo internally in most cases).
+    let script_path = tmp_script.clone();
+    let status = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("bash")
+            .arg(&script_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+    .map_err(|e| format!("run install script: {e}"))?;
+
+    let _ = std::fs::remove_file(&tmp_script);
+
+    if !status.success() {
+        return Err("Ollama installation failed. You may need to install manually: curl -fsSL https://ollama.com/install.sh | sh".into());
+    }
+
+    // Wait for the Ollama service to start (the installer starts it).
+    for _ in 0..30 {
+        if let Ok(resp) = reqwest::Client::new()
+            .get("http://localhost:11434/api/tags")
+            .timeout(std::time::Duration::from_secs(2))
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                app.emit("ollama-install-progress", "done").map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    // Even if we can't reach it yet, the install succeeded.
+    app.emit("ollama-install-progress", "done").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Pull (download) an Ollama model with streaming progress events.
+#[tauri::command]
+pub async fn pull_model(app: AppHandle, model: String) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3600)) // models can be large
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .post("http://localhost:11434/api/pull")
+        .json(&serde_json::json!({ "name": model }))
+        .send()
+        .await
+        .map_err(|e| format!("pull request: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!(
+            "Ollama pull failed (HTTP {})",
+            resp.status()
+        ));
+    }
+
+    // The Ollama pull API streams newline-delimited JSON progress lines.
+    let mut stream = resp.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("stream: {e}"))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process complete lines.
+        while let Some(pos) = buffer.find('\n') {
+            let line = buffer[..pos].to_string();
+            buffer = buffer[pos + 1..].to_string();
+
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                let completed = v.get("completed").and_then(|c| c.as_u64()).unwrap_or(0);
+                let total = v.get("total").and_then(|t| t.as_u64()).unwrap_or(0);
+
+                let _ = app.emit(
+                    "model-pull-progress",
+                    serde_json::json!({
+                        "model": model,
+                        "status": status,
+                        "completed": completed,
+                        "total": total,
+                    }),
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Write [llm] config and restart the daemon to apply.
+#[tauri::command]
+pub async fn apply_llm_config(
+    app: AppHandle,
+    kind: String,
+    model: String,
+) -> Result<(), String> {
+    let cfg_path = config_io::config_path()?;
+
+    // Determine the URL based on kind.
+    let url = match kind.as_str() {
+        "ollama" => "http://localhost:11434".to_string(),
+        "bundled" => "http://127.0.0.1:7425".to_string(),
+        _ => String::new(),
+    };
+
+    config_io::write_llm_config(&cfg_path, &kind, &model, &url)?;
+
+    // Restart daemon to pick up the new config.
+    let _ = daemon::stop(&app).await;
+    let port = config_io::read_daemon_port(&cfg_path)?.unwrap_or(7423);
+    let _ = daemon::wait_stopped(port, 5_000).await;
+    daemon::start(&app).await?;
+    daemon::wait_healthy(port, 30_000).await?;
+
+    Ok(())
+}
+
+/// Write [embedder] config and restart the daemon to apply.
+#[tauri::command]
+pub async fn apply_embedder_config(
+    app: AppHandle,
+    kind: String,
+    model: String,
+    dim: u32,
+) -> Result<(), String> {
+    let cfg_path = config_io::config_path()?;
+
+    let url = match kind.as_str() {
+        "ollama" => "http://localhost:11434".to_string(),
+        _ => String::new(),
+    };
+
+    config_io::write_embedder_config(&cfg_path, &kind, &model, &url, dim)?;
+
+    // Restart daemon to pick up the new config.
+    let _ = daemon::stop(&app).await;
+    let port = config_io::read_daemon_port(&cfg_path)?.unwrap_or(7423);
+    let _ = daemon::wait_stopped(port, 5_000).await;
+    daemon::start(&app).await?;
+    daemon::wait_healthy(port, 30_000).await?;
+
+    Ok(())
 }

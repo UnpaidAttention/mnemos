@@ -30,6 +30,11 @@ fn main() {
             commands::daemon_status,
             commands::move_vault,
             commands::enable_service,
+            commands::check_ollama,
+            commands::install_ollama,
+            commands::pull_model,
+            commands::apply_llm_config,
+            commands::apply_embedder_config,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

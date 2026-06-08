@@ -76,6 +76,80 @@ pub fn write_vault_root(path: &Path, root: &Path) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
+/// Set `[llm]` section in `config.toml`, preserving all other keys.
+pub fn write_llm_config(
+    path: &Path,
+    kind: &str,
+    model: &str,
+    url: &str,
+) -> Result<(), String> {
+    let mut doc: toml::Value = if path.exists() {
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        toml::from_str(&text).map_err(|e| e.to_string())?
+    } else {
+        toml::Value::Table(Default::default())
+    };
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| "config root is not a table".to_string())?;
+    let llm = table
+        .entry("llm".to_string())
+        .or_insert_with(|| toml::Value::Table(Default::default()));
+    let llm_table = llm
+        .as_table_mut()
+        .ok_or_else(|| "[llm] is not a table".to_string())?;
+    llm_table.insert("kind".to_string(), toml::Value::String(kind.to_string()));
+    llm_table.insert("model".to_string(), toml::Value::String(model.to_string()));
+    if !url.is_empty() {
+        llm_table.insert("url".to_string(), toml::Value::String(url.to_string()));
+    }
+    let text = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+/// Set `[embedder]` section in `config.toml`, preserving all other keys.
+pub fn write_embedder_config(
+    path: &Path,
+    kind: &str,
+    model: &str,
+    url: &str,
+    dim: u32,
+) -> Result<(), String> {
+    let mut doc: toml::Value = if path.exists() {
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        toml::from_str(&text).map_err(|e| e.to_string())?
+    } else {
+        toml::Value::Table(Default::default())
+    };
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| "config root is not a table".to_string())?;
+    let emb = table
+        .entry("embedder".to_string())
+        .or_insert_with(|| toml::Value::Table(Default::default()));
+    let emb_table = emb
+        .as_table_mut()
+        .ok_or_else(|| "[embedder] is not a table".to_string())?;
+    emb_table.insert("kind".to_string(), toml::Value::String(kind.to_string()));
+    emb_table.insert("model".to_string(), toml::Value::String(model.to_string()));
+    if !url.is_empty() {
+        emb_table.insert("url".to_string(), toml::Value::String(url.to_string()));
+    }
+    emb_table.insert("dim".to_string(), toml::Value::Integer(dim as i64));
+    let text = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { client } from "../api/client";
 import { VaultIO } from "../components/VaultIO";
 import { StorageSettings } from "./StorageSettings";
 import { AutonomySettings } from "./AutonomySettings";
 import { Button, Card, Skeleton } from "../design/primitives";
 import { Connections } from "./Connections";
+import { ModelPicker, EMBEDDER_MODELS, LLM_MODELS } from "../components/ModelPicker";
+import { checkOllama, installOllama, pullModel, applyLlmConfig, applyEmbedderConfig, OllamaStatus } from "../api/tauri";
 
 type Field =
   | { key: string; label: string; kind: "text" | "password" }
@@ -22,37 +24,6 @@ const SCHEMA: Section[] = [
     fields: [
       { key: "host", label: "Host", kind: "text" },
       { key: "port", label: "Port", kind: "number", min: 1024, max: 65535 },
-    ],
-  },
-  {
-    title: "Embedder",
-    path: ["embedder"],
-    fields: [
-      {
-        key: "kind",
-        label: "Backend",
-        kind: "select",
-        options: ["bundled", "ollama", "openai", "mock", "none"],
-      },
-      { key: "url", label: "URL (Ollama)", kind: "text" },
-      { key: "model", label: "Model", kind: "text" },
-      { key: "dim", label: "Dim", kind: "number" },
-      { key: "timeout_secs", label: "Timeout (s)", kind: "number" },
-    ],
-  },
-  {
-    title: "LLM (Learning Pipeline)",
-    path: ["llm"],
-    fields: [
-      {
-        key: "kind",
-        label: "Backend",
-        kind: "select",
-        options: ["bundled", "ollama", "openai", "mock", "none"],
-      },
-      { key: "url", label: "URL (e.g. http://localhost:11434 for Ollama)", kind: "text" },
-      { key: "model", label: "Model (e.g. gemma4:12b)", kind: "text" },
-      { key: "timeout_secs", label: "Timeout (s)", kind: "number" },
     ],
   },
   {
@@ -153,16 +124,73 @@ export function Settings() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [versionInfo, setVersionInfo] = useState<{ version: string; git_hash: string } | null>(null);
 
+  // Ollama + model state for inline pickers
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [ollamaInstalling, setOllamaInstalling] = useState(false);
+  const [selectedEmbedder, setSelectedEmbedder] = useState("bundled");
+  const [selectedLlm, setSelectedLlm] = useState("bundled");
+  const [pullingModel, setPullingModel] = useState<string | null>(null);
+  const [pullProgress, setPullProgress] = useState(0);
+  const [changingEmbedder, setChangingEmbedder] = useState(false);
+  const [changingLlm, setChangingLlm] = useState(false);
+
+  const refreshOllama = useCallback(async () => {
+    try {
+      const st = await checkOllama();
+      if (st) setOllamaStatus(st);
+    } catch { /* not in Tauri */ }
+  }, []);
+
   useEffect(() => {
     void client
       .getConfig()
-      .then(setCfg)
+      .then((c) => {
+        setCfg(c);
+        // Detect current embedder/llm from config
+        const embKind = (c as Record<string, Record<string, string>>)?.embedder?.kind;
+        const embModel = (c as Record<string, Record<string, string>>)?.embedder?.model;
+        if (embKind === "ollama" && embModel) setSelectedEmbedder(embModel);
+        const llmKind = (c as Record<string, Record<string, string>>)?.llm?.kind;
+        const llmModel = (c as Record<string, Record<string, string>>)?.llm?.model;
+        if (llmKind === "ollama" && llmModel) setSelectedLlm(llmModel);
+      })
       .catch(() => setLoadError("Could not reach the daemon"));
     void client
       .getHealth()
       .then(setVersionInfo)
       .catch(() => {/* ignore */});
+    void refreshOllama();
+  }, [refreshOllama]);
+
+  // Listen for pull progress
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<{ completed: number; total: number }>("model-pull-progress", (ev) => {
+          if (ev.payload.total > 0) setPullProgress(Math.round((ev.payload.completed / ev.payload.total) * 100));
+        });
+      } catch { /* not in Tauri */ }
+    })();
+    return () => { unlisten?.(); };
   }, []);
+
+  const handlePull = async (tag: string) => {
+    setPullingModel(tag);
+    setPullProgress(0);
+    try {
+      await pullModel(tag);
+      await refreshOllama();
+    } catch (e) { console.error("pull failed", e); }
+    setPullingModel(null);
+  };
+
+  const handleInstallOllama = async () => {
+    setOllamaInstalling(true);
+    try { await installOllama(); await refreshOllama(); } catch (e) { console.error(e); }
+    setOllamaInstalling(false);
+  };
 
   if (loadError) {
     return (
@@ -214,6 +242,90 @@ export function Settings() {
           <summary className="display text-base cursor-pointer">AI Tool Connections</summary>
           <div className="pt-2">
             <Connections />
+          </div>
+        </details>
+      </Card>
+
+      {/* ── Embedder model picker ── */}
+      <Card className="p-4">
+        <details className="space-y-3">
+          <summary className="display text-base cursor-pointer">Search Model (Embedder)</summary>
+          <div className="pt-2">
+            <ModelPicker
+              catalog={EMBEDDER_MODELS}
+              selectedTag={selectedEmbedder}
+              onSelect={setSelectedEmbedder}
+              installedModels={ollamaStatus?.models ?? []}
+              pullingModel={pullingModel}
+              pullProgress={pullProgress}
+              onPull={handlePull}
+            />
+            {!ollamaStatus?.running && selectedEmbedder !== "bundled" && (
+              <Button className="mt-2" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
+                {ollamaInstalling ? "Installing Ollama…" : "Install Ollama"}
+              </Button>
+            )}
+            <div className="flex justify-end mt-3">
+              <Button
+                disabled={changingEmbedder}
+                onClick={async () => {
+                  setChangingEmbedder(true);
+                  try {
+                    const m = EMBEDDER_MODELS.find((e) => e.tag === selectedEmbedder);
+                    if (m && m.provider === "ollama") {
+                      await applyEmbedderConfig("ollama", m.tag, m.dim ?? 768);
+                    } else {
+                      await applyEmbedderConfig("bundled", "", 384);
+                    }
+                  } catch (e) { console.error(e); }
+                  setChangingEmbedder(false);
+                }}
+              >
+                {changingEmbedder ? "Applying…" : "Apply embedder"}
+              </Button>
+            </div>
+          </div>
+        </details>
+      </Card>
+
+      {/* ── LLM model picker ── */}
+      <Card className="p-4">
+        <details className="space-y-3">
+          <summary className="display text-base cursor-pointer">Learning Model (Chat LLM)</summary>
+          <div className="pt-2">
+            <ModelPicker
+              catalog={LLM_MODELS}
+              selectedTag={selectedLlm}
+              onSelect={setSelectedLlm}
+              installedModels={ollamaStatus?.models ?? []}
+              pullingModel={pullingModel}
+              pullProgress={pullProgress}
+              onPull={handlePull}
+            />
+            {!ollamaStatus?.running && selectedLlm !== "bundled" && (
+              <Button className="mt-2" onClick={() => void handleInstallOllama()} disabled={ollamaInstalling}>
+                {ollamaInstalling ? "Installing Ollama…" : "Install Ollama"}
+              </Button>
+            )}
+            <div className="flex justify-end mt-3">
+              <Button
+                disabled={changingLlm}
+                onClick={async () => {
+                  setChangingLlm(true);
+                  try {
+                    const m = LLM_MODELS.find((e) => e.tag === selectedLlm);
+                    if (m && m.provider === "ollama") {
+                      await applyLlmConfig("ollama", m.tag);
+                    } else {
+                      await applyLlmConfig("bundled", "Qwen3-0.6B");
+                    }
+                  } catch (e) { console.error(e); }
+                  setChangingLlm(false);
+                }}
+              >
+                {changingLlm ? "Applying…" : "Apply LLM"}
+              </Button>
+            </div>
           </div>
         </details>
       </Card>
