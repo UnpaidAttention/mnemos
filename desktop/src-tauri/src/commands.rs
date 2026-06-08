@@ -212,6 +212,37 @@ pub struct OllamaStatus {
     pub models: Vec<String>,
 }
 
+/// Read current LLM and embedder model config from config.toml.
+#[derive(Serialize)]
+pub struct ModelConfig {
+    pub llm_kind: String,
+    pub llm_model: String,
+    pub embedder_kind: String,
+    pub embedder_model: String,
+}
+
+#[tauri::command]
+pub fn read_model_config() -> Result<ModelConfig, String> {
+    let cfg_path = config_io::config_path()?;
+    if !cfg_path.exists() {
+        return Ok(ModelConfig {
+            llm_kind: "bundled".into(),
+            llm_model: String::new(),
+            embedder_kind: "bundled".into(),
+            embedder_model: String::new(),
+        });
+    }
+    let text = std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?;
+    let value: toml::Value = toml::from_str(&text).map_err(|e| e.to_string())?;
+
+    let llm_kind = value.get("llm").and_then(|l| l.get("kind")).and_then(|k| k.as_str()).unwrap_or("bundled").to_string();
+    let llm_model = value.get("llm").and_then(|l| l.get("model")).and_then(|m| m.as_str()).unwrap_or("").to_string();
+    let embedder_kind = value.get("embedder").and_then(|e| e.get("kind")).and_then(|k| k.as_str()).unwrap_or("bundled").to_string();
+    let embedder_model = value.get("embedder").and_then(|e| e.get("model")).and_then(|m| m.as_str()).unwrap_or("").to_string();
+
+    Ok(ModelConfig { llm_kind, llm_model, embedder_kind, embedder_model })
+}
+
 /// Detect if Ollama is installed, running, and which models are available.
 #[tauri::command]
 pub async fn check_ollama() -> Result<OllamaStatus, String> {

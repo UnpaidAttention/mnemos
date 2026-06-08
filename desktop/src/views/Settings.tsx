@@ -6,7 +6,7 @@ import { AutonomySettings } from "./AutonomySettings";
 import { Button, Card, Skeleton } from "../design/primitives";
 import { Connections } from "./Connections";
 import { ModelPicker, EMBEDDER_MODELS, LLM_MODELS } from "../components/ModelPicker";
-import { checkOllama, installOllama, pullModel, applyLlmConfig, applyEmbedderConfig, checkForUpdates, installUpdate, OllamaStatus, UpdateInfo } from "../api/tauri";
+import { checkOllama, installOllama, pullModel, applyLlmConfig, applyEmbedderConfig, checkForUpdates, installUpdate, readModelConfig, OllamaStatus, UpdateInfo } from "../api/tauri";
 
 type Field =
   | { key: string; label: string; kind: "text" | "password" }
@@ -139,6 +139,7 @@ export function Settings() {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [applyMsg, setApplyMsg] = useState<string | null>(null);
 
   const refreshOllama = useCallback(async () => {
     try {
@@ -152,7 +153,7 @@ export function Settings() {
       .getConfig()
       .then((c) => {
         setCfg(c);
-        // Detect current embedder/llm from config
+        // Try reading from daemon API first
         const embKind = (c as Record<string, Record<string, string>>)?.embedder?.kind;
         const embModel = (c as Record<string, Record<string, string>>)?.embedder?.model;
         if (embKind === "ollama" && embModel) setSelectedEmbedder(embModel);
@@ -161,6 +162,13 @@ export function Settings() {
         if (llmKind === "ollama" && llmModel) setSelectedLlm(llmModel);
       })
       .catch(() => setLoadError("Could not reach the daemon"));
+    // Also read from config.toml directly (more reliable, doesn't require daemon auth)
+    void readModelConfig().then((mc) => {
+      if (mc) {
+        if (mc.llm_kind === "ollama" && mc.llm_model) setSelectedLlm(mc.llm_model);
+        if (mc.embedder_kind === "ollama" && mc.embedder_model) setSelectedEmbedder(mc.embedder_model);
+      }
+    });
     void client
       .getHealth()
       .then(setVersionInfo)
@@ -329,11 +337,15 @@ export function Settings() {
                 {ollamaInstalling ? "Installing Ollama…" : "Install Ollama"}
               </Button>
             )}
-            <div className="flex justify-end mt-3">
+            <div className="flex items-center justify-end gap-3 mt-3">
+              {applyMsg && applyMsg.includes("Embedder") && (
+                <span className={`label text-xs ${applyMsg.startsWith("✓") ? "text-accent" : "text-tier-procedural"}`}>{applyMsg}</span>
+              )}
               <Button
                 disabled={changingEmbedder}
                 onClick={async () => {
                   setChangingEmbedder(true);
+                  setApplyMsg(null);
                   try {
                     const m = EMBEDDER_MODELS.find((e) => e.tag === selectedEmbedder);
                     if (m && m.provider === "ollama") {
@@ -341,7 +353,12 @@ export function Settings() {
                     } else {
                       await applyEmbedderConfig("bundled", "", 384);
                     }
-                  } catch (e) { console.error(e); }
+                    setApplyMsg("✓ Embedder applied!");
+                    setTimeout(() => setApplyMsg(null), 5000);
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    setApplyMsg(`Embedder error: ${msg}`);
+                  }
                   setChangingEmbedder(false);
                 }}
               >
@@ -392,11 +409,15 @@ export function Settings() {
                 {ollamaInstalling ? "Installing Ollama…" : "Install Ollama"}
               </Button>
             )}
-            <div className="flex justify-end mt-3">
+            <div className="flex items-center justify-end gap-3 mt-3">
+              {applyMsg && applyMsg.includes("LLM") && (
+                <span className={`label text-xs ${applyMsg.startsWith("✓") ? "text-accent" : "text-tier-procedural"}`}>{applyMsg}</span>
+              )}
               <Button
                 disabled={changingLlm}
                 onClick={async () => {
                   setChangingLlm(true);
+                  setApplyMsg(null);
                   try {
                     const m = LLM_MODELS.find((e) => e.tag === selectedLlm);
                     if (m && m.provider === "ollama") {
@@ -404,7 +425,12 @@ export function Settings() {
                     } else {
                       await applyLlmConfig("bundled", "Qwen3-0.6B");
                     }
-                  } catch (e) { console.error(e); }
+                    setApplyMsg("✓ LLM applied!");
+                    setTimeout(() => setApplyMsg(null), 5000);
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    setApplyMsg(`LLM error: ${msg}`);
+                  }
                   setChangingLlm(false);
                 }}
               >

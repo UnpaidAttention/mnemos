@@ -31,6 +31,7 @@ fn main() {
             commands::move_vault,
             commands::enable_service,
             commands::check_ollama,
+            commands::read_model_config,
             commands::install_ollama,
             commands::pull_model,
             commands::apply_llm_config,

@@ -57,6 +57,18 @@ export function checkOllama(): Promise<OllamaStatus | null> {
   return invokeSafe<OllamaStatus>("check_ollama");
 }
 
+export interface ModelConfig {
+  llm_kind: string;
+  llm_model: string;
+  embedder_kind: string;
+  embedder_model: string;
+}
+
+/** Read current LLM/embedder model config directly from config.toml. */
+export function readModelConfig(): Promise<ModelConfig | null> {
+  return invokeSafe<ModelConfig>("read_model_config");
+}
+
 /** Download and install Ollama. Emits 'ollama-install-progress' events. */
 export function installOllama(): Promise<null> {
   return invokeSafe("install_ollama");
