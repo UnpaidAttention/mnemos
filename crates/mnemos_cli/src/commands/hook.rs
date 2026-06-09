@@ -2015,10 +2015,11 @@ mod tests {
     #[test]
     fn transcript_path_inside_home_is_allowed() {
         let dir = tempfile::tempdir().unwrap();
-        // dir.path() is a real canonicalized path on the filesystem.
-        // We treat it as a stand-in for a home-directory subtree by checking
-        // that starts_with works correctly.
-        let transcript = dir.path().join(".claude").join("transcript.jsonl");
+        // Canonicalize the dir itself — on macOS, /tmp is a symlink to
+        // /private/tmp, so dir.path() returns /tmp/… but file
+        // canonicalize() resolves to /private/tmp/….
+        let dir_canonical = dir.path().canonicalize().unwrap();
+        let transcript = dir_canonical.join(".claude").join("transcript.jsonl");
         std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
         std::fs::write(&transcript, "").unwrap();
         let canonical = transcript.canonicalize().unwrap();
@@ -2026,7 +2027,7 @@ mod tests {
         // Because is_transcript_path_allowed reads $HOME, we test the underlying
         // logic directly using starts_with.
         assert!(
-            canonical.starts_with(dir.path()),
+            canonical.starts_with(&dir_canonical),
             "canonical path must be under the temp dir (simulated home)"
         );
     }

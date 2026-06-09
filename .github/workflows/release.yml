@@ -40,7 +40,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: assets/
-          key: bundled-assets-llamacpp-b9400-minilm-q8
+          key: bundled-assets-llamacpp-b9400-minilm-q8-qwen3-q4km
 
       - name: Fetch bundled assets
         if: steps.cache-assets.outputs.cache-hit != 'true'
@@ -122,7 +122,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: assets/
-          key: bundled-assets-llamacpp-b9400-minilm-q8
+          key: bundled-assets-llamacpp-b9400-minilm-q8-qwen3-q4km
 
       - name: Fetch bundled assets
         if: steps.cache-assets.outputs.cache-hit != 'true'
