@@ -1,9 +1,19 @@
 import { useEffect, useState, useCallback } from "react";
 import { client } from "../api/client";
-import { checkOllama, enableService, installOllama, pullModel, applyLlmConfig, applyEmbedderConfig, OllamaStatus } from "../api/tauri";
+import {
+  checkOllama,
+  enableService,
+  installOllama,
+  pullModel,
+  applyLlmConfig,
+  applyEmbedderConfig,
+  checkDownloadedModels,
+  downloadBundledModel,
+  OllamaStatus,
+} from "../api/tauri";
 import { Button, Card } from "../design/primitives";
 import { Connections } from "./Connections";
-import { ModelPicker, EMBEDDER_MODELS, LLM_MODELS } from "../components/ModelPicker";
+import { ModelPicker, EMBEDDER_MODELS, LLM_MODELS, ModelEntry } from "../components/ModelPicker";
 
 type Step = 0 | 1 | 2 | 3 | 4 | 5;
 
@@ -19,10 +29,15 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
 
   // Model selection
   const [selectedEmbedder, setSelectedEmbedder] = useState("bundled");
-  const [selectedLlm, setSelectedLlm] = useState("bundled");
+  const [selectedLlm, setSelectedLlm] = useState("qwen3-0.6b");
   const [pullingModel, setPullingModel] = useState<string | null>(null);
   const [pullProgress, setPullProgress] = useState(0);
   const [applyingConfig, setApplyingConfig] = useState(false);
+
+  // Bundled model download state
+  const [downloadedFiles, setDownloadedFiles] = useState<string[]>([]);
+  const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState(0);
 
   // Check Ollama status when entering steps that need it
   const refreshOllama = useCallback(async () => {
@@ -36,13 +51,24 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
     setOllamaChecking(false);
   }, []);
 
+  // Check which models are already downloaded
+  const refreshDownloaded = useCallback(async () => {
+    try {
+      const result = await checkDownloadedModels();
+      if (result) setDownloadedFiles(result.files);
+    } catch {
+      // Tauri not available
+    }
+  }, []);
+
   useEffect(() => {
     if (step === 1 || step === 2) {
       void refreshOllama();
+      void refreshDownloaded();
     }
-  }, [step, refreshOllama]);
+  }, [step, refreshOllama, refreshDownloaded]);
 
-  // Listen for model pull progress events
+  // Listen for Ollama model pull progress events
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     (async () => {
@@ -64,13 +90,34 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
     return () => { unlisten?.(); };
   }, []);
 
+  // Listen for bundled model download progress events
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<{ filename: string; downloaded: number; total: number }>(
+          "model-download-progress",
+          (event) => {
+            const { downloaded, total } = event.payload;
+            if (total > 0) {
+              setDownloadProgress(Math.round((downloaded / total) * 100));
+            }
+          },
+        );
+      } catch {
+        // Not in Tauri environment
+      }
+    })();
+    return () => { unlisten?.(); };
+  }, []);
+
   const handleInstallOllama = async () => {
     setOllamaInstalling(true);
     try {
       await installOllama();
       await refreshOllama();
     } catch (e) {
-      // Show error but don't block
       console.error("Ollama install failed:", e);
     }
     setOllamaInstalling(false);
@@ -82,13 +129,28 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
     try {
       await pullModel(tag);
       await refreshOllama();
-      // Auto-select the model after download
       if (step === 1) setSelectedEmbedder(tag);
       if (step === 2) setSelectedLlm(tag);
     } catch (e) {
       console.error("Model pull failed:", e);
     }
     setPullingModel(null);
+  };
+
+  const handleDownloadModel = async (model: ModelEntry) => {
+    if (!model.downloadUrl || !model.downloadFilename) return;
+    setDownloadingModel(model.tag);
+    setDownloadProgress(0);
+    try {
+      await downloadBundledModel(model.downloadUrl, model.downloadFilename);
+      await refreshDownloaded();
+      // Auto-select after download
+      if (step === 1) setSelectedEmbedder(model.tag);
+      if (step === 2) setSelectedLlm(model.tag);
+    } catch (e) {
+      console.error("Model download failed:", e);
+    }
+    setDownloadingModel(null);
   };
 
   const handleApplyAndContinue = async (fromStep: 1 | 2) => {
@@ -106,7 +168,7 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
         if (model && model.provider === "ollama") {
           await applyLlmConfig("ollama", model.tag);
         }
-        // bundled = default config, no change needed
+        // bundled-download with "bundled" kind = default config (uses llama-server)
         setStep(3);
       }
     } catch (e) {
@@ -145,6 +207,13 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
     const model = inEmbedder || inLlm;
     return model?.provider === "ollama" && !ollamaReady;
   };
+
+  // Check if the selected LLM model needs downloading first
+  const selectedLlmModel = LLM_MODELS.find((m) => m.tag === selectedLlm);
+  const llmNeedsDownload =
+    selectedLlmModel?.provider === "bundled-download" &&
+    selectedLlmModel.downloadFilename != null &&
+    !downloadedFiles.includes(selectedLlmModel.downloadFilename);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -187,9 +256,13 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
                 if (!needsOllama(tag)) setSelectedEmbedder(tag);
               }}
               installedModels={installedModels}
+              downloadedFiles={downloadedFiles}
               pullingModel={pullingModel}
               pullProgress={pullProgress}
               onPull={handlePullModel}
+              onDownload={handleDownloadModel}
+              downloadingModel={downloadingModel}
+              downloadProgress={downloadProgress}
               label="Embedder model"
             />
 
@@ -227,7 +300,7 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
             <h1 className="display text-xl">Choose learning model</h1>
             <p className="text-text-muted font-body text-sm">
               The learning pipeline extracts facts, builds reflections, and detects communities from
-              your AI sessions. A bundled model works out of the box — or choose a more capable model.
+              your AI sessions. Choose a model below — it will be downloaded on first use if needed.
             </p>
 
             {ollamaChecking && (
@@ -241,14 +314,18 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
                 if (!needsOllama(tag)) setSelectedLlm(tag);
               }}
               installedModels={installedModels}
+              downloadedFiles={downloadedFiles}
               pullingModel={pullingModel}
               pullProgress={pullProgress}
               onPull={handlePullModel}
+              onDownload={handleDownloadModel}
+              downloadingModel={downloadingModel}
+              downloadProgress={downloadProgress}
               label="Chat LLM model"
             />
 
             {/* Ollama install prompt if not installed */}
-            {!ollamaReady && selectedLlm !== "bundled" && (
+            {!ollamaReady && selectedLlm !== "qwen3-0.6b" && LLM_MODELS.find((m) => m.tag === selectedLlm)?.provider === "ollama" && (
               <Card className="p-3 border-accent/30">
                 <p className="text-sm text-text-muted">
                   Ollama is required for this model.
@@ -263,11 +340,21 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
               </Card>
             )}
 
+            {/* Download prompt for bundled-download models */}
+            {llmNeedsDownload && !downloadingModel && (
+              <Card className="p-3 border-blue-500/30">
+                <p className="text-sm text-text-muted">
+                  This model needs to be downloaded ({selectedLlmModel?.size}). You can download it now
+                  or proceed and it will be downloaded later when needed.
+                </p>
+              </Card>
+            )}
+
             <div className="flex justify-between">
               <button className="label text-text-muted" onClick={() => setStep(1)}>Back</button>
               <Button
                 onClick={() => void handleApplyAndContinue(2)}
-                disabled={applyingConfig}
+                disabled={applyingConfig || downloadingModel != null}
               >
                 {applyingConfig ? "Applying…" : "Continue"}
               </Button>
@@ -349,7 +436,10 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
               <div className="flex items-center gap-2">
                 <span className="text-green-400">✓</span>
                 <span className="text-sm">
-                  Learning: <strong>{LLM_MODELS.find((m) => m.tag === selectedLlm)?.name ?? "Bundled"}</strong>
+                  Learning: <strong>{LLM_MODELS.find((m) => m.tag === selectedLlm)?.name ?? "Qwen3 0.6B"}</strong>
+                  {llmNeedsDownload && (
+                    <span className="text-text-muted text-xs ml-1">(will download on first use)</span>
+                  )}
                 </span>
               </div>
               <div className="flex items-center gap-2">

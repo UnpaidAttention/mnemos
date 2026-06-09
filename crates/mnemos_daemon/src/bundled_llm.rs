@@ -44,8 +44,10 @@ impl Default for BundledLlmConfig {
 /// Order of precedence:
 /// 1. `MNEMOS_BUNDLED_LLM_MODEL` env var (full path to .gguf file)
 /// 2. `MNEMOS_BUNDLED_MODEL_DIR` env var + model filename
-/// 3. Packaged install at `/usr/lib/mnemos/Qwen3-0.6B-Q4_K_M.gguf`
-/// 4. Dev layout `assets/Qwen3-0.6B-Q4_K_M.gguf`
+/// 3. User models dir: `~/.local/share/mnemos/models/` (download-on-demand)
+/// 4. XDG assets dir: `~/.local/share/mnemos/assets/`
+/// 5. Packaged install at `/usr/lib/mnemos/Qwen3-0.6B-Q4_K_M.gguf`
+/// 6. Dev layout `assets/Qwen3-0.6B-Q4_K_M.gguf`
 const LLM_MODEL_FILENAME: &str = "Qwen3-0.6B-Q4_K_M.gguf";
 
 pub fn default_llm_model_path() -> PathBuf {
@@ -54,6 +56,13 @@ pub fn default_llm_model_path() -> PathBuf {
     }
     if let Ok(env) = std::env::var("MNEMOS_BUNDLED_MODEL_DIR") {
         return PathBuf::from(env).join(LLM_MODEL_FILENAME);
+    }
+    // User models dir (populated by desktop app download-on-demand)
+    if let Some(models) = super::bundled_embedder::models_dir() {
+        let p = models.join(LLM_MODEL_FILENAME);
+        if p.exists() {
+            return p;
+        }
     }
     // XDG data home: ~/.local/share/mnemos/assets/<model>
     if let Some(xdg) = super::bundled_embedder::xdg_assets_dir() {
@@ -127,7 +136,7 @@ fn spawn_child(cfg: &BundledLlmConfig, log_path: &std::path::Path) -> Result<Chi
 pub async fn spawn(
     cfg: BundledLlmConfig,
     llm_ready: Arc<tokio::sync::watch::Sender<bool>>,
-) -> Result<BundledLlmHandle> {
+) -> Result<Option<BundledLlmHandle>> {
     if !cfg.binary.exists() {
         anyhow::bail!(
             "bundled llama-server binary not found at {}. Run scripts/fetch-bundled-assets.sh.",
@@ -135,10 +144,14 @@ pub async fn spawn(
         );
     }
     if !cfg.model.exists() {
-        anyhow::bail!(
-            "bundled LLM model not found at {}. Run scripts/fetch-bundled-assets.sh.",
-            cfg.model.display()
+        // Model not yet downloaded — gracefully skip instead of crashing.
+        // The user can download it during setup or later in Settings.
+        tracing::warn!(
+            model = %cfg.model.display(),
+            "LLM model not found; learning pipeline will be unavailable. \
+             Download a model in Settings → Models or re-run setup."
         );
+        return Ok(None);
     }
 
     let initial_log_path = log_path()?;
@@ -233,7 +246,7 @@ pub async fn spawn(
         }
     });
 
-    Ok(BundledLlmHandle { child, shutdown_tx })
+    Ok(Some(BundledLlmHandle { child, shutdown_tx }))
 }
 
 fn log_path() -> Result<PathBuf> {

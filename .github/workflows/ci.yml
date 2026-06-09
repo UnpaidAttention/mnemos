@@ -34,7 +34,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: assets/
-          key: bundled-assets-llamacpp-b9400-minilm-q8-qwen3-q4km
+          key: bundled-assets-llamacpp-b9400-runtime-embedder
 
       - name: Fetch bundled assets
         if: runner.os == 'Linux' && steps.cache-assets.outputs.cache-hit != 'true'

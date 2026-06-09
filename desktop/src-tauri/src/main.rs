@@ -38,6 +38,8 @@ fn main() {
             commands::apply_embedder_config,
             commands::check_for_updates,
             commands::install_update,
+            commands::download_bundled_model,
+            commands::check_downloaded_models,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

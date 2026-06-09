@@ -79,11 +79,20 @@ pub fn default_binary_path() -> PathBuf {
 ///
 /// Order of precedence:
 /// 1. `MNEMOS_BUNDLED_MODEL_DIR` env var
-/// 2. Packaged install at `/usr/lib/mnemos/all-MiniLM-L6-v2.Q8_0.gguf`
-/// 3. Dev layout `assets/all-MiniLM-L6-v2.Q8_0.gguf`
+/// 2. User models dir: `~/.local/share/mnemos/models/` (download-on-demand)
+/// 3. XDG assets dir: `~/.local/share/mnemos/assets/`
+/// 4. Packaged install at `/usr/lib/mnemos/all-MiniLM-L6-v2.Q8_0.gguf`
+/// 5. Dev layout `assets/all-MiniLM-L6-v2.Q8_0.gguf`
 pub fn default_model_path() -> PathBuf {
     if let Ok(env) = std::env::var("MNEMOS_BUNDLED_MODEL_DIR") {
         return PathBuf::from(env).join("all-MiniLM-L6-v2.Q8_0.gguf");
+    }
+    // User models dir (populated by desktop app download-on-demand)
+    if let Some(models) = models_dir() {
+        let p = models.join("all-MiniLM-L6-v2.Q8_0.gguf");
+        if p.exists() {
+            return p;
+        }
     }
     // XDG data home: ~/.local/share/mnemos/assets/all-MiniLM-L6-v2.Q8_0.gguf
     if let Some(xdg) = xdg_assets_dir() {
@@ -107,6 +116,17 @@ pub fn xdg_assets_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| directories::BaseDirs::new().map(|b| b.data_dir().to_path_buf()))?;
     Some(base.join("mnemos").join("assets"))
+}
+
+/// Resolve `~/.local/share/mnemos/models/` — the user models directory where
+/// the desktop app places models downloaded on-demand during setup.
+pub fn models_dir() -> Option<PathBuf> {
+    let base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| directories::BaseDirs::new().map(|b| b.data_dir().to_path_buf()))?;
+    Some(base.join("mnemos").join("models"))
 }
 
 /// Handle returned by [`spawn`]. Drop or call [`BundledHandle::shutdown`] to

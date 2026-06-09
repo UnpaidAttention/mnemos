@@ -5,10 +5,15 @@ import { Card, Button } from "../design/primitives";
 export interface ModelEntry {
   /** Display name */
   name: string;
-  /** Ollama model tag, or "bundled" for built-in models */
+  /** Ollama model tag, or "bundled" for built-in models, or filename for direct-download */
   tag: string;
-  /** Provider: "bundled" ships with the app, "ollama" needs Ollama installed */
-  provider: "bundled" | "ollama";
+  /**
+   * Provider:
+   * - "bundled"          ships with the app (embedder MiniLM only)
+   * - "bundled-download" uses the bundled llama-server but model downloads on first use
+   * - "ollama"           needs Ollama installed
+   */
+  provider: "bundled" | "bundled-download" | "ollama";
   /** Human-readable download size */
   size: string;
   /** Embedding dimension (embedders only) */
@@ -19,6 +24,10 @@ export interface ModelEntry {
   description: string;
   /** Whether this is the recommended option */
   recommended?: boolean;
+  /** Direct download URL (for bundled-download models) */
+  downloadUrl?: string;
+  /** Filename for the downloaded GGUF file */
+  downloadFilename?: string;
 }
 
 export const EMBEDDER_MODELS: ModelEntry[] = [
@@ -63,11 +72,14 @@ export const EMBEDDER_MODELS: ModelEntry[] = [
 export const LLM_MODELS: ModelEntry[] = [
   {
     name: "Qwen3 0.6B",
-    tag: "bundled",
-    provider: "bundled",
+    tag: "qwen3-0.6b",
+    provider: "bundled-download",
     size: "462 MB",
     ram: "1 GB",
-    description: "Ships with Mnemos. Minimal footprint, works on any hardware.",
+    description: "Minimal footprint, works on any hardware. Uses the built-in inference engine.",
+    downloadUrl:
+      "https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-Q4_K_M.gguf",
+    downloadFilename: "Qwen3-0.6B-Q4_K_M.gguf",
   },
   {
     name: "Gemma 4 E4B",
@@ -111,9 +123,16 @@ interface ModelPickerProps {
   selectedTag: string;
   onSelect: (tag: string) => void;
   installedModels: string[];
+  /** List of downloaded GGUF filenames (for bundled-download provider) */
+  downloadedFiles?: string[];
   pullingModel: string | null;
   pullProgress: number; // 0–100
   onPull: (tag: string) => void;
+  /** Called when a bundled-download model needs downloading */
+  onDownload?: (model: ModelEntry) => void;
+  /** Progress for an active bundled-download (0–100) */
+  downloadingModel?: string | null;
+  downloadProgress?: number;
   label?: string;
 }
 
@@ -122,9 +141,13 @@ export function ModelPicker({
   selectedTag,
   onSelect,
   installedModels,
+  downloadedFiles = [],
   pullingModel,
   pullProgress,
   onPull,
+  onDownload,
+  downloadingModel,
+  downloadProgress = 0,
   label,
 }: ModelPickerProps) {
   return (
@@ -132,8 +155,17 @@ export function ModelPicker({
       {label && <div className="label text-text-muted text-xs mb-1">{label}</div>}
       {catalog.map((m) => {
         const isSelected = selectedTag === m.tag;
-        const isInstalled = m.provider === "bundled" || installedModels.some((im) => im.startsWith(m.tag.split(":")[0]));
+        const isOllamaInstalled =
+          m.provider === "ollama" &&
+          installedModels.some((im) => im.startsWith(m.tag.split(":")[0]));
+        const isDownloaded =
+          m.provider === "bundled" ||
+          (m.provider === "bundled-download" &&
+            m.downloadFilename != null &&
+            downloadedFiles.includes(m.downloadFilename)) ||
+          isOllamaInstalled;
         const isPulling = pullingModel === m.tag;
+        const isDownloading = downloadingModel === m.tag;
 
         return (
           <Card
@@ -176,7 +208,17 @@ export function ModelPicker({
                       ✓ Bundled
                     </span>
                   )}
-                  {m.provider === "ollama" && isInstalled && (
+                  {m.provider === "bundled-download" && isDownloaded && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 uppercase tracking-wider">
+                      ✓ Downloaded
+                    </span>
+                  )}
+                  {m.provider === "bundled-download" && !isDownloaded && !isDownloading && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 uppercase tracking-wider">
+                      Direct Download
+                    </span>
+                  )}
+                  {m.provider === "ollama" && isOllamaInstalled && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 uppercase tracking-wider">
                       ✓ Downloaded
                     </span>
@@ -189,8 +231,35 @@ export function ModelPicker({
                   {m.dim && <span>• {m.dim}d</span>}
                 </div>
 
-                {/* Download button / progress */}
-                {m.provider === "ollama" && !isInstalled && !isPulling && (
+                {/* Download button for bundled-download models */}
+                {m.provider === "bundled-download" && !isDownloaded && !isDownloading && (
+                  <Button
+                    className="mt-2 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDownload?.(m);
+                    }}
+                  >
+                    Download ({m.size})
+                  </Button>
+                )}
+                {isDownloading && (
+                  <div className="mt-2">
+                    <div className="flex items-center gap-2 text-xs text-accent">
+                      <span aria-busy="true">Downloading…</span>
+                      <span>{downloadProgress}%</span>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-surface-hover mt-1 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-accent transition-all duration-300"
+                        style={{ width: `${downloadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Download button for Ollama models */}
+                {m.provider === "ollama" && !isOllamaInstalled && !isPulling && (
                   <Button
                     className="mt-2 text-xs"
                     onClick={(e) => {

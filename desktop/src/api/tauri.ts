@@ -110,3 +110,21 @@ export function checkForUpdates(): Promise<UpdateInfo | null> {
 export function installUpdate(assetUrl: string, assetName: string): Promise<null> {
   return invokeSafe("install_update", { assetUrl, assetName });
 }
+
+// ─── Model download-on-demand ──────────────────────────────────────────
+
+export interface DownloadedModels {
+  models_dir: string;
+  files: string[];
+}
+
+/** Check which GGUF model files have been downloaded to the models directory. */
+export function checkDownloadedModels(): Promise<DownloadedModels | null> {
+  return invokeSafe<DownloadedModels>("check_downloaded_models");
+}
+
+/** Download a GGUF model file. Emits 'model-download-progress' events.
+ *  Returns the local path to the downloaded file. */
+export function downloadBundledModel(url: string, filename: string): Promise<string | null> {
+  return invokeSafe<string>("download_bundled_model", { url, filename });
+}

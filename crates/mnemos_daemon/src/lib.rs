@@ -109,11 +109,9 @@ pub async fn build_app_full(
             }
             None
         } else {
-            Some(
-                bundled_llm::spawn(lcfg, llm_ready_tx.clone())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("spawn bundled LLM: {e}"))?,
-            )
+            bundled_llm::spawn(lcfg, llm_ready_tx.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("spawn bundled LLM: {e}"))?
         }
     } else {
         // Non-bundled LLM (ollama, openai, mock): signal readiness immediately

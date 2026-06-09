@@ -668,3 +668,136 @@ pub async fn install_update(app: AppHandle, asset_url: String, asset_name: Strin
 
     Ok(())
 }
+
+// ─── Model download-on-demand ──────────────────────────────────────────
+
+/// Resolve the user models directory: `~/.local/share/mnemos/models/`.
+fn models_dir() -> Result<std::path::PathBuf, String> {
+    let base = directories::BaseDirs::new()
+        .ok_or_else(|| "cannot resolve home directory".to_string())?;
+    Ok(base.data_dir().join("mnemos").join("models"))
+}
+
+/// Check which model files have already been downloaded to the models directory.
+#[derive(Serialize)]
+pub struct DownloadedModels {
+    pub models_dir: String,
+    pub files: Vec<String>,
+}
+
+#[tauri::command]
+pub fn check_downloaded_models() -> Result<DownloadedModels, String> {
+    let dir = models_dir()?;
+    let files = if dir.exists() {
+        std::fs::read_dir(&dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".gguf") {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+    Ok(DownloadedModels {
+        models_dir: dir.to_string_lossy().into_owned(),
+        files,
+    })
+}
+
+/// Download a GGUF model file from a URL to `~/.local/share/mnemos/models/<filename>`.
+/// Emits `model-download-progress` events with `{ filename, downloaded, total }`.
+/// Returns the full path to the downloaded file on success.
+#[tauri::command]
+pub async fn download_bundled_model(
+    app: AppHandle,
+    url: String,
+    filename: String,
+) -> Result<String, String> {
+    use tauri::Emitter;
+
+    let dir = models_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create models dir: {e}"))?;
+
+    let target = dir.join(&filename);
+
+    // If already downloaded, return immediately.
+    if target.exists() {
+        return Ok(target.to_string_lossy().into_owned());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3600))
+        .user_agent("mnemos-desktop")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("download request: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", resp.status()));
+    }
+
+    let total = resp.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+
+    // Write to a temp file first, then rename on completion to avoid partial files.
+    let tmp_target = dir.join(format!("{filename}.partial"));
+    let mut file = tokio::fs::File::create(&tmp_target)
+        .await
+        .map_err(|e| format!("create file: {e}"))?;
+
+    use tokio::io::AsyncWriteExt;
+    let mut stream = resp.bytes_stream();
+    let mut last_emit = std::time::Instant::now();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("download stream: {e}"))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("write chunk: {e}"))?;
+        downloaded += chunk.len() as u64;
+
+        // Throttle progress events to ~4 per second.
+        if last_emit.elapsed() >= std::time::Duration::from_millis(250) {
+            let _ = app.emit(
+                "model-download-progress",
+                serde_json::json!({
+                    "filename": filename,
+                    "downloaded": downloaded,
+                    "total": total,
+                }),
+            );
+            last_emit = std::time::Instant::now();
+        }
+    }
+
+    file.flush().await.map_err(|e| format!("flush: {e}"))?;
+    drop(file);
+
+    // Atomic rename from .partial to final name.
+    tokio::fs::rename(&tmp_target, &target)
+        .await
+        .map_err(|e| format!("rename: {e}"))?;
+
+    // Final 100% progress event.
+    let _ = app.emit(
+        "model-download-progress",
+        serde_json::json!({
+            "filename": filename,
+            "downloaded": total,
+            "total": total,
+        }),
+    );
+
+    Ok(target.to_string_lossy().into_owned())
+}
