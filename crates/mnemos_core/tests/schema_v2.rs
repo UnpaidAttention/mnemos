@@ -1,4 +1,5 @@
 use mnemos_core::Storage;
+use mnemos_core::LATEST_SCHEMA_VERSION;
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -20,7 +21,10 @@ async fn migration_v2_creates_vec_tables() {
             "missing virtual table: {vt}"
         );
     }
-    assert_eq!(storage.schema_version().await.unwrap(), 10);
+    assert_eq!(
+        storage.schema_version().await.unwrap(),
+        LATEST_SCHEMA_VERSION
+    );
 }
 
 #[tokio::test]
@@ -30,7 +34,7 @@ async fn migration_v2_is_idempotent() {
     let _ = Storage::open(&path).await.unwrap();
     let _ = Storage::open(&path).await.unwrap();
     let s = Storage::open(&path).await.unwrap();
-    assert_eq!(s.schema_version().await.unwrap(), 10);
+    assert_eq!(s.schema_version().await.unwrap(), LATEST_SCHEMA_VERSION);
 }
 
 #[tokio::test]
@@ -39,5 +43,5 @@ async fn migration_v2_upgrades_from_v1() {
     let path = tmp.path().join("upgrade.db");
     let _ = Storage::open(&path).await.unwrap();
     let s = Storage::open(&path).await.unwrap();
-    assert_eq!(s.schema_version().await.unwrap(), 10);
+    assert_eq!(s.schema_version().await.unwrap(), LATEST_SCHEMA_VERSION);
 }

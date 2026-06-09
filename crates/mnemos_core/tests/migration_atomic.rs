@@ -2,6 +2,7 @@
 //! idempotency (write-lock-bypass fix).
 
 use mnemos_core::Storage;
+use mnemos_core::LATEST_SCHEMA_VERSION;
 use tempfile::TempDir;
 
 /// A fresh database must reach the latest schema version and be idempotent
@@ -10,8 +11,7 @@ use tempfile::TempDir;
 async fn migrations_reach_latest_version_on_fresh_db() {
     let tmp = TempDir::new().unwrap();
     let s = Storage::open(&tmp.path().join("m.db")).await.unwrap();
-    // v11 is the current latest (v11 = strength column migration).
-    assert_eq!(s.schema_version().await.unwrap(), 11);
+    assert_eq!(s.schema_version().await.unwrap(), LATEST_SCHEMA_VERSION);
 }
 
 /// Opening the same DB file multiple times must not advance the version past
@@ -87,10 +87,11 @@ async fn schema_migrations_versions_are_sequential() {
         );
         expected += 1;
     }
-    // We should have seen at least v1..v11.
+    // We should have seen at least v1..LATEST_SCHEMA_VERSION.
     assert!(
-        expected > 11,
-        "expected at least 11 migration rows, got {}",
+        expected > i64::from(LATEST_SCHEMA_VERSION),
+        "expected at least {} migration rows, got {}",
+        LATEST_SCHEMA_VERSION,
         expected - 1
     );
 }

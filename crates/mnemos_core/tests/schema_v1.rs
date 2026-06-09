@@ -1,4 +1,5 @@
 use mnemos_core::Storage;
+use mnemos_core::LATEST_SCHEMA_VERSION;
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -60,7 +61,6 @@ async fn migration_is_idempotent() {
     let _ = Storage::open(&path).await.unwrap();
     let _ = Storage::open(&path).await.unwrap();
     let s = Storage::open(&path).await.unwrap();
-    // Schema version advances with each migration; v10 is now the latest
-    // (v10 = P1-4 FTS repair migration).
-    assert_eq!(s.schema_version().await.unwrap(), 10);
+    // Schema version advances with each migration.
+    assert_eq!(s.schema_version().await.unwrap(), LATEST_SCHEMA_VERSION);
 }

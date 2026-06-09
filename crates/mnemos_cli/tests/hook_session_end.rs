@@ -76,10 +76,17 @@ async fn hook_session_end_ingests_transcript_into_daemon() {
 
     // ── 3. Write the token where the CLI hook's `load_token()` expects it ────
     // mnemos_daemon::token_path() uses ProjectDirs("dev","mnemos","mnemos").
-    // On Linux that resolves to $XDG_CONFIG_HOME/mnemos/token.
-    let token_dir = config_dir.join("mnemos");
-    std::fs::create_dir_all(&token_dir).unwrap();
-    std::fs::write(token_dir.join("token"), &token).unwrap();
+    // On Linux with XDG_CONFIG_HOME set it resolves to $XDG_CONFIG_HOME/mnemos/token.
+    // On macOS it resolves to $HOME/Library/Application Support/dev.mnemos.mnemos/token
+    // (ignoring XDG_CONFIG_HOME). We set HOME to the temp root so ProjectDirs
+    // sees it as home, then compute the actual path it will use.
+    //
+    // We must set HOME *before* computing token_path because ProjectDirs reads it.
+    std::env::set_var("HOME", tmp.path());
+    std::env::set_var("XDG_CONFIG_HOME", &config_dir);
+    let token_file = mnemos_daemon::token_path().expect("token_path must resolve in test");
+    std::fs::create_dir_all(token_file.parent().unwrap()).unwrap();
+    std::fs::write(&token_file, &token).unwrap();
 
     // ── 4. Write a minimal JSONL transcript file ──────────────────────────────
     let transcript_path = tmp.path().join("session.jsonl");

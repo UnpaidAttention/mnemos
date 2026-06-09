@@ -26,6 +26,12 @@
 use crate::error::Result;
 use crate::storage::Storage;
 
+/// The latest schema version. Bump this whenever a new `migration_vN` is added.
+///
+/// Tests should assert against this constant rather than a hardcoded integer so
+/// they do not break when new migrations land.
+pub const LATEST_SCHEMA_VERSION: u32 = 11;
+
 impl Storage {
     pub(crate) async fn apply_migrations(&self) -> Result<()> {
         // Hold the write lock for the entire migration sequence so no other
