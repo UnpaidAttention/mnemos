@@ -7,16 +7,8 @@ on:
 
 jobs:
   test:
-    name: cargo test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # Windows is intentionally excluded: the `libsql-sys` backend is
-        # Unix-only in the pinned version (uses std::os::unix). Windows support
-        # is blocked on libsql gaining Windows compatibility (or swapping the
-        # storage backend) — revisit in Plan 7 packaging.
-        os: [ubuntu-latest, macos-latest]
+    name: cargo test
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -29,7 +21,6 @@ jobs:
       # llama.cpp tag + model name. Bump key when fetch-bundled-assets.sh
       # changes LLAMA_CPP_TAG.
       - name: Cache bundled assets
-        if: runner.os == 'Linux'
         id: cache-assets
         uses: actions/cache@v4
         with:
@@ -37,7 +28,7 @@ jobs:
           key: bundled-assets-llamacpp-b9400-runtime-embedder
 
       - name: Fetch bundled assets
-        if: runner.os == 'Linux' && steps.cache-assets.outputs.cache-hit != 'true'
+        if: steps.cache-assets.outputs.cache-hit != 'true'
         run: bash scripts/fetch-bundled-assets.sh
 
       - name: fmt
@@ -53,10 +44,8 @@ jobs:
 
       # Spawn a llama-server in the background and re-run the workspace tests
       # with `--include-ignored` so the bundled-embedder integration tests
-      # (gated on MNEMOS_TEST_LLAMA_SERVER) execute. Linux-only — assets are
-      # only fetched on Linux runners.
+      # (gated on MNEMOS_TEST_LLAMA_SERVER) execute.
       - name: Run ignored tests against bundled llama-server
-        if: runner.os == 'Linux'
         env:
           MNEMOS_TEST_BUNDLED: "1"
           MNEMOS_TEST_LLAMA_SERVER: "1"
