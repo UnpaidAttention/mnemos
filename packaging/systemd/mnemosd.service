@@ -8,7 +8,7 @@ After=network-online.target
 [Service]
 Type=simple
 # Look for the binary in common install locations.
-ExecStart=%h/.cargo/bin/mnemos-daemon
+ExecStart=%h/.cargo/bin/mnemosd
 # Verify the daemon is serving before systemd considers the unit started.
 ExecStartPost=/bin/sh -c 'for i in $(seq 1 30); do curl -sf http://127.0.0.1:7423/health >/dev/null && exit 0; sleep 1; done; exit 1'
 Restart=on-failure

@@ -54,6 +54,7 @@ async fn list(State(_): State<AppState>) -> Result<Json<Value>, ApiError> {
                     "path": e.path().to_string_lossy(),
                     "present": e.is_present(),
                 })).collect::<Vec<_>>(),
+                "post_connect_note": c.post_connect_note,
             })
         })
         .collect();
@@ -128,6 +129,7 @@ async fn connect(
         // When true, the caller (desktop wizard) should also run
         // `mnemos service enable` so hooks fire outside CLI sessions.
         "requires_service": c.requires_service,
+        "post_connect_note": c.post_connect_note,
     })))
 }
 

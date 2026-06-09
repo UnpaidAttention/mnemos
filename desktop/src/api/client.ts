@@ -18,6 +18,7 @@ export interface Connector {
   requires_service?: boolean;
   manual_snippet: { target: string; snippet: string } | null;
   edits: ConnectorEdit[];
+  post_connect_note?: string | null;
 }
 
 export interface AutonomyConfig {
@@ -242,8 +243,8 @@ export class MnemosClient {
   previewConnector(id: string): Promise<ConnectorPreview> {
     return this.req<ConnectorPreview>("POST", `/v1/connectors/${id}/preview`);
   }
-  connectConnector(id: string): Promise<{ id: string; connected: "full" | "partial" | "none" }> {
-    return this.req<{ id: string; connected: "full" | "partial" | "none" }>("POST", `/v1/connectors/${id}/connect`);
+  connectConnector(id: string): Promise<{ id: string; connected: "full" | "partial" | "none"; post_connect_note?: string | null }> {
+    return this.req<{ id: string; connected: "full" | "partial" | "none"; post_connect_note?: string | null }>("POST", `/v1/connectors/${id}/connect`);
   }
   disconnectConnector(id: string): Promise<{ id: string; connected: "full" | "partial" | "none" }> {
     return this.req<{ id: string; connected: "full" | "partial" | "none" }>("POST", `/v1/connectors/${id}/disconnect`);

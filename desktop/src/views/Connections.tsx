@@ -3,6 +3,7 @@ import { client, type Connector, type ConnectorPreview } from "../api/client";
 import { Button, Card } from "../design/primitives";
 
 type PreviewState = { connectorId: string; preview: ConnectorPreview };
+type SuccessNote = { connectorId: string; note: string };
 
 // ── Status helpers ──────────────────────────────────────────────────────────────
 
@@ -114,6 +115,16 @@ function ConnectorCard({
         </div>
       </div>
 
+      {/* Post-connect guidance note */}
+      {c.connected === "full" && c.post_connect_note && (
+        <div className="px-4 pb-3 pt-0">
+          <div className="flex items-start gap-2 rounded-md bg-tier-semantic/[0.07] border border-tier-semantic/20 px-3 py-2">
+            <span className="text-tier-semantic shrink-0 mt-0.5">ℹ</span>
+            <span className="font-body text-xs text-text-secondary">{c.post_connect_note}</span>
+          </div>
+        </div>
+      )}
+
       {/* Manual snippet */}
       {c.kind === "manual" && c.manual_snippet && (
         <div className="px-4 pb-3 pt-0">
@@ -159,6 +170,7 @@ export function Connections() {
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [successNote, setSuccessNote] = useState<SuccessNote | null>(null);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -198,11 +210,17 @@ export function Connections() {
   const handleApply = async () => {
     if (!preview) return;
     setError(null);
+    setSuccessNote(null);
     setBusy(preview.connectorId);
     try {
-      await client.connectConnector(preview.connectorId);
-      if (mounted.current) setPreview(null);
-      if (mounted.current) load();
+      const result = await client.connectConnector(preview.connectorId);
+      if (mounted.current) {
+        setPreview(null);
+        if (result.post_connect_note) {
+          setSuccessNote({ connectorId: preview.connectorId, note: result.post_connect_note });
+        }
+        load();
+      }
     } catch (err) {
       if (mounted.current) setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -253,6 +271,22 @@ export function Connections() {
 
   return (
     <div className="space-y-4">
+      {/* Success banner with post-connect guidance */}
+      {successNote && (
+        <div className="flex items-start gap-3 rounded-lg border border-accent/30 bg-accent/[0.05] px-4 py-3">
+          <span className="text-accent text-lg shrink-0">✓</span>
+          <div className="flex-1 min-w-0">
+            <div className="font-body text-sm text-text-primary">Connected successfully</div>
+            <div className="font-body text-xs text-text-secondary mt-1">{successNote.note}</div>
+          </div>
+          <button
+            className="text-text-muted hover:text-text-primary text-xs shrink-0"
+            onClick={() => setSuccessNote(null)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* Detected tools */}
       {detected.length > 0 && (
         <div className="space-y-2">

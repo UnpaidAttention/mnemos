@@ -94,6 +94,10 @@ pub struct ToolConnector {
     /// the desktop wizard which handles `mnemos service enable` on behalf of
     /// the user.
     pub requires_service: bool,
+    /// Optional guidance note shown to the user after a successful connection.
+    /// Used when the tool requires a manual follow-up step (e.g. trusting
+    /// hooks in Codex, restarting the IDE).
+    pub post_connect_note: Option<&'static str>,
 }
 
 impl ConfigEdit {
@@ -244,6 +248,7 @@ mod tests {
             }],
             manual_snippet: None,
             requires_service: false,
+            post_connect_note: None,
         };
         assert_eq!(c.connected(), Connected::None);
         std::fs::write(&f, c.edits[0].rendered().unwrap()).unwrap();

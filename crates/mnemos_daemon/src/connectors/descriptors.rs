@@ -32,6 +32,9 @@ fn codex_config_path() -> PathBuf {
 fn codex_agents_path() -> PathBuf {
     home().join(".codex").join("AGENTS.md")
 }
+fn codex_hooks_path() -> PathBuf {
+    home().join(".codex").join("hooks.json")
+} // JSON, hooks.{Event}[]
 fn gemini_settings_path() -> PathBuf {
     home().join(".gemini").join("settings.json")
 } // JSON, mcpServers
@@ -41,6 +44,15 @@ fn antigravity_dir() -> PathBuf {
 fn antigravity_mcp_path() -> PathBuf {
     antigravity_dir().join("mcp_config.json")
 } // JSON, mcpServers
+fn antigravity_ide_dir() -> PathBuf {
+    home().join(".gemini").join("antigravity-ide")
+}
+fn antigravity_ide_mcp_path() -> PathBuf {
+    antigravity_ide_dir().join("mcp_config.json")
+} // JSON, mcpServers
+fn antigravity_hooks_path() -> PathBuf {
+    home().join(".gemini").join("config").join("hooks.json")
+} // JSON, shared by Antigravity CLI + IDE
 
 const HINT: &str = "## Mnemos persistent memory\n\nThis session has a persistent memory server (Mnemos) registered as an MCP provider. At the start of every session, read the `mnemos://working` resource — it contains identity facts and active project context.\n\nWhen the user states a durable preference, project context, or rule not obvious from the codebase, call `remember(...)` so it persists across sessions.";
 
@@ -52,6 +64,17 @@ const HOOK_USER_PROMPT_JSON: &str =
     r#"{"matcher":"","hooks":[{"type":"command","command":"mnemos hook user-prompt"}]}"#;
 const HOOK_SESSION_END_JSON: &str =
     r#"{"matcher":"","hooks":[{"type":"command","command":"mnemos hook session-end"}]}"#;
+
+// Codex CLI hooks — top-level "hooks" object in ~/.codex/hooks.json
+const CODEX_HOOK_SESSION_START_JSON: &str =
+    r#"[{"type":"command","command":"mnemos hook session-start","timeout":30}]"#;
+const CODEX_HOOK_USER_PROMPT_JSON: &str =
+    r#"[{"type":"command","command":"mnemos hook user-prompt","timeout":30}]"#;
+const CODEX_HOOK_STOP_JSON: &str =
+    r#"[{"type":"command","command":"mnemos hook stop","timeout":30}]"#;
+
+// Antigravity CLI/IDE hooks — named group in ~/.gemini/config/hooks.json
+const ANTIGRAVITY_HOOKS_JSON: &str = r#"{"PostInvocation":[{"type":"command","command":"mnemos hook user-prompt","timeout":30}],"Stop":[{"type":"command","command":"mnemos hook stop","timeout":30}]}"#;
 const HOOK_STOP_JSON: &str =
     r#"{"matcher":"","hooks":[{"type":"command","command":"mnemos hook stop"}]}"#;
 
@@ -118,6 +141,7 @@ pub fn registry() -> Vec<ToolConnector> {
             ],
             manual_snippet: None,
             requires_service: true,
+            post_connect_note: None,
         },
         ToolConnector {
             id: "codex",
@@ -126,6 +150,7 @@ pub fn registry() -> Vec<ToolConnector> {
             deprecated: None,
             detect: || binary_on_path("codex") || any_path_exists(&[&home().join(".codex")]),
             edits: vec![
+                // Edit 0: MCP server in config.toml
                 ConfigEdit {
                     target: codex_config_path,
                     strategy: EditStrategy::TomlMerge {
@@ -134,13 +159,40 @@ pub fn registry() -> Vec<ToolConnector> {
                         value_toml: "command = \"mnemos-mcp-stdio\"\nargs = []",
                     },
                 },
+                // Edit 1: AGENTS.md hint
                 ConfigEdit {
                     target: codex_agents_path,
                     strategy: EditStrategy::MarkedBlock { body: HINT },
                 },
+                // Edits 2-4: hooks in ~/.codex/hooks.json
+                ConfigEdit {
+                    target: codex_hooks_path,
+                    strategy: EditStrategy::JsonMerge {
+                        pointer: &["hooks"],
+                        key: "SessionStart",
+                        value_json: CODEX_HOOK_SESSION_START_JSON,
+                    },
+                },
+                ConfigEdit {
+                    target: codex_hooks_path,
+                    strategy: EditStrategy::JsonMerge {
+                        pointer: &["hooks"],
+                        key: "UserPromptSubmit",
+                        value_json: CODEX_HOOK_USER_PROMPT_JSON,
+                    },
+                },
+                ConfigEdit {
+                    target: codex_hooks_path,
+                    strategy: EditStrategy::JsonMerge {
+                        pointer: &["hooks"],
+                        key: "Stop",
+                        value_json: CODEX_HOOK_STOP_JSON,
+                    },
+                },
             ],
             manual_snippet: None,
             requires_service: false,
+            post_connect_note: Some("Run /hooks in Codex CLI to review and trust the new Mnemos hooks before they activate."),
         },
         ToolConnector {
             id: "antigravity-cli",
@@ -148,16 +200,59 @@ pub fn registry() -> Vec<ToolConnector> {
             kind: ToolKind::Detectable,
             deprecated: None,
             detect: || binary_on_path("antigravity") || any_path_exists(&[&antigravity_dir()]),
-            edits: vec![ConfigEdit {
-                target: antigravity_mcp_path,
-                strategy: EditStrategy::JsonMerge {
-                    pointer: &["mcpServers"],
-                    key: "mnemos",
-                    value_json: r#"{"command":"mnemos-mcp-stdio"}"#,
+            edits: vec![
+                // Edit 0: MCP server entry
+                ConfigEdit {
+                    target: antigravity_mcp_path,
+                    strategy: EditStrategy::JsonMerge {
+                        pointer: &["mcpServers"],
+                        key: "mnemos",
+                        value_json: r#"{"command":"mnemos-mcp-stdio"}"#,
+                    },
                 },
-            }],
+                // Edit 1: hooks in ~/.gemini/config/hooks.json (shared with IDE)
+                ConfigEdit {
+                    target: antigravity_hooks_path,
+                    strategy: EditStrategy::JsonMerge {
+                        pointer: &[],
+                        key: "mnemos",
+                        value_json: ANTIGRAVITY_HOOKS_JSON,
+                    },
+                },
+            ],
             manual_snippet: None,
             requires_service: false,
+            post_connect_note: None,
+        },
+        ToolConnector {
+            id: "antigravity-ide",
+            display_name: "Antigravity IDE",
+            kind: ToolKind::Detectable,
+            deprecated: None,
+            detect: || any_path_exists(&[&antigravity_ide_dir()]),
+            edits: vec![
+                // Edit 0: MCP server entry
+                ConfigEdit {
+                    target: antigravity_ide_mcp_path,
+                    strategy: EditStrategy::JsonMerge {
+                        pointer: &["mcpServers"],
+                        key: "mnemos",
+                        value_json: r#"{"command":"mnemos-mcp-stdio"}"#,
+                    },
+                },
+                // Edit 1: hooks in ~/.gemini/config/hooks.json (shared with CLI)
+                ConfigEdit {
+                    target: antigravity_hooks_path,
+                    strategy: EditStrategy::JsonMerge {
+                        pointer: &[],
+                        key: "mnemos",
+                        value_json: ANTIGRAVITY_HOOKS_JSON,
+                    },
+                },
+            ],
+            manual_snippet: None,
+            requires_service: false,
+            post_connect_note: Some("Restart the IDE to load the Mnemos MCP server."),
         },
         ToolConnector {
             id: "gemini-cli",
@@ -175,6 +270,7 @@ pub fn registry() -> Vec<ToolConnector> {
             }],
             manual_snippet: None,
             requires_service: false,
+            post_connect_note: None,
         },
         manual(
             "generic-mcp",
@@ -218,6 +314,7 @@ fn manual(
         edits: vec![],
         manual_snippet: Some((target_hint, snippet)),
         requires_service: false,
+        post_connect_note: None,
     }
 }
 
@@ -255,18 +352,27 @@ mod tests {
             EditStrategy::JsonArrayAppend { .. }
         ));
         let codex = r.iter().find(|c| c.id == "codex").unwrap();
+        assert_eq!(codex.edits.len(), 5, "MCP + AGENTS.md + 3 hooks");
         assert!(
             matches!(codex.edits[0].strategy, EditStrategy::TomlMerge { .. }),
             "Codex uses TOML"
         );
+        assert!(codex.post_connect_note.is_some(), "Codex needs trust note");
         assert!(!codex.requires_service);
+        let agy_cli = r.iter().find(|c| c.id == "antigravity-cli").unwrap();
+        assert_eq!(agy_cli.edits.len(), 2, "MCP + hooks");
+        let agy_ide = r.iter().find(|c| c.id == "antigravity-ide").unwrap();
+        assert_eq!(agy_ide.edits.len(), 2, "MCP + hooks");
+        assert!(
+            agy_ide.post_connect_note.is_some(),
+            "IDE needs restart note"
+        );
         assert!(r
             .iter()
             .find(|c| c.id == "gemini-cli")
             .unwrap()
             .deprecated
             .is_some());
-        assert!(r.iter().any(|c| c.id == "antigravity-cli"));
         assert!(r
             .iter()
             .any(|c| c.id == "generic-mcp" && c.kind == ToolKind::Manual));
@@ -357,6 +463,7 @@ mod tests {
             ],
             manual_snippet: None,
             requires_service: true,
+            post_connect_note: None,
         }
     }
 
