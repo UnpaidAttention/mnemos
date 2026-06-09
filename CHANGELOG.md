@@ -2,6 +2,40 @@
 
 All notable changes to this project are recorded here.
 
+## [0.8.1] - 2026-06-09
+
+> **Contextual recall + CI stabilization.** Mnemos now proactively
+> re-injects project context, entity-linked memories, and recovered
+> topics during live AI tool sessions. All CI workflows are green.
+
+### Added
+- **3-layer contextual recall** for real-time session injection:
+  - **Layer 1 — Project Pinning:** `GET /v1/memories/project-context`
+    returns Project + Entity type memories for the current workspace.
+    Injected as `[Project Context]` on every prompt (800 char budget).
+  - **Layer 2 — Entity Expansion:** `entity_expand` option on
+    `/v1/memories/search` follows entity links via `json_each` to
+    surface related memories. Expanded hits get discounted scores.
+  - **Layer 3 — Session-Aware Context Recovery:** Tracks keyword
+    first-seen ordinals per session. When keywords reappear after ≥4
+    prompts, augments recall query and injects `[Recovered Context]`.
+- **`kinds` filter on `ListFilter`** — query memories by type
+  (Project, Entity, Episodic, etc.).
+- **Real-time chunk streaming pipeline** — processes session chunks
+  immediately as they arrive, not just at session end.
+- **Schema v11** — adds `strength` column to memories table.
+
+### Fixed
+- **CI: `cargo fmt --check` failures** — all Rust code formatted.
+- **CI: `cargo clippy -D warnings` failures** — fixed `push_str`
+  for single chars, unnecessary `unsafe` blocks, dead code, useless
+  `as_ref()`, and `Error::other()` modernization.
+- **CI: desktop workflow `pnpm install` failure** — added missing
+  `packages` field to `pnpm-workspace.yaml`.
+- **CI: service tests** — updated assertions to match actual systemd
+  unit file (`%h/.cargo/bin/mnemos-daemon`, `Restart=on-failure`).
+- **CI: migration tests** — updated expected schema version to v11.
+
 ## [0.8.0] - 2026-05-29
 
 > **Zero-setup release.** Mnemos now ships with a bundled embedder
