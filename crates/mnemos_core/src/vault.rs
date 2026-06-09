@@ -512,7 +512,9 @@ impl Vault {
     }
 
     async fn trigger_index_log_update(&self) {
-        if let Err(e) = crate::pipeline::index_log::update_index_log(&self.storage, &self.paths).await {
+        if let Err(e) =
+            crate::pipeline::index_log::update_index_log(&self.storage, &self.paths).await
+        {
             tracing::warn!("failed to update index/log: {e}");
         }
     }

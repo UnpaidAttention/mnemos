@@ -89,7 +89,8 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
     tracing::info!(pid_file = %pid_path.display(), pid = std::process::id(), "PID file acquired");
 
     let decay_vault = vault.clone();
-    let (app, _state, pipeline, sync, bundled, bundled_llm) = build_app_full(cfg, vault, reranker, llm).await?;
+    let (app, _state, pipeline, sync, bundled, bundled_llm) =
+        build_app_full(cfg, vault, reranker, llm).await?;
 
     // Hourly decay worker.
     let (decay_tx, mut decay_rx) = tokio::sync::watch::channel(false);

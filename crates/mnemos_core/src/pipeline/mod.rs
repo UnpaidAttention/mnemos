@@ -8,10 +8,10 @@ pub mod decay;
 pub mod entities;
 pub mod extract;
 pub mod graph;
-pub mod reflect;
-pub mod resolve;
 pub mod index_log;
 pub mod lint;
+pub mod reflect;
+pub mod resolve;
 
 use serde::{Deserialize, Serialize};
 

@@ -52,6 +52,8 @@ const HOOK_USER_PROMPT_JSON: &str =
     r#"{"matcher":"","hooks":[{"type":"command","command":"mnemos hook user-prompt"}]}"#;
 const HOOK_SESSION_END_JSON: &str =
     r#"{"matcher":"","hooks":[{"type":"command","command":"mnemos hook session-end"}]}"#;
+const HOOK_STOP_JSON: &str =
+    r#"{"matcher":"","hooks":[{"type":"command","command":"mnemos hook stop"}]}"#;
 
 pub fn registry() -> Vec<ToolConnector> {
     vec![
@@ -102,6 +104,15 @@ pub fn registry() -> Vec<ToolConnector> {
                         pointer: &["hooks", "SessionEnd"],
                         match_command: "mnemos hook session-end",
                         value_json: HOOK_SESSION_END_JSON,
+                    },
+                },
+                // Edit 5: Stop hook for real-time response capture
+                ConfigEdit {
+                    target: claude_settings_path,
+                    strategy: EditStrategy::JsonArrayAppend {
+                        pointer: &["hooks", "Stop"],
+                        match_command: "mnemos hook stop",
+                        value_json: HOOK_STOP_JSON,
                     },
                 },
             ],
@@ -224,7 +235,7 @@ mod tests {
     fn registry_has_expected_tools_kinds_and_strategies() {
         let r = registry();
         let claude = r.iter().find(|c| c.id == "claude-code").unwrap();
-        assert_eq!(claude.edits.len(), 5, "MCP + CLAUDE.md hint + 3 hooks");
+        assert_eq!(claude.edits.len(), 6, "MCP + CLAUDE.md hint + 4 hooks");
         assert!(claude.requires_service, "claude-code needs daemon service");
         // Verify the hook edits are JsonArrayAppend
         assert!(matches!(
@@ -237,6 +248,10 @@ mod tests {
         ));
         assert!(matches!(
             claude.edits[4].strategy,
+            EditStrategy::JsonArrayAppend { .. }
+        ));
+        assert!(matches!(
+            claude.edits[5].strategy,
             EditStrategy::JsonArrayAppend { .. }
         ));
         let codex = r.iter().find(|c| c.id == "codex").unwrap();
@@ -408,7 +423,7 @@ mod tests {
         std::fs::write(&mcp_f, &content0).unwrap();
         let content1 = c.edits[1].rendered().unwrap();
         std::fs::write(&md_f, &content1).unwrap();
-        // For settings.json the three hook edits must be applied in sequence.
+        // For settings.json the four hook edits must be applied in sequence.
         let s2 = c.edits[2].rendered().unwrap();
         std::fs::write(&settings_f, &s2).unwrap();
         let s3 = c.edits[3].rendered().unwrap();

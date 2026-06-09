@@ -7,7 +7,7 @@ use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use libsql::params;
 use mnemos_core::pipeline::entities::link_entities;
-use mnemos_core::pipeline::extract::extract_facts;
+use mnemos_core::pipeline::extract::{extract_facts, extract_facts_incremental};
 use mnemos_core::pipeline::graph::update_graph;
 use mnemos_core::pipeline::reflect::{harden_corrections, mine_corrections, reflect};
 use mnemos_core::pipeline::resolve::resolve_and_apply;
@@ -34,8 +34,12 @@ impl PipelineHandle {
 }
 
 /// Spawn the runner. It processes `SessionEnded` events until told to stop.
-/// On startup, it first catches up any sessions with `processed_at IS NULL`
-/// (e.g. from previous failed runs or daemon restarts).
+/// On startup, it first catches up any sessions with `processed_at IS NULL`.
+///
+/// It also handles `ChunkAdded` events for incremental (mid-session)
+/// extraction: when 4+ chunks accumulate for a session or 90 seconds pass
+/// since the last chunk with ≥1 pending, it runs the extraction pipeline on
+/// just the new chunks (with full session context).
 pub fn spawn(state: AppState) -> PipelineHandle {
     let (tx, mut rx) = watch::channel(false);
     // Subscribe BEFORE spawning so no events are missed between spawn and first poll.
@@ -44,13 +48,60 @@ pub fn spawn(state: AppState) -> PipelineHandle {
         // Catch-up: retry any sessions that were never successfully processed.
         catch_up(&state).await;
 
+        // Track pending chunks per session for batched incremental processing.
+        let mut pending: std::collections::HashMap<String, IncrementalState> =
+            std::collections::HashMap::new();
+
+        // Tick interval for checking stale pending batches (every 15s).
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
                 _ = rx.changed() => {
                     if *rx.borrow() { break; }
                 }
+                _ = tick.tick() => {
+                    // Check for sessions with stale pending chunks (90s+ idle).
+                    let now = std::time::Instant::now();
+                    let stale_sessions: Vec<String> = pending.iter()
+                        .filter(|(_, s)| s.pending_count > 0
+                            && now.duration_since(s.last_chunk_at) > std::time::Duration::from_secs(90))
+                        .map(|(k, _)| k.clone())
+                        .collect();
+                    for session_id in stale_sessions {
+                        tracing::info!(session_id = %session_id, "incremental pipeline: processing stale batch");
+                        run_incremental_pipeline(&state, &session_id).await;
+                        pending.remove(&session_id);
+                    }
+                }
                 ev = events.recv() => match ev {
-                    Ok(Event::SessionEnded { id }) => process_session(&state, &id).await,
+                    Ok(Event::SessionEnded { id }) => {
+                        // Final pass: clear any pending incremental state and run full pipeline.
+                        pending.remove(&id);
+                        process_session(&state, &id).await;
+                    }
+                    Ok(Event::ChunkAdded { session_id, .. }) => {
+                        let entry = pending.entry(session_id.clone()).or_insert_with(|| {
+                            IncrementalState {
+                                pending_count: 0,
+                                last_chunk_at: std::time::Instant::now(),
+                            }
+                        });
+                        entry.pending_count += 1;
+                        entry.last_chunk_at = std::time::Instant::now();
+
+                        // Trigger extraction when 4+ chunks have accumulated.
+                        if entry.pending_count >= 4 {
+                            tracing::info!(
+                                session_id = %session_id,
+                                pending = entry.pending_count,
+                                "incremental pipeline: batch threshold reached"
+                            );
+                            run_incremental_pipeline(&state, &session_id).await;
+                            pending.remove(&session_id);
+                        }
+                    }
                     Ok(_) => {}
                     Err(RecvError::Lagged(n)) => {
                         tracing::warn!(skipped = n, "pipeline runner lagged; some events dropped");
@@ -61,6 +112,12 @@ pub fn spawn(state: AppState) -> PipelineHandle {
         }
     });
     PipelineHandle { join, shutdown: tx }
+}
+
+/// State for tracking pending chunks for incremental processing.
+struct IncrementalState {
+    pending_count: usize,
+    last_chunk_at: std::time::Instant,
 }
 
 /// Find and process any sessions whose `processed_at` is still NULL.
@@ -327,6 +384,140 @@ async fn maybe_prune_chunks(state: &AppState, session_id: &str) {
             );
         }
     }
+}
+
+/// Run the incremental extraction pipeline for a session.
+///
+/// Loads ALL chunks (for conversation context), but only extracts from chunks
+/// whose ordinal is greater than the session's `processed_through_ordinal`
+/// watermark. Updates the watermark after successful extraction.
+async fn run_incremental_pipeline(state: &AppState, session_id: &str) {
+    let Some(llm) = state.llm.clone() else {
+        tracing::debug!("incremental pipeline: no LLM configured; skipping");
+        return;
+    };
+    match run_incremental(state, session_id, llm.as_ref()).await {
+        Ok(added) => {
+            if added > 0 {
+                tracing::info!(
+                    session_id = %session_id,
+                    facts_added = added,
+                    "incremental pipeline: extraction complete"
+                );
+                state.events.publish(Event::PipelineCompleted {
+                    session_id: session_id.to_string(),
+                    facts_added: added,
+                });
+                maybe_reflect(state, llm.as_ref(), added).await;
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %e,
+                "incremental pipeline failed"
+            );
+        }
+    }
+}
+
+/// Core logic for incremental extraction.
+async fn run_incremental(
+    state: &AppState,
+    session_id: &str,
+    llm: &dyn LlmProvider,
+) -> anyhow::Result<usize> {
+    let all_chunks = load_chunks(state, session_id).await?;
+    if all_chunks.is_empty() {
+        return Ok(0);
+    }
+
+    // Read the current watermark.
+    let watermark = load_watermark(state, session_id).await?.unwrap_or(-1);
+
+    // Split into context (already processed) and new.
+    let (context, new): (Vec<&Chunk>, Vec<&Chunk>) = all_chunks
+        .iter()
+        .partition(|c| (c.ordinal as i64) <= watermark);
+
+    if new.is_empty() {
+        return Ok(0);
+    }
+
+    let context_owned: Vec<Chunk> = context.into_iter().cloned().collect();
+    let new_owned: Vec<Chunk> = new.iter().map(|c| (*c).clone()).collect();
+    let new_chunk_ids: Vec<String> = new_owned.iter().map(|c| c.id.clone()).collect();
+    let max_ordinal = new_owned.iter().map(|c| c.ordinal).max().unwrap_or(0);
+
+    let custom_schema = state.vault.load_custom_schema();
+    let facts =
+        extract_facts_incremental(&context_owned, &new_owned, llm, custom_schema.as_deref())
+            .await?;
+
+    let prov = Provenance {
+        session: Some(session_id.to_string()),
+        chunks: new_chunk_ids,
+    };
+    let mut added = 0usize;
+    for fact in &facts {
+        let (op, new_id) = match resolve_and_apply(&state.vault, fact, prov.clone(), llm).await {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::warn!(error = %e, "resolve_and_apply failed for a fact; skipping");
+                continue;
+            }
+        };
+        if let Some(mid) = new_id {
+            if matches!(op, ResolveOp::Add | ResolveOp::Update { .. }) {
+                added += 1;
+            }
+            if let Ok(mem) = state.vault.get(&mid).await {
+                state.events.publish(Event::MemoryCreated {
+                    id: mid.clone(),
+                    title: mem.title.clone(),
+                    tier: mem.tier.as_str().to_string(),
+                });
+                if let Err(e) = link_entities(state.vault.storage(), &mid, &mem.body, llm).await {
+                    tracing::warn!(memory_id = %mid, error = %e, "entity linking failed");
+                }
+                if let Err(e) =
+                    update_graph(state.vault.storage(), &mid, &mem.body, mem.valid_at, llm).await
+                {
+                    tracing::warn!(memory_id = %mid, error = %e, "graph update failed");
+                }
+            }
+        }
+    }
+
+    // Update the watermark.
+    update_watermark(state, session_id, max_ordinal as i64).await?;
+    Ok(added)
+}
+
+/// Load the processed_through_ordinal watermark for a session.
+async fn load_watermark(state: &AppState, session_id: &str) -> anyhow::Result<Option<i64>> {
+    let conn = state.vault.storage().conn()?;
+    let mut rows = conn
+        .query(
+            "SELECT processed_through_ordinal FROM sessions WHERE id = ?",
+            params![session_id.to_string()],
+        )
+        .await?;
+    match rows.next().await? {
+        Some(r) => Ok(Some(r.get::<i64>(0)?)),
+        None => Ok(None),
+    }
+}
+
+/// Update the processed_through_ordinal watermark for a session.
+async fn update_watermark(state: &AppState, session_id: &str, ordinal: i64) -> anyhow::Result<()> {
+    let (conn, _g) = state.vault.storage().write_conn().await?;
+    conn.execute(
+        "UPDATE sessions SET processed_through_ordinal = ? WHERE id = ?",
+        params![ordinal, session_id.to_string()],
+    )
+    .await?;
+    Ok(())
 }
 
 async fn load_chunks(state: &AppState, session_id: &str) -> anyhow::Result<Vec<Chunk>> {

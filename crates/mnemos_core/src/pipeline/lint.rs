@@ -1,7 +1,7 @@
 use crate::error::{MnemosError, Result};
-use crate::storage::Storage;
-use crate::providers::{CompletionRequest, LlmProvider};
 use crate::pipeline::extract_json;
+use crate::providers::{CompletionRequest, LlmProvider};
+use crate::storage::Storage;
 use serde::{Deserialize, Serialize};
 
 pub const LINT_SYSTEM: &str = "TASK=lint\n\
@@ -49,7 +49,7 @@ struct LintLlmOut {
 /// Run a semantic audit over the vault.
 pub async fn run_lint(storage: &Storage, llm: &dyn LlmProvider) -> Result<LintResult> {
     let conn = storage.conn()?;
-    
+
     // 1. Query all active semantic memories
     let mut rows = conn
         .query(
@@ -57,7 +57,7 @@ pub async fn run_lint(storage: &Storage, llm: &dyn LlmProvider) -> Result<LintRe
             (),
         )
         .await?;
-    
+
     let mut memories_list = Vec::new();
     while let Some(row) = rows.next().await? {
         let id: String = row.get(0)?;
@@ -65,7 +65,7 @@ pub async fn run_lint(storage: &Storage, llm: &dyn LlmProvider) -> Result<LintRe
         let body: String = row.get(2)?;
         memories_list.push(format!("ID: {}\nTitle: {}\nBody: {}\n---", id, title, body));
     }
-    
+
     // 2. Query orphan memories (no inbound links, no outbound links, no entity mentions)
     let mut orphan_rows = conn
         .query(
@@ -77,7 +77,7 @@ pub async fn run_lint(storage: &Storage, llm: &dyn LlmProvider) -> Result<LintRe
             (),
         )
         .await?;
-    
+
     let mut orphans = Vec::new();
     while let Some(row) = orphan_rows.next().await? {
         orphans.push(row.get::<String>(0)?);
@@ -95,7 +95,7 @@ pub async fn run_lint(storage: &Storage, llm: &dyn LlmProvider) -> Result<LintRe
     let memories_input = memories_list.join("\n");
     let req = CompletionRequest::new(LINT_SYSTEM, memories_input);
     let raw = llm.complete(&req).await?;
-    
+
     let parsed: LintLlmOut = serde_json::from_str(extract_json(&raw))
         .map_err(|e| MnemosError::Internal(format!("lint parse failed: {e}; raw={raw}")))?;
 

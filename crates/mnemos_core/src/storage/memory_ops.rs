@@ -111,7 +111,7 @@ pub async fn get_memory(storage: &Storage, id: &str) -> Result<Memory> {
     row_to_memory(&row)
 }
 
-pub(crate) fn row_to_memory(row: &Row) -> Result<Memory> {
+pub fn row_to_memory(row: &Row) -> Result<Memory> {
     let tier_str: String = row.get(1)?;
     let kind_str: String = row.get(2)?;
     let kind: MemoryType = serde_json::from_str(&format!("\"{kind_str}\""))?;
@@ -260,6 +260,8 @@ pub async fn soft_invalidate(storage: &Storage, id: &str, at: DateTime<Utc>) -> 
 pub struct ListFilter {
     /// Restrict results to memories in these tiers. `None` means all tiers.
     pub tiers: Option<Vec<Tier>>,
+    /// Restrict results to memories of these types. `None` means all types.
+    pub kinds: Option<Vec<MemoryType>>,
     /// Restrict results to a specific workspace. `None` matches all workspaces.
     pub workspace: Option<String>,
     /// When `false` (the default), soft-invalidated memories are excluded.
@@ -303,6 +305,19 @@ pub async fn list_memories(storage: &Storage, filter: ListFilter) -> Result<Vec<
             sql.push_str(&format!(" AND tier IN ({placeholders})"));
             for t in tiers {
                 args.push(t.as_str().to_string().into());
+            }
+        }
+    }
+    if let Some(kinds) = filter.kinds.as_ref() {
+        if !kinds.is_empty() {
+            let placeholders = vec!["?"; kinds.len()].join(",");
+            sql.push_str(&format!(" AND kind IN ({placeholders})"));
+            for k in kinds {
+                let kind_str = serde_json::to_string(k)
+                    .unwrap_or_default()
+                    .trim_matches('"')
+                    .to_string();
+                args.push(kind_str.into());
             }
         }
     }

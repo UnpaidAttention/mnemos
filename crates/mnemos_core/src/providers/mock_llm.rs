@@ -175,7 +175,8 @@ impl LlmProvider for MockLlm {
             json!({
                 "contradictions": contradictions,
                 "gaps": gaps
-            }).to_string()
+            })
+            .to_string()
         } else {
             content
         };
@@ -268,7 +269,10 @@ mod tests {
         assert_eq!(contradictions.len(), 1);
         assert_eq!(contradictions[0]["id_a"], "mem_1");
         assert_eq!(contradictions[0]["id_b"], "mem_2");
-        assert_eq!(contradictions[0]["reason"], "conflicts on language preference");
+        assert_eq!(
+            contradictions[0]["reason"],
+            "conflicts on language preference"
+        );
         assert_eq!(gaps.len(), 1);
         assert_eq!(gaps[0]["topic"], "python scripting");
         assert_eq!(gaps[0]["reason"], "missing python environment details");

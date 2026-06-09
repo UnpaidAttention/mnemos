@@ -116,7 +116,7 @@ async fn add_chunk(
             VALUES (?, ?, ?, ?, ?, ?, ?)",
         params![
             chunk_id.clone(),
-            session_id,
+            session_id.clone(),
             req.speaker,
             ordinal as i64,
             req.body,
@@ -126,6 +126,10 @@ async fn add_chunk(
     )
     .await
     .map_err(mnemos_core::error::MnemosError::from)?;
+    state.events.publish(crate::events::Event::ChunkAdded {
+        session_id: session_id.clone(),
+        chunk_id: chunk_id.clone(),
+    });
     Ok((StatusCode::CREATED, Json(AddChunkResp { chunk_id })))
 }
 

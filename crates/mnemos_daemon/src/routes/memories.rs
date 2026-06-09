@@ -22,6 +22,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/v1/memories", post(post_memory).get(list_memories))
         .route("/v1/memories/search", post(search))
+        .route("/v1/memories/project-context", get(project_context))
         .route("/v1/memories/time-travel", post(time_travel))
         .route(
             "/v1/memories/{id}",
@@ -225,6 +226,10 @@ struct SearchReq {
     graph: bool,
     #[serde(default)]
     global: bool,
+    /// When true, expand results by following entity links from top-K hits.
+    /// Surfaces related memories (e.g. mention one connector → see them all).
+    #[serde(default)]
+    entity_expand: bool,
 }
 
 fn default_k() -> usize {
@@ -259,7 +264,43 @@ async fn search(
         ..Default::default()
     };
     let hits = crate::routes::recall_helper::recall(&state, &req.query, opts).await?;
+    // Layer 2: entity expansion — follow entity links to surface related memories.
+    let hits = if req.entity_expand {
+        crate::routes::recall_helper::expand_entities(&state, hits).await?
+    } else {
+        hits
+    };
     Ok(Json(serde_json::json!({ "hits": hits })))
+}
+
+// ── Layer 1: project-context endpoint ────────────────────────────────────────
+
+/// Cap for project-context memories to keep injection within budget.
+const PROJECT_CONTEXT_CAP: usize = 16;
+
+#[derive(Debug, Deserialize, Default)]
+struct ProjectContextQuery {
+    workspace: Option<String>,
+}
+
+/// Returns Project + Entity type memories for the workspace, newest first.
+/// These are "pinned" facts that should always be available during a session
+/// (e.g. component inventory, architecture decisions, cross-cutting concerns).
+async fn project_context(
+    State(state): State<AppState>,
+    Query(q): Query<ProjectContextQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let memories = state
+        .vault
+        .list(ListFilter {
+            kinds: Some(vec![MemoryType::Project, MemoryType::Entity]),
+            workspace: q.workspace,
+            include_invalid: false,
+            limit: Some(PROJECT_CONTEXT_CAP),
+            ..Default::default()
+        })
+        .await?;
+    Ok(Json(serde_json::json!({ "memories": memories })))
 }
 
 #[derive(Debug, Deserialize)]

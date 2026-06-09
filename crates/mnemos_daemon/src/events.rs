@@ -26,6 +26,10 @@ pub enum Event {
     SessionEnded {
         id: String,
     },
+    ChunkAdded {
+        session_id: String,
+        chunk_id: String,
+    },
     PipelineCompleted {
         session_id: String,
         facts_added: usize,

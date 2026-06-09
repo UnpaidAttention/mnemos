@@ -105,10 +105,7 @@ pub fn xdg_assets_dir() -> Option<PathBuf> {
         .ok()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .or_else(|| {
-            directories::BaseDirs::new()
-                .map(|b| b.data_dir().to_path_buf())
-        })?;
+        .or_else(|| directories::BaseDirs::new().map(|b| b.data_dir().to_path_buf()))?;
     Some(base.join("mnemos").join("assets"))
 }
 

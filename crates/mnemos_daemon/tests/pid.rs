@@ -81,8 +81,8 @@ fn second_acquire_errors_when_pid_is_alive() {
     // ── parent: wait for child ──────────────────────────────────────────────
     let mut status: libc::c_int = 0;
     unsafe { libc::waitpid(child_pid, &mut status, 0) };
-    let exit_code = if unsafe { libc::WIFEXITED(status) } {
-        unsafe { libc::WEXITSTATUS(status) }
+    let exit_code = if libc::WIFEXITED(status) {
+        libc::WEXITSTATUS(status)
     } else {
         -1
     };

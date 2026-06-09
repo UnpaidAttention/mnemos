@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn read_frame_returns_none_on_eof() {
-        let input: &[u8] = b"";
-        assert!(read_frame(&mut input.as_ref()).unwrap().is_none());
+        let mut input: &[u8] = b"";
+        assert!(read_frame(&mut input).unwrap().is_none());
     }
 }

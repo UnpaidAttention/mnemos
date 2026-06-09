@@ -31,11 +31,17 @@ use std::time::Duration;
 const WORKING_SET_BYTE_CAP: usize = 8_000;
 
 /// Maximum chars of recall context injected into a UserPromptSubmit hook.
-/// Approximates ~300 tokens at 4 chars/token to stay lightweight.
-const RECALL_BUDGET_CHARS: usize = 1_200;
+/// Split between project-pinned context and query-matched recall.
+const RECALL_BUDGET_CHARS: usize = 2_400;
+
+/// Budget reserved for project-pinned context (Project + Entity type memories).
+const PROJECT_BUDGET_CHARS: usize = 800;
+
+/// Budget for query-matched + entity-expanded recall.
+const QUERY_BUDGET_CHARS: usize = 1_600;
 
 /// Default number of recall hits to request from the daemon per prompt.
-const RECALL_K: usize = 6;
+const RECALL_K: usize = 8;
 
 /// Entry point for `mnemos hook <event>`.
 ///
@@ -44,8 +50,9 @@ pub async fn run(event: &str) -> ExitCode {
     let input = read_stdin_json().await;
     let out = match event {
         "session-start" => session_start(input).await,
-        "user-prompt" => user_prompt(input).await, // TODO(B3)
-        "session-end" => session_end(input).await, // TODO(B4)
+        "user-prompt" => user_prompt(input).await,
+        "stop" => stop(input).await,
+        "session-end" => session_end(input).await,
         other => {
             eprintln!("mnemos hook: unknown event {other:?} — ignoring");
             None
@@ -61,11 +68,19 @@ pub async fn run(event: &str) -> ExitCode {
 
 /// Handle the `SessionStart` hook: inject the user's working set as
 /// `additionalContext` so Claude Code has memory context from the first message.
+///
+/// Also creates a daemon session and writes an active-session state file so
+/// subsequent hooks (`user-prompt`, `stop`) can stream chunks in real-time.
 async fn session_start(input: Value) -> Option<String> {
     // Extract workspace from the hook payload. Claude Code sets `cwd` in the
     // session-start payload; `source` identifies the tool.
     let workspace = input
         .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let session_id = input
+        .get("session_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
@@ -86,6 +101,28 @@ async fn session_start(input: Value) -> Option<String> {
         }
     };
 
+    // Create a daemon session for real-time chunk streaming.
+    if let Some(ref sid) = session_id {
+        match post_start_session(&token, workspace.as_deref()).await {
+            Ok(daemon_session_id) => {
+                let state = ActiveSessionState {
+                    daemon_session_id,
+                    tool_id: "claude-code".into(),
+                    workspace: workspace.clone(),
+                    next_ordinal: 0,
+                    keyword_first_seen: std::collections::HashMap::new(),
+                    last_prompt_ordinal: 0,
+                };
+                if let Err(e) = save_active_session(sid, &state) {
+                    eprintln!("mnemos hook session-start: failed to write state file: {e}");
+                }
+            }
+            Err(e) => {
+                eprintln!("mnemos hook session-start: failed to create daemon session: {e:#}");
+            }
+        }
+    }
+
     // Fetch the working set from the daemon.
     let text = match fetch_working_set(&token, workspace.as_deref()).await {
         Some(t) => t,
@@ -97,6 +134,9 @@ async fn session_start(input: Value) -> Option<String> {
 
 /// Handle the `UserPromptSubmit` hook: recall memories relevant to the
 /// user's current prompt and inject them as `additionalContext`.
+///
+/// Also streams the user's prompt to the daemon as a chunk for real-time
+/// processing (if an active session state file exists).
 ///
 /// Fail-open: any error → `None` (no output), never panics, never writes
 /// to stdout on failure.
@@ -118,6 +158,11 @@ async fn user_prompt(input: Value) -> Option<String> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    let session_id = input
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     // Ensure the daemon is reachable; bail silently if not.
     let up = crate::daemon_ctl::ensure_daemon(Duration::from_secs(5)).await;
     if !up {
@@ -133,14 +178,190 @@ async fn user_prompt(input: Value) -> Option<String> {
         }
     };
 
-    let hits = fetch_recall(&token, &prompt, workspace.as_deref()).await?;
-    let selected = budget_hits(&hits, RECALL_BUDGET_CHARS);
-    if selected.is_empty() {
+    // Stream the user prompt as a chunk to the daemon for real-time processing.
+    if let Some(ref sid) = session_id {
+        if let Some(mut state) = load_active_session(sid) {
+            if let Some(body) = redact(&prompt) {
+                let _ = post_streaming_chunk(
+                    &token,
+                    &state.daemon_session_id,
+                    &body,
+                    "user",
+                    state.next_ordinal,
+                )
+                .await;
+                state.next_ordinal += 1;
+                let _ = save_active_session(sid, &state);
+            }
+        }
+    }
+
+    // ── Layer 1: always-on project context (workspace-pinned) ────────────────
+    let project_ctx = fetch_project_context(&token, workspace.as_deref()).await;
+
+    // ── Layer 3: detect returning topics from session history ────────────────
+    let returning_keywords = if let Some(ref sid) = session_id {
+        if let Some(ref state) = load_active_session(sid) {
+            detect_returning_topics(state, &prompt)
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    // Augment the recall query with returning-topic keywords to boost
+    // memories about topics the user is circling back to.
+    let recall_query = if returning_keywords.is_empty() {
+        prompt.clone()
+    } else {
+        format!("{} {}", prompt, returning_keywords.join(" "))
+    };
+
+    // ── Layer 2: query-matched recall with entity expansion ──────────────────
+    let hits = fetch_recall(&token, &recall_query, workspace.as_deref(), true).await;
+
+    // Also fetch recall specifically for returning topics (if any) to ensure
+    // we surface the original context that may have fallen out.
+    let recovery_hits = if !returning_keywords.is_empty() {
+        let recovery_query = returning_keywords.join(" ");
+        fetch_recall(&token, &recovery_query, workspace.as_deref(), false).await
+    } else {
+        None
+    };
+
+    // ── Record keywords for future Layer 3 detection ─────────────────────────
+    if let Some(ref sid) = session_id {
+        if let Some(mut state) = load_active_session(sid) {
+            record_prompt_keywords(&mut state, &prompt);
+            let _ = save_active_session(sid, &state);
+        }
+    }
+
+    // ── Merge all layers into the injection text ─────────────────────────────
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    let mut char_budget = RECALL_BUDGET_CHARS;
+
+    // Project context section (Layer 1)
+    if let Some(ref project_mems) = project_ctx {
+        if !project_mems.is_empty() {
+            lines.push("[Project Context]".to_string());
+            char_budget -= 18; // "[Project Context]\n"
+            let mut project_chars = 0usize;
+            for m in project_mems {
+                if project_chars >= PROJECT_BUDGET_CHARS {
+                    break;
+                }
+                let snippet: String = m.body.chars().take(300).collect();
+                let line = format!("- {}: {}", m.title, snippet);
+                let line_len = line.chars().count() + 1;
+                project_chars += line_len;
+                char_budget = char_budget.saturating_sub(line_len);
+                seen_ids.insert(m.id.clone());
+                lines.push(line);
+            }
+        }
+    }
+
+    // Context recovery section (Layer 3) — show only if returning topics detected
+    if let Some(ref recovery_list) = recovery_hits {
+        let recovery_unique: Vec<&RecallHit> = recovery_list
+            .iter()
+            .filter(|h| !seen_ids.contains(&h.memory.id))
+            .take(3) // max 3 recovery hits to avoid crowding
+            .collect();
+        if !recovery_unique.is_empty() {
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push("[Recovered Context]".to_string());
+            char_budget = char_budget.saturating_sub(21);
+            for h in &recovery_unique {
+                if char_budget == 0 {
+                    break;
+                }
+                let snippet: String = h.memory.body.chars().take(300).collect();
+                let line = format!("- {}: {}", h.memory.title, snippet);
+                let line_len = line.chars().count() + 1;
+                char_budget = char_budget.saturating_sub(line_len);
+                seen_ids.insert(h.memory.id.clone());
+                lines.push(line);
+            }
+        }
+    }
+
+    // Query recall section (Layer 2)
+    if let Some(ref hit_list) = hits {
+        let query_hits: Vec<&RecallHit> = hit_list
+            .iter()
+            .filter(|h| !seen_ids.contains(&h.memory.id))
+            .collect();
+        if !query_hits.is_empty() {
+            if !lines.is_empty() {
+                lines.push(String::new()); // separator
+            }
+            lines.push("[Relevant Memories]".to_string());
+            char_budget = char_budget.saturating_sub(20);
+            let mut query_chars = 0usize;
+            for h in &query_hits {
+                if query_chars >= QUERY_BUDGET_CHARS || char_budget == 0 {
+                    break;
+                }
+                let snippet: String = h.memory.body.chars().take(300).collect();
+                let line = format!("- {}: {}", h.memory.title, snippet);
+                let line_len = line.chars().count() + 1;
+                query_chars += line_len;
+                char_budget = char_budget.saturating_sub(line_len);
+                lines.push(line);
+            }
+        }
+    }
+
+    if lines.is_empty() {
         return None;
     }
 
-    let text = render_recall_hits(&selected);
+    let text = lines.join("\n");
     user_prompt_hook_json(&text)
+}
+
+/// Handle the `Stop` hook: capture Claude's response as a chunk for real-time
+/// processing. Fires after each Claude turn.
+///
+/// Fail-open: any error → `None`, never writes to stdout.
+async fn stop(input: Value) -> Option<String> {
+    let message = input
+        .get("last_assistant_message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if message.is_empty() {
+        return None;
+    }
+
+    let session_id = input.get("session_id").and_then(|v| v.as_str())?;
+
+    let mut state = load_active_session(session_id)?;
+
+    let token = load_token()?;
+
+    // Stream the assistant response as a chunk.
+    if let Some(body) = redact(&message) {
+        let _ = post_streaming_chunk(
+            &token,
+            &state.daemon_session_id,
+            &body,
+            "assistant",
+            state.next_ordinal,
+        )
+        .await;
+        state.next_ordinal += 1;
+        let _ = save_active_session(session_id, &state);
+    }
+
+    None // Stop hooks don't produce additionalContext
 }
 
 /// Handle the `SessionEnd` hook: read the transcript, ingest it into the
@@ -187,15 +408,6 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("missing session_id in hook payload — skipping"))?;
 
     // ── 2. Path-traversal guard ───────────────────────────────────────────
-    // Canonicalize transcript_path and verify it resolves within the user's
-    // home directory (or a well-known Claude Code transcript directory).
-    // This prevents a malicious hook payload from directing the process to
-    // read an arbitrary file on disk.
-    //
-    // Fail-open is intentional: if we cannot determine the home directory we
-    // skip the guard and proceed (the hook must never block a Claude session).
-    // An attacker who controls the hook payload already has code execution, so
-    // this is defense-in-depth against confused-deputy scenarios only.
     let transcript_path_buf = std::path::PathBuf::from(transcript_path);
     let canonical_transcript = transcript_path_buf.canonicalize().with_context(|| {
         format!("transcript_path {transcript_path:?} does not exist or is not accessible")
@@ -207,17 +419,12 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
     }
 
     // ── 3. Best-effort capture guard (P0-6 CLI side) ─────────────────────
-    // The daemon is the authoritative enforcement point (it rejects POST
-    // /v1/sessions with 409 when autonomy.capture = false).  This check is
-    // advisory: we skip the network round-trip early so we don't disturb the
-    // daemon, but we never rely on it as the security boundary.
-    // Fail-open: if the config cannot be loaded, proceed and let the daemon
-    // decide.
     if let Ok(cfg) = mnemos_daemon::config::Config::load_default() {
         if !cfg.autonomy.capture {
             eprintln!(
                 "mnemos hook session-end: autonomy.capture = false — skipping capture (daemon is authoritative)"
             );
+            remove_active_session(session_id);
             return Ok(());
         }
     }
@@ -226,12 +433,14 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
     let state_path = idempotency_state_path()?;
     if already_captured(&state_path, session_id) {
         eprintln!("mnemos hook session-end: session {session_id} already captured — skipping");
+        remove_active_session(session_id);
         return Ok(());
     }
 
     // ── 5. Ensure daemon is available ─────────────────────────────────────
     let up = crate::daemon_ctl::ensure_daemon(Duration::from_secs(5)).await;
     if !up {
+        remove_active_session(session_id);
         return Err(anyhow::anyhow!(
             "daemon not available — transcript not captured"
         ));
@@ -240,33 +449,48 @@ async fn do_session_end(input: &Value) -> anyhow::Result<()> {
     let token = load_token().ok_or_else(|| anyhow::anyhow!("could not load bearer token"))?;
 
     // ── 6. Read and parse transcript ──────────────────────────────────────
-    // Use the canonicalized path from the traversal guard above.
     let contents = std::fs::read_to_string(&canonical_transcript)
         .with_context(|| format!("failed to read transcript at {transcript_path}"))?;
 
     let turns = crate::transcript::parse_transcript(&contents);
     if turns.is_empty() {
-        // Nothing to capture; still record as processed so we don't re-read.
         record_captured(&state_path, session_id);
+        remove_active_session(session_id);
         return Ok(());
     }
 
-    // ── 7. POST /v1/sessions ──────────────────────────────────────────────
-    let daemon_session_id = post_start_session(&token, cwd.as_deref()).await?;
+    // ── 7. Resolve daemon session ─────────────────────────────────────────
+    // If real-time streaming was active (state file exists), reuse that
+    // daemon session ID. Otherwise create a new one (fallback for sessions
+    // where session-start failed to create the state file).
+    let active_state = load_active_session(session_id);
+    let daemon_session_id = if let Some(ref state) = active_state {
+        eprintln!(
+            "mnemos hook session-end: reusing streaming session {}",
+            state.daemon_session_id
+        );
+        state.daemon_session_id.clone()
+    } else {
+        post_start_session(&token, cwd.as_deref()).await?
+    };
 
-    // ── 8. POST chunks with bounded concurrency (best-effort per chunk) ───
+    // ── 8. POST remaining chunks from transcript ─────────────────────────
+    // When real-time streaming was active, many chunks are already in the
+    // daemon. The transcript may contain additional turns that weren't
+    // captured (e.g., tool use outputs, internal messages). POST them all;
+    // the daemon deduplicates by session_id + ordinal.
     post_chunks(&token, &daemon_session_id, &turns).await;
 
-    // ── 9. Record capture now that start succeeded (idempotency boundary) ─
-    // We record here — before /end — so that if /end fails, the next hook
-    // fire does NOT create a duplicate daemon session. Missing /end or
-    // missing chunks are best-effort and not worth re-capturing.
+    // ── 9. Record capture (idempotency boundary) ─────────────────────────
     record_captured(&state_path, session_id);
 
     // ── 10. POST /v1/sessions/{id}/end (best-effort, non-fatal) ──────────
     if let Err(e) = post_end_session(&token, &daemon_session_id).await {
         eprintln!("mnemos hook session-end: /end failed (session {daemon_session_id}): {e:#}");
     }
+
+    // ── 11. Clean up active session state file ───────────────────────────
+    remove_active_session(session_id);
 
     Ok(())
 }
@@ -880,6 +1104,109 @@ fn make_client() -> Option<reqwest::Client> {
         .ok()
 }
 
+// ── Active session state management ──────────────────────────────────────────
+
+/// Persistent state for an active (in-progress) Claude Code session.
+/// Written by `session-start`, read by `user-prompt` and `stop`, cleaned up
+/// by `session-end`.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ActiveSessionState {
+    daemon_session_id: String,
+    tool_id: String,
+    workspace: Option<String>,
+    next_ordinal: u32,
+    /// Layer 3: maps keyword → ordinal when the keyword first appeared.
+    /// Used to detect "returning to an old topic" by finding keywords from
+    /// early in the session that reappear in a later prompt.
+    #[serde(default)]
+    keyword_first_seen: std::collections::HashMap<String, u32>,
+    /// The ordinal of the last prompt that was processed. Used to determine
+    /// how far back an "old" keyword is relative to the current prompt.
+    #[serde(default)]
+    last_prompt_ordinal: u32,
+}
+
+/// Resolve the directory for active session state files.
+fn active_sessions_dir() -> Option<std::path::PathBuf> {
+    use directories::BaseDirs;
+    let base = BaseDirs::new()
+        .and_then(|bd| bd.state_dir().map(|p| p.to_path_buf()))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".local").join("state"))
+        })?;
+    Some(base.join("mnemos").join("active-sessions"))
+}
+
+/// Load the active session state for the given Claude session ID.
+fn load_active_session(session_id: &str) -> Option<ActiveSessionState> {
+    let dir = active_sessions_dir()?;
+    let path = dir.join(format!("{session_id}.json"));
+    let contents = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+/// Save the active session state for the given Claude session ID.
+fn save_active_session(session_id: &str, state: &ActiveSessionState) -> std::io::Result<()> {
+    let dir = active_sessions_dir()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no state dir"))?;
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{session_id}.json"));
+    let json = serde_json::to_string(state).map_err(std::io::Error::other)?;
+    std::fs::write(&path, json)
+}
+
+/// Remove the active session state file for the given Claude session ID.
+fn remove_active_session(session_id: &str) {
+    if let Some(dir) = active_sessions_dir() {
+        let path = dir.join(format!("{session_id}.json"));
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+// ── Real-time chunk streaming ────────────────────────────────────────────────
+
+/// POST a single chunk to `POST /v1/sessions/{daemon_session_id}/chunks`.
+///
+/// Fail-open: returns `Ok(())` on success, `Err` on failure (callers should
+/// ignore errors).
+async fn post_streaming_chunk(
+    token: &str,
+    daemon_session_id: &str,
+    body: &str,
+    speaker: &str,
+    ordinal: u32,
+) -> Result<(), ()> {
+    let client = make_client().ok_or(())?;
+    let url = format!(
+        "{}/v1/sessions/{daemon_session_id}/chunks",
+        crate::daemon_ctl::daemon_base_url()
+    );
+    let payload = serde_json::json!({
+        "body": body,
+        "speaker": speaker,
+        "ordinal": ordinal,
+    });
+    let resp = client
+        .post(&url)
+        .bearer_auth(token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| {
+            eprintln!("mnemos hook: streaming chunk POST failed: {e}");
+        })?;
+    if !resp.status().is_success() {
+        eprintln!(
+            "mnemos hook: streaming chunk POST returned {}",
+            resp.status()
+        );
+        return Err(());
+    }
+    Ok(())
+}
+
 /// Fetch the working set from `GET /v1/working` and render it as plain text.
 /// Returns `None` on any network or parse error (fail-open).
 async fn fetch_working_set(token: &str, workspace: Option<&str>) -> Option<String> {
@@ -984,6 +1311,7 @@ pub fn user_prompt_hook_json(text: &str) -> Option<String> {
 /// budget, at which point accumulation stops.
 ///
 /// Returns an empty slice when `hits` is empty.
+#[cfg(test)]
 pub fn budget_hits(hits: &[RecallHit], max_chars: usize) -> Vec<&RecallHit> {
     let mut selected: Vec<&RecallHit> = Vec::new();
     let mut total = 0usize;
@@ -1007,6 +1335,7 @@ pub fn budget_hits(hits: &[RecallHit], max_chars: usize) -> Vec<&RecallHit> {
 ///
 /// Format: `- <title>: <snippet>\n`
 /// Snippet is capped at 300 chars (matching `render_working_set`).
+#[cfg(test)]
 fn recall_hit_rendered_len(hit: &RecallHit) -> usize {
     let title = &hit.memory.title;
     let body = &hit.memory.body;
@@ -1015,22 +1344,14 @@ fn recall_hit_rendered_len(hit: &RecallHit) -> usize {
     2 + title.chars().count() + 2 + snippet_len + 1
 }
 
-/// Render selected recall hits as plain-text lines, matching the
-/// `render_working_set` style: `- title: snippet`.
-fn render_recall_hits(hits: &[&RecallHit]) -> String {
-    hits.iter()
-        .map(|h| {
-            let title = &h.memory.title;
-            let snippet: String = h.memory.body.chars().take(300).collect();
-            format!("- {title}: {snippet}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// POST `query` to `POST /v1/memories/search` and return the deserialized hits.
 /// Returns `None` on any network or parse error (fail-open).
-async fn fetch_recall(token: &str, query: &str, workspace: Option<&str>) -> Option<Vec<RecallHit>> {
+async fn fetch_recall(
+    token: &str,
+    query: &str,
+    workspace: Option<&str>,
+    entity_expand: bool,
+) -> Option<Vec<RecallHit>> {
     let url = format!(
         "{}/v1/memories/search",
         crate::daemon_ctl::daemon_base_url()
@@ -1043,6 +1364,9 @@ async fn fetch_recall(token: &str, query: &str, workspace: Option<&str>) -> Opti
     // + 30-iter PageRank on every keystroke.  Explicit /v1/memories/search calls
     // from clients can still pass graph:true if they need it.
     body.insert("graph".into(), serde_json::json!(false));
+    if entity_expand {
+        body.insert("entity_expand".into(), serde_json::json!(true));
+    }
     if let Some(ws) = workspace {
         body.insert("workspace".into(), serde_json::json!(ws));
     }
@@ -1064,6 +1388,97 @@ async fn fetch_recall(token: &str, query: &str, workspace: Option<&str>) -> Opti
     let parsed: Value = resp.json().await.ok()?;
     let hits_val = parsed.get("hits")?;
     serde_json::from_value(hits_val.clone()).ok()
+}
+
+/// Lightweight memory struct for project-context deserialization.
+/// Only the fields we need to render injection text.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ProjectMemory {
+    id: String,
+    title: String,
+    #[serde(default)]
+    body: String,
+}
+
+/// GET `/v1/memories/project-context?workspace=...` — returns Project + Entity
+/// type memories pinned to the workspace. Fail-open: returns `None` on error.
+async fn fetch_project_context(token: &str, workspace: Option<&str>) -> Option<Vec<ProjectMemory>> {
+    let mut url = format!(
+        "{}/v1/memories/project-context",
+        crate::daemon_ctl::daemon_base_url()
+    );
+    if let Some(ws) = workspace {
+        url.push_str(&format!("?workspace={}", urlencoding::encode(ws)));
+    }
+    let client = make_client()?;
+    let resp = client.get(&url).bearer_auth(token).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let parsed: Value = resp.json().await.ok()?;
+    let mems_val = parsed.get("memories")?;
+    serde_json::from_value(mems_val.clone()).ok()
+}
+
+// ── Layer 3: session-aware context recovery ──────────────────────────────────
+
+/// Minimum keyword length to track (skip noise words like "the", "a", etc.)
+const MIN_KEYWORD_LEN: usize = 4;
+
+/// A topic is "old" if it was first seen at least this many ordinals ago.
+/// With the typical prompt cadence, this is ~3-4 user prompts back.
+const OLD_TOPIC_ORDINAL_GAP: u32 = 4;
+
+/// Stop words that should never be tracked as topic keywords.
+const STOP_WORDS: &[&str] = &[
+    "that", "this", "with", "from", "have", "will", "what", "when", "where", "which", "their",
+    "there", "been", "some", "also", "than", "them", "then", "just", "more", "only", "into",
+    "over", "your", "does", "each", "make", "like", "about", "could", "would", "should", "other",
+    "after", "before", "because", "between", "those", "these", "being", "same", "very", "still",
+    "here", "every", "through", "code", "file", "please", "want", "need", "sure", "okay", "right",
+    "look", "lets", "good", "well", "keep",
+];
+
+/// Extract significant keywords from a prompt (lowercased, deduplicated).
+fn extract_keywords(text: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    text.split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+        .filter(|w| w.len() >= MIN_KEYWORD_LEN)
+        .map(|w| w.to_lowercase())
+        .filter(|w| !STOP_WORDS.contains(&w.as_str()))
+        .filter(|w| seen.insert(w.clone()))
+        .collect()
+}
+
+/// Detect keywords in `current_prompt` that first appeared early in the session
+/// (ordinal gap ≥ OLD_TOPIC_ORDINAL_GAP). Returns a set of "returning" keywords
+/// that can be used to boost the recall query.
+fn detect_returning_topics(state: &ActiveSessionState, current_prompt: &str) -> Vec<String> {
+    let current_keywords = extract_keywords(current_prompt);
+    let current_ordinal = state.next_ordinal; // next ordinal = current prompt's position
+
+    current_keywords
+        .into_iter()
+        .filter(|kw| {
+            if let Some(&first_seen) = state.keyword_first_seen.get(kw) {
+                // The keyword was first seen long ago — this is a "return"
+                current_ordinal.saturating_sub(first_seen) >= OLD_TOPIC_ORDINAL_GAP
+            } else {
+                false
+            }
+        })
+        .take(5) // Cap to prevent query bloat
+        .collect()
+}
+
+/// Update the session state with keywords from the current prompt.
+fn record_prompt_keywords(state: &mut ActiveSessionState, prompt: &str) {
+    let keywords = extract_keywords(prompt);
+    let ordinal = state.next_ordinal;
+    for kw in keywords {
+        state.keyword_first_seen.entry(kw).or_insert(ordinal);
+    }
+    state.last_prompt_ordinal = ordinal;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1939,5 +2354,88 @@ mod tests {
     fn redact_url_is_not_redacted() {
         let text = "See https://docs.example.com/api/v2/reference for details.";
         assert!(redact(text).is_some(), "a plain URL must not be redacted");
+    }
+
+    // ── Layer 3: keyword extraction and context recovery ─────────────────────
+
+    #[test]
+    fn extract_keywords_filters_short_and_stop_words() {
+        let kws = extract_keywords("I want to fix the connector module for claude");
+        assert!(kws.contains(&"connector".to_string()));
+        assert!(kws.contains(&"module".to_string()));
+        assert!(kws.contains(&"claude".to_string()));
+        assert!(!kws.contains(&"want".to_string()), "stop word excluded");
+        assert!(!kws.contains(&"the".to_string()), "short word excluded");
+        assert!(!kws.contains(&"fix".to_string()), "short word excluded");
+    }
+
+    #[test]
+    fn extract_keywords_deduplicates() {
+        let kws = extract_keywords("connector connector connector module");
+        assert_eq!(kws.iter().filter(|k| *k == "connector").count(), 1);
+    }
+
+    #[test]
+    fn detect_returning_topics_finds_old_keywords() {
+        let state = ActiveSessionState {
+            daemon_session_id: "s1".into(),
+            tool_id: "claude-code".into(),
+            workspace: None,
+            next_ordinal: 10,
+            keyword_first_seen: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("connector".to_string(), 0); // seen at ordinal 0 (very old)
+                m.insert("module".to_string(), 8); // seen at ordinal 8 (recent)
+                m
+            },
+            last_prompt_ordinal: 9,
+        };
+        // "connector" gap = 10-0 = 10 >= 4 (OLD_TOPIC_ORDINAL_GAP) => returning
+        // "module" gap = 10-8 = 2 < 4 => NOT returning
+        let returning = detect_returning_topics(&state, "fix the connector settings");
+        assert!(returning.contains(&"connector".to_string()));
+        assert!(
+            !returning.contains(&"settings".to_string()),
+            "new keyword is not returning"
+        );
+    }
+
+    #[test]
+    fn detect_returning_topics_empty_when_no_history() {
+        let state = ActiveSessionState {
+            daemon_session_id: "s1".into(),
+            tool_id: "claude-code".into(),
+            workspace: None,
+            next_ordinal: 0,
+            keyword_first_seen: std::collections::HashMap::new(),
+            last_prompt_ordinal: 0,
+        };
+        let returning = detect_returning_topics(&state, "fix the connector");
+        assert!(returning.is_empty());
+    }
+
+    #[test]
+    fn record_prompt_keywords_does_not_overwrite_first_seen() {
+        let mut state = ActiveSessionState {
+            daemon_session_id: "s1".into(),
+            tool_id: "claude-code".into(),
+            workspace: None,
+            next_ordinal: 5,
+            keyword_first_seen: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("connector".to_string(), 1);
+                m
+            },
+            last_prompt_ordinal: 4,
+        };
+        record_prompt_keywords(&mut state, "fix the connector again");
+        assert_eq!(
+            state.keyword_first_seen["connector"], 1,
+            "first_seen must not be overwritten"
+        );
+        assert_eq!(
+            state.keyword_first_seen["again"], 5,
+            "new keyword gets current ordinal"
+        );
     }
 }

@@ -52,23 +52,33 @@ export class MnemosClient {
 
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
     const token = await this.tokenFn();
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${token}`,
-        ...(body !== undefined ? { "content-type": "application/json" } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) {
-      let msg = res.statusText;
-      try {
-        const j = await res.json();
-        msg = (j as { error?: string }).error ?? msg;
-      } catch { /* ignore */ }
-      throw new ApiError(res.status, msg);
+    const maxRetries = 3;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const res = await fetch(`${this.baseUrl}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) {
+        let msg = res.statusText;
+        try {
+          const j = await res.json();
+          msg = (j as { error?: string }).error ?? msg;
+        } catch { /* ignore */ }
+        // Retry on transient SQLite lock/busy errors (daemon returns 500)
+        const isTransient = res.status === 500 && /locked|busy/i.test(msg);
+        if (isTransient && attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          continue;
+        }
+        throw new ApiError(res.status, msg);
+      }
+      return (await res.json()) as T;
     }
-    return (await res.json()) as T;
+    throw new ApiError(500, "request failed after retries");
   }
 
   async listMemories(q: { tier?: Tier[]; workspace?: string; include_invalid?: boolean; limit?: number } = {}): Promise<Memory[]> {

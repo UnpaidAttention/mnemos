@@ -56,6 +56,64 @@ pub async fn extract_facts(
         .collect())
 }
 
+/// System prompt for incremental (mid-session) extraction.
+const EXTRACT_INCREMENTAL_SYSTEM: &str = "TASK=extract\n\
+You extract atomic, standalone facts worth remembering from the NEW section \
+of a conversation transcript. The CONTEXT section shows earlier messages that \
+have already been processed — use them to resolve pronouns and references, but \
+do NOT extract facts from them. Each fact must be self-contained — resolve \
+pronouns and context so it stands alone. Ignore greetings and chit-chat. \
+Respond ONLY with JSON of the form {\"facts\":[{\"text\":\"...\"}]}.";
+
+/// Run fact extraction over new chunks with full session context.
+///
+/// `context_chunks` are already-processed chunks (for reference only).
+/// `new_chunks` are the chunks to extract from.
+/// Returns an empty vector when there are no new chunks.
+pub async fn extract_facts_incremental(
+    context_chunks: &[Chunk],
+    new_chunks: &[Chunk],
+    llm: &dyn LlmProvider,
+    custom_schema: Option<&str>,
+) -> Result<Vec<CandidateFact>> {
+    if new_chunks.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut transcript = String::new();
+    if !context_chunks.is_empty() {
+        transcript.push_str(
+            "CONTEXT (already processed — for reference only, do NOT extract from these):\n",
+        );
+        for c in context_chunks {
+            let who = c.speaker.as_deref().unwrap_or("unknown");
+            transcript.push_str(&format!("{who}: {}\n", c.body));
+        }
+        transcript.push('\n');
+    }
+    transcript.push_str("NEW (extract facts from ONLY these messages):\n");
+    for c in new_chunks {
+        let who = c.speaker.as_deref().unwrap_or("unknown");
+        transcript.push_str(&format!("{who}: {}\n", c.body));
+    }
+    let mut system_prompt = EXTRACT_INCREMENTAL_SYSTEM.to_string();
+    if let Some(schema) = custom_schema {
+        system_prompt.push_str("\n\nCustom Schema Guidelines:\n");
+        system_prompt.push_str(schema);
+    }
+    let req = CompletionRequest::new(&system_prompt, transcript);
+    let raw = llm.complete(&req).await?;
+    let parsed: ExtractOut = serde_json::from_str(extract_json(&raw))
+        .map_err(|e| MnemosError::Internal(format!("extract parse failed: {e}; raw={raw}")))?;
+    Ok(parsed
+        .facts
+        .into_iter()
+        .map(|f| CandidateFact {
+            text: f.text.trim().to_string(),
+        })
+        .filter(|f| !f.text.is_empty())
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,8 +10,8 @@ use tempfile::TempDir;
 async fn migrations_reach_latest_version_on_fresh_db() {
     let tmp = TempDir::new().unwrap();
     let s = Storage::open(&tmp.path().join("m.db")).await.unwrap();
-    // v10 is the current latest (v10 = P1-4 FTS repair migration).
-    assert_eq!(s.schema_version().await.unwrap(), 10);
+    // v11 is the current latest (v11 = strength column migration).
+    assert_eq!(s.schema_version().await.unwrap(), 11);
 }
 
 /// Opening the same DB file multiple times must not advance the version past
@@ -43,7 +43,7 @@ async fn migrations_are_idempotent_across_sessions() {
 #[tokio::test]
 async fn schema_migrations_table_has_no_duplicate_rows() {
     let tmp = TempDir::new().unwrap();
-    let s = Storage::open(&tmp.path().join("dup.db")).await.unwrap();
+    let _s = Storage::open(&tmp.path().join("dup.db")).await.unwrap();
     // Re-open to exercise the idempotency path.
     let s = Storage::open(&tmp.path().join("dup.db")).await.unwrap();
 
@@ -87,10 +87,10 @@ async fn schema_migrations_versions_are_sequential() {
         );
         expected += 1;
     }
-    // We should have seen at least v1..v10.
+    // We should have seen at least v1..v11.
     assert!(
-        expected > 10,
-        "expected at least 10 migration rows, got {}",
+        expected > 11,
+        "expected at least 11 migration rows, got {}",
         expected - 1
     );
 }

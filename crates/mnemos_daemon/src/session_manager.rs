@@ -115,10 +115,7 @@ impl SessionManager {
     }
 
     /// Sweep for idle sessions and end them. Returns the IDs of ended sessions.
-    pub async fn sweep(
-        &self,
-        storage: &Storage,
-    ) -> Vec<String> {
+    pub async fn sweep(&self, storage: &Storage) -> Vec<String> {
         let mut ended = Vec::new();
         let now = Instant::now();
 

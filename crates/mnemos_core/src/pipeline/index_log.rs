@@ -7,7 +7,7 @@ use std::path::Path;
 /// Regenerate index.md and log.md in the vault root.
 pub async fn update_index_log(storage: &Storage, paths: &Paths) -> Result<()> {
     let conn = storage.conn()?;
-    
+
     // 1. Generate index.md
     let mut rows = conn
         .query(
@@ -72,15 +72,21 @@ pub async fn update_index_log(storage: &Storage, paths: &Paths) -> Result<()> {
         let desc: Option<String> = row.get(3)?;
         let file_path: Option<String> = row.get(4)?;
 
-        let link_path = file_path.as_deref().and_then(|fp| {
-            Path::new(fp)
-                .strip_prefix(&paths.root)
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-        }).unwrap_or_else(|| format!("files/entities/{}.md", name));
+        let link_path = file_path
+            .as_deref()
+            .and_then(|fp| {
+                Path::new(fp)
+                    .strip_prefix(&paths.root)
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| format!("files/entities/{}.md", name));
 
         let desc_str = desc.map_or("".to_string(), |d| format!(" - {}", d));
-        entity_items.push(format!("- [[{}|{}]] (id: `{}` | type: `{}`){}", link_path, name, id, kind, desc_str));
+        entity_items.push(format!(
+            "- [[{}|{}]] (id: `{}` | type: `{}`){}",
+            link_path, name, id, kind, desc_str
+        ));
     }
 
     let mut index_content = String::new();
@@ -94,7 +100,7 @@ pub async fn update_index_log(storage: &Storage, paths: &Paths) -> Result<()> {
         for line in working_items {
             index_content.push_str(&format!("{}\n", line));
         }
-        index_content.push_str("\n");
+        index_content.push('\n');
     }
 
     index_content.push_str("## Procedural Memory\n");
@@ -104,7 +110,7 @@ pub async fn update_index_log(storage: &Storage, paths: &Paths) -> Result<()> {
         for line in procedural_items {
             index_content.push_str(&format!("{}\n", line));
         }
-        index_content.push_str("\n");
+        index_content.push('\n');
     }
 
     index_content.push_str("## Reflections & Syntheses\n");
@@ -114,7 +120,7 @@ pub async fn update_index_log(storage: &Storage, paths: &Paths) -> Result<()> {
         for line in reflection_items {
             index_content.push_str(&format!("{}\n", line));
         }
-        index_content.push_str("\n");
+        index_content.push('\n');
     }
 
     index_content.push_str("## Semantic Memory (Facts)\n");
@@ -124,7 +130,7 @@ pub async fn update_index_log(storage: &Storage, paths: &Paths) -> Result<()> {
         for line in semantic_items {
             index_content.push_str(&format!("{}\n", line));
         }
-        index_content.push_str("\n");
+        index_content.push('\n');
     }
 
     index_content.push_str("## Episodic Memory (Transcripts)\n");
@@ -134,7 +140,7 @@ pub async fn update_index_log(storage: &Storage, paths: &Paths) -> Result<()> {
         for line in episodic_items {
             index_content.push_str(&format!("{}\n", line));
         }
-        index_content.push_str("\n");
+        index_content.push('\n');
     }
 
     index_content.push_str("## Entities\n");
@@ -144,7 +150,7 @@ pub async fn update_index_log(storage: &Storage, paths: &Paths) -> Result<()> {
         for line in entity_items {
             index_content.push_str(&format!("{}\n", line));
         }
-        index_content.push_str("\n");
+        index_content.push('\n');
     }
 
     let index_path = paths.root.join("index.md");

@@ -76,6 +76,7 @@ impl Storage {
         run_migration!(8, migration_v8);
         run_migration!(9, migration_v9);
         run_migration!(10, migration_v10);
+        run_migration!(11, migration_v11);
 
         Ok(())
     }
@@ -404,3 +405,17 @@ const V10_STATEMENTS: &[&str] = &[
     "INSERT INTO memory_fts(memory_id, title, body)
          SELECT id, title, body FROM memories",
 ];
+
+/// Migration v11: add processed_through_ordinal watermark for incremental
+/// pipeline processing. Tracks the highest chunk ordinal that has been
+/// processed by the extraction pipeline, allowing batched extraction to
+/// distinguish context (already processed) from new chunks.
+async fn migration_v11(tx: &libsql::Transaction) -> Result<()> {
+    for stmt in V11_STATEMENTS {
+        tx.execute(stmt, ()).await?;
+    }
+    Ok(())
+}
+
+const V11_STATEMENTS: &[&str] =
+    &["ALTER TABLE sessions ADD COLUMN processed_through_ordinal INTEGER NOT NULL DEFAULT -1"];

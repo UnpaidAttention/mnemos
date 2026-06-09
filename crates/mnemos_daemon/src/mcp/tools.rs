@@ -334,22 +334,24 @@ async fn persist_synthesis(state: &AppState, args: &Value) -> anyhow::Result<Val
     let sources_json = args["sources"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("sources array required"))?;
-        
+
     let mut sources = Vec::new();
     for v in sources_json {
         if let Some(s) = v.as_str() {
             sources.push(s.to_string());
         }
     }
-    
-    let id = state.vault.remember_synthesis(
-        &content,
-        Some(title),
-        vec!["synthesis".to_string()],
-        &sources,
-        vec![]
-    )
-    .await?;
+
+    let id = state
+        .vault
+        .remember_synthesis(
+            &content,
+            Some(title),
+            vec!["synthesis".to_string()],
+            &sources,
+            vec![],
+        )
+        .await?;
 
     Ok(tool_content_json(json!({
         "status": "success",
@@ -362,11 +364,11 @@ async fn ingest_source(state: &AppState, args: &Value) -> anyhow::Result<Value> 
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("path required"))?;
     let path = std::path::Path::new(path_str);
-    
+
     let content = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| anyhow::anyhow!("failed to read source file: {e}"))?;
-        
+
     let llm = state
         .llm
         .clone()
@@ -387,7 +389,7 @@ async fn ingest_source(state: &AppState, args: &Value) -> anyhow::Result<Value> 
     let facts = mnemos_core::pipeline::extract::extract_facts(
         &[chunk],
         llm.as_ref(),
-        custom_schema.as_deref()
+        custom_schema.as_deref(),
     )
     .await?;
 
@@ -402,7 +404,7 @@ async fn ingest_source(state: &AppState, args: &Value) -> anyhow::Result<Value> 
             &state.vault,
             fact,
             prov.clone(),
-            llm.as_ref()
+            llm.as_ref(),
         )
         .await?;
         if let Some(id) = new_id {
@@ -410,24 +412,29 @@ async fn ingest_source(state: &AppState, args: &Value) -> anyhow::Result<Value> 
         }
     }
 
-    let summary_title = format!("Summary of {}", path.file_name().unwrap_or_default().to_string_lossy());
+    let summary_title = format!(
+        "Summary of {}",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    );
     let summary_prompt = mnemos_core::providers::CompletionRequest::new(
         "Generate a concise one-paragraph summary of the following document content.",
         &content,
     );
     let summary_body = llm.complete(&summary_prompt).await?;
-    let summary_id = state.vault.remember(
-        &summary_body,
-        mnemos_core::vault::RememberOpts {
-            title: Some(summary_title),
-            tier: mnemos_core::Tier::Reflection,
-            kind: mnemos_core::types::MemoryType::SourceSummary,
-            tags: vec!["source-summary".to_string()],
-            source_tool: Some("ingest_source".into()),
-            ..Default::default()
-        }
-    )
-    .await?;
+    let summary_id = state
+        .vault
+        .remember(
+            &summary_body,
+            mnemos_core::vault::RememberOpts {
+                title: Some(summary_title),
+                tier: mnemos_core::Tier::Reflection,
+                kind: mnemos_core::types::MemoryType::SourceSummary,
+                tags: vec!["source-summary".to_string()],
+                source_tool: Some("ingest_source".into()),
+                ..Default::default()
+            },
+        )
+        .await?;
 
     Ok(tool_content_json(json!({
         "status": "success",
@@ -442,7 +449,7 @@ async fn lint_vault(state: &AppState, _args: &Value) -> anyhow::Result<Value> {
         .llm
         .clone()
         .ok_or_else(|| anyhow::anyhow!("no LLM configured; linting unavailable"))?;
-        
+
     let result = mnemos_core::pipeline::lint::run_lint(state.vault.storage(), llm.as_ref()).await?;
     Ok(tool_content_json(serde_json::to_value(result)?))
 }

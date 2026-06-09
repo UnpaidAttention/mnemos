@@ -47,9 +47,7 @@ pub fn build_llm_for_daemon(cfg: &Config) -> Option<Arc<dyn LlmProvider>> {
             } else {
                 cfg.llm.model.clone()
             };
-            let url = if cfg.llm.url.is_empty()
-                || cfg.llm.url == "http://127.0.0.1:7425"
-            {
+            let url = if cfg.llm.url.is_empty() || cfg.llm.url == "http://127.0.0.1:7425" {
                 "http://localhost:11434".to_string()
             } else {
                 cfg.llm.url.clone()

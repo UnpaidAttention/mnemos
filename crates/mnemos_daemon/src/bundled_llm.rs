@@ -124,7 +124,10 @@ fn spawn_child(cfg: &BundledLlmConfig, log_path: &std::path::Path) -> Result<Chi
 /// in the background while the daemon serves requests. Pipeline tasks that
 /// need the LLM will get errors until it's ready, which is acceptable since
 /// they're best-effort background tasks.
-pub async fn spawn(cfg: BundledLlmConfig, llm_ready: Arc<tokio::sync::watch::Sender<bool>>) -> Result<BundledLlmHandle> {
+pub async fn spawn(
+    cfg: BundledLlmConfig,
+    llm_ready: Arc<tokio::sync::watch::Sender<bool>>,
+) -> Result<BundledLlmHandle> {
     if !cfg.binary.exists() {
         anyhow::bail!(
             "bundled llama-server binary not found at {}. Run scripts/fetch-bundled-assets.sh.",

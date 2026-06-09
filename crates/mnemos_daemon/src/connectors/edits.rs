@@ -166,7 +166,9 @@ pub fn json_array_append(
     // invariant: the entry was either just created as `json!([])` by
     // `or_insert_with` above, or it passed the `is_array()` check — so
     // `as_array_mut()` is infallible here.
-    let arr = arr.as_array_mut().expect("invariant: arr passed is_array() check above");
+    let arr = arr
+        .as_array_mut()
+        .expect("invariant: arr passed is_array() check above");
     // Idempotency: skip if any element already has our command.
     if arr.iter().any(|el| element_has_command(el, match_command)) {
         return serde_json::to_string_pretty(&root).map_err(|e| e.to_string());
@@ -227,7 +229,9 @@ pub fn json_array_remove(
         if arr_val.as_array().map(|a| a.is_empty()).unwrap_or(false) {
             // invariant: `cur` was reached via `as_object_mut()` navigation
             // above, so it is always an object here.
-            cur.as_object_mut().expect("invariant: cur reached via as_object_mut() navigation").remove(leaf);
+            cur.as_object_mut()
+                .expect("invariant: cur reached via as_object_mut() navigation")
+                .remove(leaf);
         }
     }
     serde_json::to_string_pretty(&root).map_err(|e| e.to_string())
