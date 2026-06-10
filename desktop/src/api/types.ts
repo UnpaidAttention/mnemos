@@ -97,9 +97,17 @@ export interface PipelineStatus {
   llm_model: string | null;
   counters: { completed: number; failed: number; facts_added: number };
   recent: { session_id: string; facts_added: number; ok: boolean; at: string }[];
+  backfill?: { processed: number; total: number; entities_linked: number; errors: number } | null;
 }
 
-export interface AuditEntry { id: number; ts: string; actor: string; action: string; memory_id: string | null; details: string | null; }
+export interface AuditEntry {
+  id: number;
+  ts: string;
+  actor: string;
+  action: string;
+  memory_id: string | null;
+  details: Record<string, unknown> | null;
+}
 
 export interface SearchReq {
   query: string;

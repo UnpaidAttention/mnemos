@@ -221,9 +221,9 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
         cx, cy, radius * 1.2,
       );
       if (isDark) {
-        grad.addColorStop(0, "#3a3d44");
-        grad.addColorStop(0.5, "#252830");
-        grad.addColorStop(1, "#16181e");
+        grad.addColorStop(0, "#555a64");
+        grad.addColorStop(0.5, "#3a3f4a");
+        grad.addColorStop(1, "#24282f");
       } else {
         grad.addColorStop(0, "#8a8d94");
         grad.addColorStop(0.5, "#6a6d74");
@@ -238,7 +238,7 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
       const hlX = cx + Math.cos(shape.highlightAngle) * radius * 0.5;
       const hlY = cy + Math.sin(shape.highlightAngle) * radius * 0.5;
       const hlGrad = ctx.createRadialGradient(hlX, hlY, 0, hlX, hlY, radius * 0.7);
-      hlGrad.addColorStop(0, "rgba(255, 255, 255, 0.2)");
+      hlGrad.addColorStop(0, isDark ? "rgba(255, 255, 255, 0.35)" : "rgba(255, 255, 255, 0.2)");
       hlGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
       ctx.fillStyle = hlGrad;
       ctx.fill();
@@ -263,11 +263,24 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
       }
       ctx.closePath();
 
-      const glowIntensity = isHovered ? 0.7 : isFocused ? 0.5 : 0.25;
+      const glowIntensity = isHovered ? 0.9 : isFocused ? 0.7 : 0.5;
       ctx.strokeStyle = nodeColor;
-      ctx.lineWidth = isHovered ? 2 / globalScale : 1 / globalScale;
+      ctx.lineWidth = isHovered ? 2.5 / globalScale : 1.5 / globalScale;
       ctx.globalAlpha = (dimOthers ? 0.12 : 1) * glowIntensity;
       ctx.stroke();
+
+      // ── Outer glow aura (always visible in dark mode) ────────────
+      if (isDark && !dimOthers) {
+        const auraAlpha = isHovered ? 0.25 : isFocused ? 0.15 : 0.08;
+        const aura = ctx.createRadialGradient(cx, cy, radius * 0.8, cx, cy, radius * 2.2);
+        aura.addColorStop(0, nodeColor);
+        aura.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.globalAlpha = auraAlpha;
+        ctx.fillStyle = aura;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       // ── Inner glow for high-importance or hovered nodes ─────────
       if (isHovered || ppr > maxPpr * 0.5) {
@@ -294,7 +307,7 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillStyle = isDark
-          ? `rgba(216, 220, 230, ${dimOthers ? 0.12 : 0.9})`
+          ? `rgba(235, 240, 250, ${dimOthers ? 0.12 : 1})`
           : `rgba(28, 27, 24, ${dimOthers ? 0.12 : 0.9})`;
         ctx.fillText(node.name, cx, cy + radius + fontSize / 2 + 3);
       }

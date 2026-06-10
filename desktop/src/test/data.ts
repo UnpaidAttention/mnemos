@@ -300,7 +300,7 @@ export const RICH_AUDIT: AuditEntry[] = [
   { id: 11, ts: isoDaysAgo(0), actor: "desktop", action: "update", memory_id: "mem_9", details: null },
   { id: 10, ts: isoDaysAgo(1), actor: "mnemos-cli", action: "create", memory_id: "mem_9", details: null },
   { id: 9, ts: isoDaysAgo(2), actor: "pipeline", action: "create", memory_id: "mem_r4", details: null },
-  { id: 8, ts: isoDaysAgo(2), actor: "pipeline", action: "forget", memory_id: "mem_6", details: "superseded" },
+  { id: 8, ts: isoDaysAgo(2), actor: "pipeline", action: "forget", memory_id: "mem_6", details: { reason: "superseded" } },
   { id: 7, ts: isoDaysAgo(3), actor: "pipeline", action: "create", memory_id: "mem_cs1", details: null },
   { id: 6, ts: isoDaysAgo(4), actor: "mnemos-cli", action: "create", memory_id: "mem_3", details: null },
   { id: 5, ts: isoDaysAgo(7), actor: "mnemos-cli", action: "create", memory_id: "mem_8", details: null },

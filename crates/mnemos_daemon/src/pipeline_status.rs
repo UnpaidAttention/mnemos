@@ -22,10 +22,20 @@ pub struct RecentRun {
     pub at: String,
 }
 
+/// Current progress of an active backfill operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct BackfillProgress {
+    pub processed: usize,
+    pub total: usize,
+    pub entities_linked: usize,
+    pub errors: usize,
+}
+
 #[derive(Debug, Default)]
 struct Inner {
     counters: PipelineCounters,
     recent: VecDeque<RecentRun>,
+    backfill: Option<BackfillProgress>,
 }
 
 /// Cloneable handle to pipeline run statistics.
@@ -54,9 +64,25 @@ impl PipelineStatus {
         }
     }
 
-    /// Snapshot the counters and the recent-runs list (newest first).
-    pub async fn snapshot(&self) -> (PipelineCounters, Vec<RecentRun>) {
+    /// Mark a backfill as started.
+    pub async fn set_backfill(&self, progress: BackfillProgress) {
+        let mut g = self.inner.lock().await;
+        g.backfill = Some(progress);
+    }
+
+    /// Clear the backfill progress (completed or failed).
+    pub async fn clear_backfill(&self) {
+        let mut g = self.inner.lock().await;
+        g.backfill = None;
+    }
+
+    /// Snapshot the counters, recent-runs list, and active backfill progress.
+    pub async fn snapshot(&self) -> (PipelineCounters, Vec<RecentRun>, Option<BackfillProgress>) {
         let g = self.inner.lock().await;
-        (g.counters.clone(), g.recent.iter().cloned().collect())
+        (
+            g.counters.clone(),
+            g.recent.iter().cloned().collect(),
+            g.backfill.clone(),
+        )
     }
 }

@@ -3,7 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { usePipelines } from "../api/queries";
 import { client } from "../api/client";
 import { Button, Card, Skeleton } from "../design/primitives";
-import { useEventStore } from "../store/events";
 
 function Stat({ label, value }: { label: string; value: number | string }) {
   return (
@@ -23,35 +22,15 @@ function SmallStat({ label, value }: { label: string; value: number | string }) 
   );
 }
 
-/** Extract the latest backfill progress from the event stream. */
-function useBackfillProgress(): {
-  active: boolean;
-  processed: number;
-  total: number;
-  entities: number;
-  errors: number;
-} {
-  const recent = useEventStore((s) => s.recent);
-  // Walk recent events newest-first, looking for the latest backfill state.
-  for (const ev of recent) {
-    if (ev.type === "backfill_completed") {
-      return { active: false, processed: ev.total, total: ev.total, entities: ev.entities_linked, errors: ev.errors };
-    }
-    if (ev.type === "backfill_progress") {
-      return { active: true, processed: ev.processed, total: ev.total, entities: ev.entities_linked, errors: ev.errors };
-    }
-    if (ev.type === "backfill_started") {
-      return { active: true, processed: 0, total: ev.total, entities: 0, errors: 0 };
-    }
-  }
-  return { active: false, processed: 0, total: 0, entities: 0, errors: 0 };
-}
+/** Progress bar driven by the REST API response (data.backfill).
+ *  WS events trigger query invalidation → re-fetch → prop update. */
+function BackfillProgressBar({ backfill }: {
+  backfill: { processed: number; total: number; entities_linked: number; errors: number } | null;
+}) {
+  if (!backfill || backfill.total === 0) return null;
 
-function BackfillProgressBar() {
-  const { active, processed, total, entities, errors } = useBackfillProgress();
-  if (!active || total === 0) return null;
-
-  const pct = Math.round((processed / total) * 100);
+  const { processed, total, entities_linked, errors } = backfill;
+  const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
 
   return (
     <Card className="p-4 mt-2">
@@ -78,7 +57,7 @@ function BackfillProgressBar() {
         </div>
         <div className="flex gap-1.5">
           <span className="text-text-muted">Entities linked</span>
-          <span className="mono">{entities}</span>
+          <span className="mono">{entities_linked}</span>
         </div>
         {errors > 0 && (
           <div className="flex gap-1.5">
@@ -106,7 +85,6 @@ export function Pipelines() {
     communities_found: number;
     errors: number;
   } | null>(null);
-  const backfillProgress = useBackfillProgress();
 
   const trigger = async (which: "decay" | "communities" | "backfill") => {
     setTriggerError(null);
@@ -183,7 +161,7 @@ export function Pipelines() {
       </Card>
 
       {/* Live backfill progress */}
-      <BackfillProgressBar />
+      <BackfillProgressBar backfill={data.backfill ?? null} />
 
       {/* Maintenance */}
       <div className="space-y-2">
@@ -207,10 +185,10 @@ export function Pipelines() {
           <Button
             variant="ghost"
             onClick={() => void trigger("backfill")}
-            disabled={backfillProgress.active || busy === "backfill" || !data.enabled}
-            title={!data.enabled ? "Enable an LLM model to run backfill" : backfillProgress.active ? "Backfill is already running" : "Retroactively extract entities and relationships from all existing memories"}
+            disabled={!!data.backfill || busy === "backfill" || !data.enabled}
+            title={!data.enabled ? "Enable an LLM model to run backfill" : data.backfill ? "Backfill is already running" : "Retroactively extract entities and relationships from all existing memories"}
           >
-            {backfillProgress.active ? `Processing ${backfillProgress.processed}/${backfillProgress.total}…` : busy === "backfill" ? "Starting…" : "Backfill entities"}
+            {data.backfill ? `Processing ${data.backfill.processed}/${data.backfill.total}…` : busy === "backfill" ? "Starting…" : "Backfill entities"}
           </Button>
         </div>
         {triggerError && (
@@ -222,7 +200,7 @@ export function Pipelines() {
             {triggerError}
           </p>
         )}
-        {backfillResult && !backfillProgress.active && (
+        {backfillResult && !data.backfill && (
           <Card className="p-4 mt-2">
             <div className="label mb-2">Backfill results</div>
             <div className="flex gap-6 flex-wrap">

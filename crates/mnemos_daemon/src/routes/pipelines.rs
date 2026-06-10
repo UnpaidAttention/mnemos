@@ -18,6 +18,7 @@ use mnemos_core::pipeline::decay::DecayConfig;
 use mnemos_core::pipeline::entities::link_entities;
 use mnemos_core::pipeline::graph::update_graph;
 use mnemos_core::pipeline::reflect::reflect;
+use mnemos_core::storage::audit::write_audit;
 use mnemos_core::storage::memory_ops::ListFilter;
 use mnemos_core::storage::reflection_ops::{bump_salience, reset_salience};
 use mnemos_core::Tier;
@@ -40,13 +41,14 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    let (counters, recent) = state.pipeline_status.snapshot().await;
+    let (counters, recent, backfill) = state.pipeline_status.snapshot().await;
     let model = state.llm.as_ref().map(|l| l.model_id().to_string());
     Ok(Json(json!({
         "enabled": state.llm.is_some(),
         "llm_model": model,
         "counters": counters,
         "recent": recent,
+        "backfill": backfill,
     })))
 }
 
@@ -112,6 +114,23 @@ async fn run_backfill(State(state): State<AppState>) -> Result<Json<Value>, ApiE
     state
         .events
         .publish(crate::events::Event::BackfillStarted { total });
+    state
+        .pipeline_status
+        .set_backfill(crate::pipeline_status::BackfillProgress {
+            processed: 0,
+            total,
+            entities_linked: 0,
+            errors: 0,
+        })
+        .await;
+    let _ = write_audit(
+        state.vault.storage(),
+        "mnemos-pipeline",
+        "backfill_started",
+        None,
+        Some(json!({ "total_memories": total })),
+    )
+    .await;
 
     let mut entities_linked = 0usize;
     let mut edges_created = 0usize;
@@ -171,7 +190,16 @@ async fn run_backfill(State(state): State<AppState>) -> Result<Json<Value>, ApiE
             }
         }
 
-        // Emit progress event every memory so the UI can update its progress bar.
+        // Update progress state (queryable via REST) and emit WS event.
+        state
+            .pipeline_status
+            .set_backfill(crate::pipeline_status::BackfillProgress {
+                processed: i + 1,
+                total,
+                entities_linked,
+                errors,
+            })
+            .await;
         state
             .events
             .publish(crate::events::Event::BackfillProgress {
@@ -249,6 +277,7 @@ async fn run_backfill(State(state): State<AppState>) -> Result<Json<Value>, ApiE
         "backfill: complete"
     );
 
+    state.pipeline_status.clear_backfill().await;
     state
         .events
         .publish(crate::events::Event::BackfillCompleted {
@@ -257,6 +286,21 @@ async fn run_backfill(State(state): State<AppState>) -> Result<Json<Value>, ApiE
             edges_created,
             errors,
         });
+    let _ = write_audit(
+        state.vault.storage(),
+        "mnemos-pipeline",
+        "backfill_completed",
+        None,
+        Some(json!({
+            "memories_processed": total,
+            "entities_linked": entities_linked,
+            "edges_created": edges_created,
+            "reflections_created": reflections_created,
+            "communities_found": communities_found,
+            "errors": errors,
+        })),
+    )
+    .await;
 
     Ok(Json(json!({
         "memories_processed": total,

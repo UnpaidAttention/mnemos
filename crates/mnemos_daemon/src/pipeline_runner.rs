@@ -14,9 +14,11 @@ use mnemos_core::pipeline::reflect::{harden_corrections, mine_corrections, refle
 use mnemos_core::pipeline::resolve::resolve_and_apply;
 use mnemos_core::pipeline::ResolveOp;
 use mnemos_core::providers::LlmProvider;
+use mnemos_core::storage::audit::write_audit;
 use mnemos_core::storage::chunk_ops::delete_session_chunks;
 use mnemos_core::storage::reflection_ops::{bump_salience, reset_salience};
 use mnemos_core::types::{Chunk, Provenance};
+use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 
@@ -202,6 +204,18 @@ async fn process_session(state: &AppState, session_id: &str) {
                     session_id: session_id.to_string(),
                     facts_added: n,
                 });
+                let _ = write_audit(
+                    state.vault.storage(),
+                    "mnemos-pipeline",
+                    "pipeline_completed",
+                    None,
+                    Some(json!({
+                        "session_id": session_id,
+                        "facts_added": n,
+                        "attempts": attempt + 1,
+                    })),
+                )
+                .await;
                 maybe_reflect(state, llm.as_ref(), n).await;
                 maybe_mine_and_harden(state, llm.as_ref(), session_id).await;
                 maybe_prune_chunks(state, session_id).await;
@@ -245,6 +259,18 @@ async fn process_session(state: &AppState, session_id: &str) {
         session_id: session_id.to_string(),
         error: e.to_string(),
     });
+    let _ = write_audit(
+        state.vault.storage(),
+        "mnemos-pipeline",
+        "pipeline_failed",
+        None,
+        Some(json!({
+            "session_id": session_id,
+            "error": e.to_string(),
+            "retries": MAX_RETRIES,
+        })),
+    )
+    .await;
 }
 
 async fn run_pipeline(
