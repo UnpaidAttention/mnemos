@@ -46,11 +46,10 @@ pub fn spawn(state: AppState) -> PipelineHandle {
     // Subscribe BEFORE spawning so no events are missed between spawn and first poll.
     let mut events = state.events.subscribe();
     let join = tokio::spawn(async move {
-        // NOTE: catch-up (reprocessing stale sessions from previous runs) is
-        // intentionally DISABLED on startup. On CPU-only machines, loading the
-        // LLM to churn through a backlog causes sustained high CPU usage that
-        // degrades the user experience. Users can trigger reprocessing manually
-        // via POST /v1/maintenance/clear-backlog (to skip) or the desktop UI.
+        // Catch-up: retry any sessions that were never successfully processed.
+        // Safe to run because failed sessions are now marked as processed after
+        // all retries are exhausted — they won't accumulate across restarts.
+        catch_up(&state).await;
 
         // Track pending chunks per session for batched incremental processing.
         let mut pending: std::collections::HashMap<String, IncrementalState> =
@@ -224,9 +223,15 @@ async fn process_session(state: &AppState, session_id: &str) {
             }
         }
     }
-    // All retries exhausted.
+    // All retries exhausted — mark as processed so it doesn't linger in the
+    // backlog and get retried on every daemon restart. The failure is recorded
+    // in pipeline_status and the PipelineFailed event. Users can re-trigger
+    // via POST /v1/maintenance/backfill if needed.
     let e = last_err.unwrap();
-    tracing::error!(session_id = %session_id, error = %e, "pipeline failed after {MAX_RETRIES} retries");
+    tracing::error!(session_id = %session_id, error = %e, "pipeline failed after {MAX_RETRIES} retries; marking processed");
+    if let Err(mark_err) = mark_processed(state, session_id).await {
+        tracing::warn!(session_id = %session_id, error = %mark_err, "failed to mark session as processed after pipeline failure");
+    }
     state
         .pipeline_status
         .record(RecentRun {
