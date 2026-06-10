@@ -29,7 +29,7 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
 
   // Model selection
   const [selectedEmbedder, setSelectedEmbedder] = useState("bundled");
-  const [selectedLlm, setSelectedLlm] = useState("qwen3-0.6b");
+  const [selectedLlm, setSelectedLlm] = useState("phi4-mini");
   const [pullingModel, setPullingModel] = useState<string | null>(null);
   const [pullProgress, setPullProgress] = useState(0);
   const [applyingConfig, setApplyingConfig] = useState(false);
@@ -325,7 +325,7 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
             />
 
             {/* Ollama install prompt if not installed */}
-            {!ollamaReady && selectedLlm !== "qwen3-0.6b" && LLM_MODELS.find((m) => m.tag === selectedLlm)?.provider === "ollama" && (
+            {!ollamaReady && LLM_MODELS.find((m) => m.tag === selectedLlm)?.provider === "ollama" && (
               <Card className="p-3 border-accent/30">
                 <p className="text-sm text-text-muted">
                   Ollama is required for this model.
@@ -436,7 +436,7 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
               <div className="flex items-center gap-2">
                 <span className="text-green-400">✓</span>
                 <span className="text-sm">
-                  Learning: <strong>{LLM_MODELS.find((m) => m.tag === selectedLlm)?.name ?? "Qwen3 0.6B"}</strong>
+                  Learning: <strong>{LLM_MODELS.find((m) => m.tag === selectedLlm)?.name ?? "Phi-4 Mini"}</strong>
                   {llmNeedsDownload && (
                     <span className="text-text-muted text-xs ml-1">(will download on first use)</span>
                   )}

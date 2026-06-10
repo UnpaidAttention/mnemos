@@ -22,6 +22,8 @@ vi.mock("../api/tauri", () => ({
   pullModel: vi.fn().mockResolvedValue(null),
   applyLlmConfig: vi.fn().mockResolvedValue(null),
   applyEmbedderConfig: vi.fn().mockResolvedValue(null),
+  checkDownloadedModels: vi.fn().mockResolvedValue({ files: [] }),
+  downloadBundledModel: vi.fn().mockResolvedValue(null),
 }));
 
 const server = setupServer(
@@ -74,7 +76,7 @@ test("step 2 shows learning model picker", async () => {
   // step 1 → 2
   await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
   expect(await screen.findByRole("heading", { name: /choose learning model/i })).toBeInTheDocument();
-  expect(screen.getByText(/Qwen3 0.6B/)).toBeInTheDocument();
+  expect(screen.getByText(/Phi-4 Mini/)).toBeInTheDocument();
 });
 
 test("wizard completes via finish setup from done step", async () => {
