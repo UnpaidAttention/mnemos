@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useRouterState } from "@tanstack/react-router";
 import { TopBar } from "./TopBar";
 import { LeftSidebar } from "./LeftSidebar";
 import { Inspector } from "./Inspector";
@@ -11,6 +12,11 @@ export function Shell({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const queryClient = useQueryClient();
+  const routerState = useRouterState();
+  const currentPath = routerState.location.pathname;
+
+  // Views that manage their own context panels — hide the global Inspector
+  const hideInspector = currentPath === "/graph" || currentPath === "/knowledge";
 
   // ⌘K / Ctrl+K global shortcut
   useEffect(() => {
@@ -54,8 +60,8 @@ export function Shell({ children }: { children: ReactNode }) {
       <TopBar onCommand={() => setPaletteOpen(true)} onAdd={() => setAddOpen(true)} />
       <div className="flex min-h-0 flex-1">
         <LeftSidebar />
-        <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
-        <Inspector />
+        <main className={`min-w-0 flex-1 ${hideInspector ? "overflow-hidden" : "overflow-y-auto"}`}>{children}</main>
+        {!hideInspector && <Inspector />}
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <QuickAdd open={addOpen} onClose={() => setAddOpen(false)} />

@@ -1,10 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useGraph } from "../api/queries";
 import { client } from "../api/client";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { Skeleton } from "../design/primitives";
 import { EntityProfile } from "./EntityProfile";
+import { Network, GitBranch, Users, Sliders, X } from "lucide-react";
 
 interface BreadcrumbEntry {
   id: string;
@@ -18,7 +19,7 @@ export function Graph() {
   const [byCommunity, setByCommunity] = useState(true);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbEntry[]>([]);
-  
+
   const [forceConfig, setForceConfig] = useState({
     center: 50,
     repel: 50,
@@ -31,7 +32,40 @@ export function Graph() {
     enabled: !!activeQuery,
   });
 
-  // Find entity name from graph data for breadcrumbs
+  // Graph stats
+  const stats = useMemo(() => {
+    if (!data) return null;
+    const communities = new Set(data.nodes.map((n) => n.community_id).filter((c) => c != null));
+    return {
+      nodes: data.nodes.length,
+      edges: data.edges.length,
+      communities: communities.size,
+    };
+  }, [data]);
+
+  // Community distribution for legend
+  const communityGroups = useMemo(() => {
+    if (!data) return [];
+    const groups = new Map<number, { count: number; sample: string }>();
+    for (const node of data.nodes) {
+      const cid = node.community_id ?? -1;
+      const existing = groups.get(cid);
+      if (existing) {
+        existing.count++;
+      } else {
+        groups.set(cid, { count: 1, sample: node.name });
+      }
+    }
+    return Array.from(groups.entries())
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 8);
+  }, [data]);
+
+  const COMMUNITY_COLORS = [
+    "#5EEAD4", "#38BDF8", "#818CF8", "#FBBF24",
+    "#34D399", "#FB923C", "#F472B6", "#A78BFA",
+  ];
+
   const getEntityName = useCallback(
     (id: string): string => {
       const node = data?.nodes.find((n) => n.id === id);
@@ -52,7 +86,6 @@ export function Graph() {
     (id: string) => {
       setSelectedNode(id);
       setBreadcrumbs((prev) => {
-        // If navigating back to an entity already in the trail, truncate
         const idx = prev.findIndex((b) => b.id === id);
         if (idx >= 0) return prev.slice(0, idx + 1);
         return [...prev, { id, name: getEntityName(id) }];
@@ -68,42 +101,8 @@ export function Graph() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden relative">
-      {/* Controls bar */}
-      <div className="flex items-center gap-3 border-b border-border bg-surface px-4 py-3 shrink-0 z-20 relative">
-        <input
-          className="bg-bg border border-border rounded-md px-3 py-1.5 font-body text-sm w-72
-                     focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-          placeholder="Highlight by query (PPR)…"
-          value={q}
-          aria-label="highlight by query"
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && setActiveQuery(q.trim() || null)}
-        />
-        <label className="label flex items-center gap-1.5 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={byCommunity}
-            onChange={(e) => setByCommunity(e.target.checked)}
-            aria-label="community colors"
-            className="accent-accent"
-          />
-          community colors
-        </label>
-        {activeQuery && (
-          <button
-            className="label text-accent hover:underline"
-            onClick={() => { setActiveQuery(null); setQ(""); }}
-          >
-            clear overlay
-          </button>
-        )}
-        {activeQuery && (
-          <span className="label text-text-muted">PPR: {activeQuery}</span>
-        )}
-      </div>
-
-      {/* Canvas region */}
-      <div className="relative min-h-0 flex-1 bg-bg overflow-hidden flex">
+      {/* ── Main Canvas Region (~70% height) ──────────────────────── */}
+      <div className="relative flex-[7] min-h-0 bg-bg overflow-hidden flex">
         <div className="flex-1 relative min-w-0 h-full">
           {isLoading && (
             <div className="p-6 h-full flex flex-col">
@@ -113,7 +112,9 @@ export function Graph() {
           {isError && (
             <div className="p-8 text-center">
               <p className="display text-lg text-tier-procedural mb-2">Graph unavailable</p>
-              <p className="text-sm text-text-muted">Could not load the entity graph. Is the daemon running?</p>
+              <p className="text-sm text-text-muted">
+                Could not load the entity graph. Is the daemon running?
+              </p>
             </div>
           )}
           {data && data.nodes.length === 0 && (
@@ -121,12 +122,9 @@ export function Graph() {
               <div className="max-w-sm">
                 <p className="display text-xl mb-3">No entities yet</p>
                 <p className="text-text-muted text-sm">
-                  The knowledge graph builds as entities and relationships are
-                  extracted from your memories. Go to the{" "}
-                  <strong>Pipelines</strong> tab and click{" "}
-                  <strong>Backfill entities</strong> to populate the graph from
-                  existing memories, or use MCP-connected tools to create new
-                  conversations.
+                  The knowledge graph builds as entities and relationships are extracted from
+                  your memories. Go to <strong>Pipelines</strong> and click{" "}
+                  <strong>Backfill entities</strong> to populate the graph.
                 </p>
               </div>
             </div>
@@ -142,74 +140,25 @@ export function Graph() {
           )}
         </div>
 
-        {/* Settings Overlay - Matches Obsidian controls */}
-        {!selectedNode && (
-          <div className="absolute top-4 right-4 w-64 glass-panel border border-border/50 shadow-floating z-10 flex flex-col p-4 space-y-6">
-            <div>
-              <h3 className="label text-text-muted mb-4 border-b border-border/50 pb-2">Display / Forces</h3>
-              
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <div className="flex justify-between">
-                    <label className="text-xs text-text">Center force</label>
-                  </div>
-                  <input 
-                    type="range" min="0" max="100" step="1" 
-                    value={forceConfig.center} 
-                    onChange={e => setForceConfig(p => ({...p, center: parseFloat(e.target.value)}))}
-                    className="w-full accent-accent" 
-                  />
-                </div>
-                
-                <div className="space-y-1.5">
-                  <div className="flex justify-between">
-                    <label className="text-xs text-text">Repel force</label>
-                  </div>
-                  <input 
-                    type="range" min="0" max="100" step="1" 
-                    value={forceConfig.repel} 
-                    onChange={e => setForceConfig(p => ({...p, repel: parseFloat(e.target.value)}))}
-                    className="w-full accent-accent" 
-                  />
-                </div>
-                
-                <div className="space-y-1.5">
-                  <div className="flex justify-between">
-                    <label className="text-xs text-text">Link distance</label>
-                  </div>
-                  <input 
-                    type="range" min="0" max="100" step="1" 
-                    value={forceConfig.link} 
-                    onChange={e => setForceConfig(p => ({...p, link: parseFloat(e.target.value)}))}
-                    className="w-full accent-accent" 
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Overlay Side Panel */}
-        <div 
+        {/* ── Entity Inspector Overlay Panel ────────────────────────── */}
+        <div
           className={`absolute top-0 right-0 bottom-0 w-[480px] max-w-full glass-panel z-10 flex flex-col shadow-floating transition-transform duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
             selectedNode ? "translate-x-0" : "translate-x-full"
           }`}
         >
           {selectedNode && (
             <>
-              {/* Panel header with breadcrumbs */}
               <div className="flex flex-col border-b border-border/50 shrink-0">
                 <div className="flex items-center justify-between px-4 py-2.5">
                   <span className="label text-text-muted">Entity Inspector</span>
-                  <button 
-                    onClick={handleClose} 
-                    className="label hover:text-text transition-colors px-2 py-1"
+                  <button
+                    onClick={handleClose}
+                    className="flex items-center gap-1 label hover:text-text transition-colors px-2 py-1 rounded-md hover:bg-surface-raised"
                     aria-label="Close Inspector"
                   >
-                    Close ✕
+                    <X size={14} strokeWidth={2} />
                   </button>
                 </div>
-                {/* Breadcrumb trail */}
                 {breadcrumbs.length > 1 && (
                   <div className="flex items-center gap-1 px-4 pb-2 overflow-x-auto text-xs">
                     {breadcrumbs.map((b, i) => (
@@ -231,13 +180,163 @@ export function Graph() {
                 )}
               </div>
               <div className="flex-1 overflow-y-auto">
-                <EntityProfile
-                  id={selectedNode}
-                  onNavigateEntity={handleNavigateEntity}
-                />
+                <EntityProfile id={selectedNode} onNavigateEntity={handleNavigateEntity} />
               </div>
             </>
           )}
+        </div>
+      </div>
+
+      {/* ── Bottom Panel — Glassmorphic Cards ────────────────────────── */}
+      <div className="flex-[3] min-h-0 border-t border-border bg-surface-sunken p-3 overflow-hidden">
+        <div className="h-full flex gap-3">
+          {/* Card 1: Graph Stats */}
+          <div className="card-glass flex-1 p-4 flex flex-col min-w-0">
+            <div className="flex items-center gap-2 mb-3">
+              <Network size={14} strokeWidth={2} className="text-accent shrink-0" />
+              <span className="label">Graph Overview</span>
+            </div>
+            {stats ? (
+              <div className="flex-1 flex flex-col justify-center gap-3">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xs text-text-muted">Entities</span>
+                  <span className="display text-2xl text-text">{stats.nodes}</span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xs text-text-muted">Edges</span>
+                  <span className="display text-2xl text-text">{stats.edges}</span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xs text-text-muted">Communities</span>
+                  <span className="display text-2xl text-accent">{stats.communities}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-text-dim text-xs">
+                Loading…
+              </div>
+            )}
+          </div>
+
+          {/* Card 2: Community Legend */}
+          <div className="card-glass flex-1 p-4 flex flex-col min-w-0">
+            <div className="flex items-center gap-2 mb-3">
+              <Users size={14} strokeWidth={2} className="text-accent shrink-0" />
+              <span className="label">Communities</span>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-1.5">
+              {communityGroups.map(([cid, info]) => (
+                <div key={cid} className="flex items-center gap-2 text-xs">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{
+                      background:
+                        cid >= 0
+                          ? COMMUNITY_COLORS[cid % COMMUNITY_COLORS.length]
+                          : "#4a5264",
+                    }}
+                  />
+                  <span className="text-text truncate flex-1">{info.sample}</span>
+                  <span className="text-text-dim mono shrink-0">{info.count}</span>
+                </div>
+              ))}
+              {communityGroups.length === 0 && (
+                <div className="text-text-dim text-xs text-center py-4">
+                  No communities detected
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Card 3: PPR Query */}
+          <div className="card-glass flex-1 p-4 flex flex-col min-w-0">
+            <div className="flex items-center gap-2 mb-3">
+              <GitBranch size={14} strokeWidth={2} className="text-accent shrink-0" />
+              <span className="label">Query Highlight (PPR)</span>
+            </div>
+            <div className="flex-1 flex flex-col gap-2">
+              <input
+                className="bg-bg border border-border rounded-lg px-3 py-1.5 text-sm w-full
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                placeholder="Highlight by query…"
+                value={q}
+                aria-label="highlight by query"
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && setActiveQuery(q.trim() || null)}
+              />
+              <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={byCommunity}
+                  onChange={(e) => setByCommunity(e.target.checked)}
+                  className="accent-accent"
+                />
+                Community colors
+              </label>
+              {activeQuery && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-accent mono truncate flex-1">
+                    PPR: {activeQuery}
+                  </span>
+                  <button
+                    className="text-xs text-text-muted hover:text-text"
+                    onClick={() => {
+                      setActiveQuery(null);
+                      setQ("");
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Card 4: Force Controls */}
+          <div className="card-glass flex-1 p-4 flex flex-col min-w-0">
+            <div className="flex items-center gap-2 mb-3">
+              <Sliders size={14} strokeWidth={2} className="text-accent shrink-0" />
+              <span className="label">Display / Forces</span>
+            </div>
+            <div className="flex-1 flex flex-col justify-center gap-3">
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-text-muted">Center</span>
+                  <span className="mono text-text-dim">{forceConfig.center}</span>
+                </div>
+                <input
+                  type="range" min="0" max="100" step="1"
+                  value={forceConfig.center}
+                  onChange={(e) => setForceConfig((p) => ({ ...p, center: +e.target.value }))}
+                  className="w-full accent-accent"
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-text-muted">Repel</span>
+                  <span className="mono text-text-dim">{forceConfig.repel}</span>
+                </div>
+                <input
+                  type="range" min="0" max="100" step="1"
+                  value={forceConfig.repel}
+                  onChange={(e) => setForceConfig((p) => ({ ...p, repel: +e.target.value }))}
+                  className="w-full accent-accent"
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-text-muted">Link distance</span>
+                  <span className="mono text-text-dim">{forceConfig.link}</span>
+                </div>
+                <input
+                  type="range" min="0" max="100" step="1"
+                  value={forceConfig.link}
+                  onChange={(e) => setForceConfig((p) => ({ ...p, link: +e.target.value }))}
+                  className="w-full accent-accent"
+                />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

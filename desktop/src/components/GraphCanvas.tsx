@@ -17,11 +17,13 @@ interface Link {
   weight: number;
 }
 
-// Obsidian exact vibrant palette for the starfield
-const COMMUNITY_COLORS = ["#5EEAD4", "#38BDF8", "#818CF8", "#C084FC", "#F472B6", "#FB923C", "#FBBF24", "#34D399"];
-const KIND_COLOR = "#818CF8"; 
+// Military-tactical palette: teals, cyans, ambers, warm accents
+const COMMUNITY_COLORS = [
+  "#5EEAD4", "#38BDF8", "#818CF8", "#FBBF24",
+  "#34D399", "#FB923C", "#F472B6", "#A78BFA",
+];
+const BRAND_COLOR = "#3a9d97";
 
-// Simple hash for assigning consistent colors to nodes without a community
 function hashString(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -29,6 +31,67 @@ function hashString(str: string): number {
   }
   return Math.abs(hash);
 }
+
+// ── Procedural asteroid shape generation ────────────────────────────
+// Generates a deterministic irregular polygon shape for each node,
+// seeded by the node's ID hash so it doesn't change on rerender.
+
+interface AsteroidShape {
+  vertices: { angle: number; radius: number }[];
+  craters: { cx: number; cy: number; r: number }[];
+  highlightAngle: number; // angle of specular highlight
+}
+
+function generateAsteroidShape(seed: number, baseRadius: number): AsteroidShape {
+  // Seeded random — deterministic per node
+  let s = seed;
+  const rand = () => {
+    s = (s * 16807 + 0) % 2147483647;
+    return (s & 0x7fffffff) / 0x7fffffff;
+  };
+
+  // Generate 10-14 vertices with irregular radial offsets
+  const vertexCount = 10 + Math.floor(rand() * 5);
+  const vertices: AsteroidShape["vertices"] = [];
+  for (let i = 0; i < vertexCount; i++) {
+    const angle = (i / vertexCount) * Math.PI * 2;
+    // ±25% radial variation for rocky look
+    const variation = 0.75 + rand() * 0.5;
+    vertices.push({ angle, radius: baseRadius * variation });
+  }
+
+  // Generate 2-4 craters (relative to center, within radius)
+  const craterCount = 2 + Math.floor(rand() * 3);
+  const craters: AsteroidShape["craters"] = [];
+  for (let i = 0; i < craterCount; i++) {
+    const dist = rand() * baseRadius * 0.5;
+    const angle = rand() * Math.PI * 2;
+    craters.push({
+      cx: Math.cos(angle) * dist,
+      cy: Math.sin(angle) * dist,
+      r: baseRadius * (0.08 + rand() * 0.12),
+    });
+  }
+
+  return {
+    vertices,
+    craters,
+    highlightAngle: rand() * Math.PI * 2,
+  };
+}
+
+// Cache shapes per node to avoid regeneration
+const shapeCache = new Map<string, AsteroidShape>();
+
+function getAsteroidShape(nodeId: string, baseRadius: number): AsteroidShape {
+  const key = `${nodeId}-${Math.round(baseRadius)}`;
+  if (!shapeCache.has(key)) {
+    shapeCache.set(key, generateAsteroidShape(hashString(nodeId), baseRadius));
+  }
+  return shapeCache.get(key)!;
+}
+
+// ── Component ────────────────────────────────────────────────────────
 
 interface ForceConfig {
   center: number;
@@ -50,63 +113,46 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hoverNode, setHoverNode] = useState<string | null>(null);
 
-  // Compute graph data format expected by react-force-graph
-  const graphData = useMemo(() => {
-    return {
-      nodes: data.nodes.map(n => ({ ...n })), // force graph mutates objects
-      links: data.edges.map(e => ({ source: e.source, target: e.target, weight: e.weight }))
-    };
-  }, [data]);
+  const graphData = useMemo(() => ({
+    nodes: data.nodes.map(n => ({ ...n })),
+    links: data.edges.map(e => ({ source: e.source, target: e.target, weight: e.weight })),
+  }), [data]);
 
-  // Compute neighbors map for fast lookup
   const neighbors = useMemo(() => {
     const map = new Map<string, Set<string>>();
     graphData.nodes.forEach(n => map.set(n.id, new Set()));
     graphData.links.forEach(link => {
-      const src = typeof link.source === 'object' ? (link.source as Node).id : link.source;
-      const tgt = typeof link.target === 'object' ? (link.target as Node).id : link.target;
+      const src = typeof link.source === "object" ? (link.source as Node).id : link.source;
+      const tgt = typeof link.target === "object" ? (link.target as Node).id : link.target;
       map.get(src)?.add(tgt);
+      map.get(tgt)?.add(src);
     });
     return map;
   }, [graphData]);
 
-  // Configure forces to match Obsidian's tight center clustering
+  // Configure forces
   useEffect(() => {
-    if (fgRef.current) {
-      const chargeForce = fgRef.current.d3Force('charge');
-      if (chargeForce) {
-        // Map 0-100 to -10 to -300
-        const repelStrength = -10 - ((forceConfig?.repel ?? 50) / 100) * 290;
-        chargeForce.strength(repelStrength);
-        // We remove distanceMax so the charge force applies globally, balancing with center gravity.
-      }
-      
-      const linkForce = fgRef.current.d3Force('link');
-      if (linkForce) {
-        // Map 0-100 to 10 to 150
-        const linkDistance = 10 + ((forceConfig?.link ?? 50) / 100) * 140;
-        linkForce.distance(linkDistance);
-      }
-      
-      // Custom center gravity to pull nodes towards the origin
-      fgRef.current.d3Force('centerGravity', (alpha: number) => {
-        // Map 0-100 to 0.0 to 0.3
-        const centerStrength = ((forceConfig?.center ?? 50) / 100) * 0.3;
-        const strength = centerStrength * alpha;
-        const nodes = graphData.nodes as any[];
-        for (let i = 0; i < nodes.length; i++) {
-          const node = nodes[i];
-          node.vx -= (node.x || 0) * strength;
-          node.vy -= (node.y || 0) * strength;
-        }
-      });
-      
-      // Reheat the simulation so changes take effect immediately
-      fgRef.current.d3ReheatSimulation();
+    if (!fgRef.current) return;
+    const chargeForce = fgRef.current.d3Force("charge");
+    if (chargeForce) {
+      chargeForce.strength(-10 - ((forceConfig?.repel ?? 50) / 100) * 290);
     }
+    const linkForce = fgRef.current.d3Force("link");
+    if (linkForce) {
+      linkForce.distance(10 + ((forceConfig?.link ?? 50) / 100) * 140);
+    }
+    fgRef.current.d3Force("centerGravity", (alpha: number) => {
+      const strength = ((forceConfig?.center ?? 50) / 100) * 0.3 * alpha;
+      const nodes = graphData.nodes as any[];
+      for (const node of nodes) {
+        node.vx -= (node.x || 0) * strength;
+        node.vy -= (node.y || 0) * strength;
+      }
+    });
+    fgRef.current.d3ReheatSimulation();
   }, [graphData, forceConfig]);
 
-  // Responsive container observer
+  // ResizeObserver
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
@@ -121,19 +167,18 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
 
   const handleNodeClick = useCallback(
     (node: Node) => {
-      // Smoothly center and zoom to the clicked node
       if (fgRef.current) {
         fgRef.current.centerAt(node.x, node.y, 1000);
         fgRef.current.zoom(4, 2000);
       }
-      if (onSelect) onSelect(node.id);
+      onSelect?.(node.id);
     },
-    [onSelect]
+    [onSelect],
   );
 
   const maxPpr = Math.max(0.0001, ...Object.values(pprScores ?? {}));
 
-  // Render nodes with glowing effect and text labels
+  // ── Asteroid node renderer ──────────────────────────────────────────
   const paintNode = useCallback(
     (node: Node, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const isHovered = node.id === hoverNode;
@@ -142,46 +187,121 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
       const dimOthers = hoverNode !== null && !isFocused;
 
       const ppr = pprScores?.[node.id] ?? 0;
-      const communityIdx = node.community_id != null && node.community_id >= 0 ? node.community_id : hashString(node.id);
+      const communityIdx =
+        node.community_id != null && node.community_id >= 0
+          ? node.community_id
+          : hashString(node.id);
       const color = COMMUNITY_COLORS[communityIdx % COMMUNITY_COLORS.length];
-      
-      // If colorByCommunity is off, use the single brand color (vibrant indigo)
-      const nodeColor = colorByCommunity ? color : KIND_COLOR;
-      
-      const baseRadius = 4 + (node.mentions ?? 0) * 0.5 + (ppr / maxPpr) * 6;
-      const radius = isHovered ? baseRadius * 1.3 : baseRadius;
+      const nodeColor = colorByCommunity ? color : BRAND_COLOR;
 
-      // Opacity handling for "dim others"
-      const opacity = dimOthers ? 0.15 : 1;
-      
-      ctx.globalAlpha = opacity;
-      
-      // Node body (solid crisp circle)
+      const baseRadius = 6 + (node.mentions ?? 0) * 0.6 + (ppr / maxPpr) * 8;
+      const radius = isHovered ? baseRadius * 1.25 : baseRadius;
+      const cx = node.x || 0;
+      const cy = node.y || 0;
+
+      ctx.globalAlpha = dimOthers ? 0.12 : 1;
+
+      const shape = getAsteroidShape(node.id, radius);
+
+      // ── Draw asteroid body ──────────────────────────────────────
       ctx.beginPath();
-      ctx.arc(node.x || 0, node.y || 0, radius, 0, 2 * Math.PI, false);
-      ctx.fillStyle = nodeColor;
-      ctx.fill();
-      
-      // Node labels - only show if large enough, hovered, or a neighbor of hovered
-      const showLabel = isFocused || (globalScale > 1.5 && baseRadius > 5) || (!hoverNode && globalScale > 2);
-      
-      if (showLabel) {
-        const fontSize = isHovered ? 14 / globalScale : 12 / globalScale;
-        ctx.font = `${fontSize}px "Source Serif 4 Variable", Georgia, serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        
-        // Match token colors
-        const isDark = document.documentElement.getAttribute("data-theme") === "dark";
-        ctx.fillStyle = isDark ? `rgba(232, 232, 240, ${opacity})` : `rgba(28, 27, 24, ${opacity})`;
-        
-        // Draw text slightly below the node
-        ctx.fillText(node.name, node.x || 0, (node.y || 0) + radius + (fontSize/2) + 2);
+      for (let i = 0; i < shape.vertices.length; i++) {
+        const v = shape.vertices[i];
+        const x = cx + Math.cos(v.angle) * v.radius;
+        const y = cy + Math.sin(v.angle) * v.radius;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
       }
-      
+      ctx.closePath();
+
+      // Dark charcoal gradient fill
+      const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+      const grad = ctx.createRadialGradient(
+        cx - radius * 0.3, cy - radius * 0.3, 0,
+        cx, cy, radius * 1.2,
+      );
+      if (isDark) {
+        grad.addColorStop(0, "#3a3d44");
+        grad.addColorStop(0.5, "#252830");
+        grad.addColorStop(1, "#16181e");
+      } else {
+        grad.addColorStop(0, "#8a8d94");
+        grad.addColorStop(0.5, "#6a6d74");
+        grad.addColorStop(1, "#4a4d54");
+      }
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // ── Edge highlight (specular reflection) ────────────────────
+      ctx.save();
+      ctx.clip(); // clip to asteroid shape
+      const hlX = cx + Math.cos(shape.highlightAngle) * radius * 0.5;
+      const hlY = cy + Math.sin(shape.highlightAngle) * radius * 0.5;
+      const hlGrad = ctx.createRadialGradient(hlX, hlY, 0, hlX, hlY, radius * 0.7);
+      hlGrad.addColorStop(0, "rgba(255, 255, 255, 0.2)");
+      hlGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
+      ctx.fillStyle = hlGrad;
+      ctx.fill();
+
+      // ── Craters ─────────────────────────────────────────────────
+      for (const crater of shape.craters) {
+        ctx.beginPath();
+        ctx.arc(cx + crater.cx, cy + crater.cy, crater.r, 0, Math.PI * 2);
+        ctx.fillStyle = isDark ? "rgba(0, 0, 0, 0.3)" : "rgba(0, 0, 0, 0.15)";
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // ── Colored glow rim for community identification ───────────
+      ctx.beginPath();
+      for (let i = 0; i < shape.vertices.length; i++) {
+        const v = shape.vertices[i];
+        const x = cx + Math.cos(v.angle) * v.radius;
+        const y = cy + Math.sin(v.angle) * v.radius;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+
+      const glowIntensity = isHovered ? 0.7 : isFocused ? 0.5 : 0.25;
+      ctx.strokeStyle = nodeColor;
+      ctx.lineWidth = isHovered ? 2 / globalScale : 1 / globalScale;
+      ctx.globalAlpha = (dimOthers ? 0.12 : 1) * glowIntensity;
+      ctx.stroke();
+
+      // ── Inner glow for high-importance or hovered nodes ─────────
+      if (isHovered || ppr > maxPpr * 0.5) {
+        ctx.globalAlpha = dimOthers ? 0.05 : isHovered ? 0.3 : 0.15;
+        const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 1.8);
+        glow.addColorStop(0, nodeColor);
+        glow.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // ── Labels ──────────────────────────────────────────────────
+      ctx.globalAlpha = dimOthers ? 0.12 : 1;
+      const showLabel =
+        isFocused ||
+        (globalScale > 1.5 && baseRadius > 5) ||
+        (!hoverNode && globalScale > 2);
+
+      if (showLabel) {
+        const fontSize = isHovered ? 14 / globalScale : 11 / globalScale;
+        ctx.font = `${isHovered ? "600" : "400"} ${fontSize}px "Source Serif 4 Variable", Georgia, serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = isDark
+          ? `rgba(216, 220, 230, ${dimOthers ? 0.12 : 0.9})`
+          : `rgba(28, 27, 24, ${dimOthers ? 0.12 : 0.9})`;
+        ctx.fillText(node.name, cx, cy + radius + fontSize / 2 + 3);
+      }
+
       ctx.globalAlpha = 1;
     },
-    [hoverNode, neighbors, pprScores, colorByCommunity, maxPpr]
+    [hoverNode, neighbors, pprScores, colorByCommunity, maxPpr],
   );
 
   return (
@@ -195,7 +315,7 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
           graphData={graphData}
           nodeCanvasObject={paintNode}
           nodePointerAreaPaint={(node: Node, color, ctx) => {
-            const radius = 4 + (node.mentions ?? 0) * 0.5 + ((pprScores?.[node.id] ?? 0) / maxPpr) * 6;
+            const radius = 6 + (node.mentions ?? 0) * 0.6 + ((pprScores?.[node.id] ?? 0) / maxPpr) * 8;
             ctx.fillStyle = color;
             ctx.beginPath();
             ctx.arc(node.x || 0, node.y || 0, radius * 1.5, 0, 2 * Math.PI, false);
@@ -204,28 +324,25 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
           onNodeClick={handleNodeClick}
           onNodeHover={(node: Node | null) => setHoverNode(node ? node.id : null)}
           linkColor={(link: Link) => {
-            const srcId = typeof link.source === 'object' ? (link.source as Node).id : link.source as string;
-            const tgtId = typeof link.target === 'object' ? (link.target as Node).id : link.target as string;
+            const srcId = typeof link.source === "object" ? (link.source as Node).id : (link.source as string);
+            const tgtId = typeof link.target === "object" ? (link.target as Node).id : (link.target as string);
             const dimOthers = hoverNode && srcId !== hoverNode && tgtId !== hoverNode;
             const isDark = document.documentElement.getAttribute("data-theme") === "dark";
-            
-            if (dimOthers) return isDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)';
-            
+
+            if (dimOthers) return isDark ? "rgba(255,255,255,0.015)" : "rgba(0,0,0,0.02)";
+
             const isFocused = hoverNode && (srcId === hoverNode || tgtId === hoverNode);
-            const baseAlpha = isDark ? 0.2 : 0.15; 
-            const focusAlpha = isDark ? 0.6 : 0.4;
-            
-            return isDark 
-              ? `rgba(255, 255, 255, ${isFocused ? focusAlpha : baseAlpha})`
-              : `rgba(0, 0, 0, ${isFocused ? focusAlpha : baseAlpha})`;
+            return isDark
+              ? `rgba(94, 234, 212, ${isFocused ? 0.4 : 0.08})`
+              : `rgba(31, 111, 107, ${isFocused ? 0.35 : 0.1})`;
           }}
           linkWidth={(link: Link) => {
-            const srcId = typeof link.source === 'object' ? (link.source as Node).id : link.source as string;
-            const tgtId = typeof link.target === 'object' ? (link.target as Node).id : link.target as string;
+            const srcId = typeof link.source === "object" ? (link.source as Node).id : (link.source as string);
+            const tgtId = typeof link.target === "object" ? (link.target as Node).id : (link.target as string);
             const isFocused = hoverNode && (srcId === hoverNode || tgtId === hoverNode);
-            // Crisp thin lines
-            return isFocused ? 1.5 : 0.5;
+            return isFocused ? 1.5 : 0.4;
           }}
+          backgroundColor="transparent"
         />
       )}
     </div>

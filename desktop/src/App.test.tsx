@@ -69,6 +69,9 @@ vi.mock("./api/client", async () => {
     ),
     startEmbedRebuild: vi.fn(() => stubResponse({ started: true })),
     abortEmbedRebuild: vi.fn(() => stubResponse({ aborted: true })),
+    getHealth: vi.fn(() =>
+      stubResponse({ version: "0.8.2", git_hash: "test", status: "ok" }),
+    ),
   };
   return { client, ApiError };
 });
