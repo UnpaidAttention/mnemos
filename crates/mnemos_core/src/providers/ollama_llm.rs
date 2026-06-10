@@ -62,6 +62,12 @@ impl LlmProvider for OllamaLlm {
             "model": self.cfg.model,
             "messages": messages,
             "stream": false,
+            // Keep the model loaded indefinitely. Mnemos is a background
+            // service that must respond to sessions at any time — the
+            // default 5-minute timeout would unload the model between
+            // sessions, causing cold-start delays and unnecessary CPU
+            // churn from repeated model loads.
+            "keep_alive": -1,
         });
         if req.json {
             body["format"] = serde_json::json!("json");

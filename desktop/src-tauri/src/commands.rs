@@ -510,10 +510,21 @@ pub async fn apply_llm_config(
 ) -> Result<(), String> {
     let cfg_path = config_io::config_path()?;
 
-    // Before switching, unload ALL loaded Ollama models to free CPU/RAM.
-    // This catches the configured model, plus any stale models from
-    // external tools (e.g. Claude Code) or previous sessions.
-    unload_all_ollama_models().await;
+    // Before switching, unload only the *previous* Ollama LLM model to free
+    // CPU/RAM. Don't touch other loaded models — the daemon or other tools
+    // (e.g. Claude Code) may be using them.
+    let prev = read_model_config().ok();
+    if let Some(ref prev) = prev {
+        if prev.llm_kind == "ollama" && prev.llm_model != model {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .ok();
+            if let Some(c) = client {
+                unload_ollama_model(&c, &prev.llm_model).await;
+            }
+        }
+    }
 
     // Determine the URL based on kind.
     let url = match kind.as_str() {
@@ -544,8 +555,19 @@ pub async fn apply_embedder_config(
 ) -> Result<(), String> {
     let cfg_path = config_io::config_path()?;
 
-    // Before switching, unload ALL loaded Ollama models.
-    unload_all_ollama_models().await;
+    // Before switching, unload only the *previous* Ollama embedder model.
+    let prev = read_model_config().ok();
+    if let Some(ref prev) = prev {
+        if prev.embedder_kind == "ollama" && prev.embedder_model != model {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .ok();
+            if let Some(c) = client {
+                unload_ollama_model(&c, &prev.embedder_model).await;
+            }
+        }
+    }
 
     let url = match kind.as_str() {
         "ollama" => "http://localhost:11434".to_string(),
