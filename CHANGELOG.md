@@ -2,6 +2,71 @@
 
 All notable changes to this project are recorded here.
 
+## [0.9.0] - 2026-06-10
+
+> **Desktop redesign + pipeline intelligence.** The desktop app gets a
+> military-inspired dark dashboard UI, a curated LLM model catalog with
+> hardware-tier recommendations, and real-time pipeline progress tracking.
+> The memory pipeline gains smarter duplicate detection, entity taxonomy
+> constraints, and safer UTF-8 handling. GitHub repo now follows best
+> practices with issue templates, dependabot, and CI concurrency.
+
+### Added
+- **Military-dashboard UI redesign.** Complete visual overhaul of the
+  desktop app with a dark, data-dense aesthetic.
+- **Curated LLM model catalog.** Hardware-tier–aware model picker with
+  recommendations for low/mid/high-end machines.
+- **Real-time pipeline backfill progress.** Live progress bar in the
+  Pipelines view showing active backfill status, memories processed,
+  and ETA.
+- **Enhanced audit logging.** Detailed audit entries with structured
+  action descriptions and expanded Audit view.
+- **Knowledge page pagination.** Fetches up to 500 memories, displays
+  in batches of 50 with "Load more" and count indicators.
+- **Graph zoom toggle.** Click a node to zoom in; click again to zoom
+  back out and clear the inspector panel.
+- **GitHub issue templates** (bug report + feature request forms).
+- **PR template** with pre-merge checklist.
+- **Dependabot** for Cargo, npm, and GitHub Actions dependency updates.
+
+### Changed
+- **Resolve pipeline** now includes truncated memory body previews
+  (200 chars) in the LLM context, dramatically improving duplicate
+  and contradiction detection.
+- **Entity extraction** constrained to a fixed 7-kind taxonomy
+  (person, project, organization, tool, concept, place, event) to
+  eliminate inconsistent entity types.
+- **Lint pipeline** capped at 50 memories per batch to prevent LLM
+  context window overflow on large knowledge bases.
+- **Fact processing** extracted into a shared `process_facts()` helper,
+  ensuring session-end and incremental pipelines stay consistent.
+- **CI workflows** now use concurrency groups (cancel superseded runs)
+  and least-privilege permissions.
+- `Cargo.lock` is now tracked in version control for reproducible
+  binary builds.
+- Expanded `CONTRIBUTING.md` with build/packaging links, frontend test
+  instructions, and code style guidance.
+
+### Fixed
+- **UTF-8 truncation safety.** Replaced `floor_char_boundary` (requires
+  Rust 1.91) with a MSRV-compatible `truncate_chars()` helper using
+  `.chars().take(n)`. Prevents panics on multi-byte characters (emoji,
+  CJK, accented text).
+- **Ollama lifecycle management.** Auto-unload previous model when
+  switching LLM/embedder; session-aware 30-min `keep_alive` timeout;
+  daemon is always-on with models loaded on demand.
+- **Pipeline session tracking.** Failed pipeline sessions now correctly
+  marked as processed, preventing infinite retry loops.
+- **Systemd service tests.** Updated assertions to match actual binary
+  name (`mnemosd` vs old `mnemos-daemon`).
+- **Graph zoom-out** now properly clears selection state and inspector
+  breadcrumbs.
+
+### Removed
+- Stale feature branches (`feat/autonomy-layer`, `feat/ai-tool-connect-wizard`,
+  `feat/correction-learning`, `feat/storage-location-picker`) — all were
+  fully merged and have been deleted from the remote.
+
 ## [0.8.1] - 2026-06-09
 
 > **Contextual recall + CI stabilization.** Mnemos now proactively
