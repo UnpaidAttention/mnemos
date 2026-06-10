@@ -44,6 +44,12 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // 1. Clean up any stale Ollama models from previous sessions.
+                //    This catches models left loaded by external tools (Claude
+                //    Code, direct ollama run, etc.) or from a previous crash.
+                crate::commands::unload_all_ollama_models().await;
+
+                // 2. Start the daemon if it's not already running.
                 let st = crate::daemon::status(&handle).await;
                 if !st.running {
                     let _ = crate::daemon::start(&handle).await;
@@ -51,6 +57,17 @@ fn main() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running mnemos desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building mnemos desktop")
+        .run(|app_handle, event| {
+            // On window close or app exit, unload all Ollama models to free
+            // CPU/RAM so they don't linger after Mnemos is closed.
+            if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
+                let handle = app_handle.clone();
+                tauri::async_runtime::block_on(async move {
+                    crate::commands::unload_all_ollama_models().await;
+                    let _ = crate::daemon::stop(&handle).await;
+                });
+            }
+        });
 }

@@ -437,20 +437,12 @@ pub async fn pull_model(app: AppHandle, model: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Tell Ollama to unload a model (set keep_alive=0), freeing CPU/RAM.
+/// Tell Ollama to unload a specific model (set keep_alive=0), freeing CPU/RAM.
 /// Silently ignores errors (model may not be loaded, Ollama may be down, etc.).
-async fn unload_ollama_model(model_name: &str) {
+async fn unload_ollama_model(client: &reqwest::Client, model_name: &str) {
     if model_name.is_empty() {
         return;
     }
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    // Unload the model by setting keep_alive to 0
     let _ = client
         .post("http://localhost:11434/api/generate")
         .json(&serde_json::json!({
@@ -459,7 +451,54 @@ async fn unload_ollama_model(model_name: &str) {
         }))
         .send()
         .await;
-    tracing::info!(model = model_name, "unloaded previous Ollama model");
+    eprintln!("[mnemos] unloaded Ollama model: {model_name}");
+}
+
+/// Query Ollama for ALL currently loaded models and unload every one of them.
+/// This ensures no stale models eat CPU/RAM. Safe to call at any time — if
+/// Ollama is not running or has no models loaded, this is a no-op.
+pub async fn unload_all_ollama_models() {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Query Ollama for currently loaded models
+    let resp = match client
+        .get("http://localhost:11434/api/ps")
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return, // Ollama not running or unreachable
+    };
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    // Extract model names from the response
+    let models = body
+        .get("models")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if models.is_empty() {
+        return;
+    }
+
+    eprintln!("[mnemos] unloading {} Ollama model(s)", models.len());
+
+    for model in &models {
+        if let Some(name) = model.get("name").and_then(|n| n.as_str()) {
+            unload_ollama_model(&client, name).await;
+        }
+    }
 }
 
 /// Write [llm] config and restart the daemon to apply.
@@ -471,13 +510,10 @@ pub async fn apply_llm_config(
 ) -> Result<(), String> {
     let cfg_path = config_io::config_path()?;
 
-    // Before switching, unload the *previous* Ollama model to free CPU/RAM.
-    let prev = read_model_config().ok();
-    if let Some(ref prev) = prev {
-        if prev.llm_kind == "ollama" && prev.llm_model != model {
-            unload_ollama_model(&prev.llm_model).await;
-        }
-    }
+    // Before switching, unload ALL loaded Ollama models to free CPU/RAM.
+    // This catches the configured model, plus any stale models from
+    // external tools (e.g. Claude Code) or previous sessions.
+    unload_all_ollama_models().await;
 
     // Determine the URL based on kind.
     let url = match kind.as_str() {
@@ -508,13 +544,8 @@ pub async fn apply_embedder_config(
 ) -> Result<(), String> {
     let cfg_path = config_io::config_path()?;
 
-    // Before switching, unload the *previous* Ollama embedder model.
-    let prev = read_model_config().ok();
-    if let Some(ref prev) = prev {
-        if prev.embedder_kind == "ollama" && prev.embedder_model != model {
-            unload_ollama_model(&prev.embedder_model).await;
-        }
-    }
+    // Before switching, unload ALL loaded Ollama models.
+    unload_all_ollama_models().await;
 
     let url = match kind.as_str() {
         "ollama" => "http://localhost:11434".to_string(),
