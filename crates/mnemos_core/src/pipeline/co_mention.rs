@@ -78,18 +78,29 @@ mod tests {
         let v = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
 
         // Create 3 entities
-        let e1 = upsert_entity(v.storage(), "Rust", "tool", None).await.unwrap();
-        let e2 = upsert_entity(v.storage(), "Mnemos", "project", None).await.unwrap();
-        let e3 = upsert_entity(v.storage(), "libsql", "tool", None).await.unwrap();
+        let e1 = upsert_entity(v.storage(), "Rust", "tool", None)
+            .await
+            .unwrap();
+        let e2 = upsert_entity(v.storage(), "Mnemos", "project", None)
+            .await
+            .unwrap();
+        let e3 = upsert_entity(v.storage(), "libsql", "tool", None)
+            .await
+            .unwrap();
 
         // Create a memory and link all 3 entities to it
-        let mem = v.remember("Mnemos uses Rust and libsql", RememberOpts::default()).await.unwrap();
+        let mem = v
+            .remember("Mnemos uses Rust and libsql", RememberOpts::default())
+            .await
+            .unwrap();
         link_entity_mention(v.storage(), &mem, &e1).await.unwrap();
         link_entity_mention(v.storage(), &mem, &e2).await.unwrap();
         link_entity_mention(v.storage(), &mem, &e3).await.unwrap();
 
         // Run co-mention
-        let count = create_co_mention_edges(v.storage(), &mem, Utc::now()).await.unwrap();
+        let count = create_co_mention_edges(v.storage(), &mem, Utc::now())
+            .await
+            .unwrap();
 
         // 3 entities → 3 pairs: (e1,e2), (e1,e3), (e2,e3)
         assert_eq!(count, 3);
@@ -112,11 +123,18 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let v = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
 
-        let e1 = upsert_entity(v.storage(), "Solo", "tool", None).await.unwrap();
-        let mem = v.remember("Only one entity here", RememberOpts::default()).await.unwrap();
+        let e1 = upsert_entity(v.storage(), "Solo", "tool", None)
+            .await
+            .unwrap();
+        let mem = v
+            .remember("Only one entity here", RememberOpts::default())
+            .await
+            .unwrap();
         link_entity_mention(v.storage(), &mem, &e1).await.unwrap();
 
-        let count = create_co_mention_edges(v.storage(), &mem, Utc::now()).await.unwrap();
+        let count = create_co_mention_edges(v.storage(), &mem, Utc::now())
+            .await
+            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -127,13 +145,20 @@ mod tests {
 
         let e1 = upsert_entity(v.storage(), "A", "x", None).await.unwrap();
         let e2 = upsert_entity(v.storage(), "B", "x", None).await.unwrap();
-        let mem = v.remember("both A and B", RememberOpts::default()).await.unwrap();
+        let mem = v
+            .remember("both A and B", RememberOpts::default())
+            .await
+            .unwrap();
         link_entity_mention(v.storage(), &mem, &e1).await.unwrap();
         link_entity_mention(v.storage(), &mem, &e2).await.unwrap();
 
         // Run twice
-        create_co_mention_edges(v.storage(), &mem, Utc::now()).await.unwrap();
-        create_co_mention_edges(v.storage(), &mem, Utc::now()).await.unwrap();
+        create_co_mention_edges(v.storage(), &mem, Utc::now())
+            .await
+            .unwrap();
+        create_co_mention_edges(v.storage(), &mem, Utc::now())
+            .await
+            .unwrap();
 
         // Should still be 1 edge (upsert reinforces, doesn't duplicate)
         let conn = v.storage().conn().unwrap();

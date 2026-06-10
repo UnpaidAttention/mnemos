@@ -149,7 +149,15 @@ async fn get_entity(
         let tier: String = r.get::<String>(3).map_err(MnemosError::from)?;
         let mem_created_at: String = r.get::<String>(4).map_err(MnemosError::from)?;
         let preview = if body.len() > 300 {
-            format!("{}…", &body[..body.char_indices().take_while(|(i, _)| *i <= 297).last().map(|(i,_)| i).unwrap_or(0)])
+            format!(
+                "{}…",
+                &body[..body
+                    .char_indices()
+                    .take_while(|(i, _)| *i <= 297)
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0)]
+            )
         } else {
             body
         };

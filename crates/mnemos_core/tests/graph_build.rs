@@ -14,8 +14,12 @@ async fn load_builds_graph_from_edges_and_mentions() {
         .remember("graph seed", RememberOpts::default())
         .await
         .unwrap();
-    let a = upsert_entity(v.storage(), "Rust", "tool", None).await.unwrap();
-    let b = upsert_entity(v.storage(), "Tauri", "tool", None).await.unwrap();
+    let a = upsert_entity(v.storage(), "Rust", "tool", None)
+        .await
+        .unwrap();
+    let b = upsert_entity(v.storage(), "Tauri", "tool", None)
+        .await
+        .unwrap();
     upsert_edge(v.storage(), &a, &b, "uses", &mem, Utc::now())
         .await
         .unwrap();

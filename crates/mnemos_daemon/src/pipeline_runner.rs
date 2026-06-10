@@ -284,7 +284,9 @@ async fn run_pipeline(
                 if let Err(e) = link_entities(state.vault.storage(), &mid, &mem.body, llm).await {
                     tracing::warn!(memory_id = %mid, error = %e, "entity linking failed");
                 }
-                if let Err(e) = create_co_mention_edges(state.vault.storage(), &mid, mem.valid_at).await {
+                if let Err(e) =
+                    create_co_mention_edges(state.vault.storage(), &mid, mem.valid_at).await
+                {
                     tracing::warn!(memory_id = %mid, error = %e, "co-mention edge creation failed");
                 }
                 if let Err(e) =
@@ -484,7 +486,9 @@ async fn run_incremental(
                 if let Err(e) = link_entities(state.vault.storage(), &mid, &mem.body, llm).await {
                     tracing::warn!(memory_id = %mid, error = %e, "entity linking failed");
                 }
-                if let Err(e) = create_co_mention_edges(state.vault.storage(), &mid, mem.valid_at).await {
+                if let Err(e) =
+                    create_co_mention_edges(state.vault.storage(), &mid, mem.valid_at).await
+                {
                     tracing::warn!(memory_id = %mid, error = %e, "co-mention edge creation failed");
                 }
                 if let Err(e) =

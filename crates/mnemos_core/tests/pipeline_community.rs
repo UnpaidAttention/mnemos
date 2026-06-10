@@ -18,7 +18,9 @@ async fn detects_and_summarizes_communities() {
     let a = upsert_entity(v.storage(), "Alpha", "concept", None)
         .await
         .unwrap();
-    let b = upsert_entity(v.storage(), "Beta", "concept", None).await.unwrap();
+    let b = upsert_entity(v.storage(), "Beta", "concept", None)
+        .await
+        .unwrap();
     let c = upsert_entity(v.storage(), "Gamma", "concept", None)
         .await
         .unwrap();

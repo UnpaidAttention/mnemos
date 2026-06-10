@@ -17,8 +17,12 @@ async fn vault() -> Vault {
 #[tokio::test]
 async fn upsert_entity_is_idempotent_by_name() {
     let v = vault().await;
-    let a = upsert_entity(v.storage(), "Rust", "tool", None).await.unwrap();
-    let b = upsert_entity(v.storage(), "Rust", "tool", None).await.unwrap();
+    let a = upsert_entity(v.storage(), "Rust", "tool", None)
+        .await
+        .unwrap();
+    let b = upsert_entity(v.storage(), "Rust", "tool", None)
+        .await
+        .unwrap();
     assert_eq!(a, b);
     let found = find_entity_by_name(v.storage(), "Rust").await.unwrap();
     assert_eq!(found.unwrap().id, a);
@@ -27,7 +31,9 @@ async fn upsert_entity_is_idempotent_by_name() {
 #[tokio::test]
 async fn link_mention_is_idempotent() {
     let v = vault().await;
-    let e = upsert_entity(v.storage(), "Shaun", "person", None).await.unwrap();
+    let e = upsert_entity(v.storage(), "Shaun", "person", None)
+        .await
+        .unwrap();
 
     // Insert a real memory so the FK on entity_mentions.memory_id is satisfied.
     let mem_id = "mem_1".to_string();
@@ -59,8 +65,12 @@ async fn link_mention_is_idempotent() {
 #[tokio::test]
 async fn upsert_edge_merges_and_bumps_weight() {
     let v = vault().await;
-    let s = upsert_entity(v.storage(), "Shaun", "person", None).await.unwrap();
-    let t = upsert_entity(v.storage(), "Rust", "tool", None).await.unwrap();
+    let s = upsert_entity(v.storage(), "Shaun", "person", None)
+        .await
+        .unwrap();
+    let t = upsert_entity(v.storage(), "Rust", "tool", None)
+        .await
+        .unwrap();
     let e1 = upsert_edge(v.storage(), &s, &t, "uses", "mem_1", Utc::now())
         .await
         .unwrap();

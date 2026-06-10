@@ -143,10 +143,10 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
     }
     fgRef.current.d3Force("centerGravity", (alpha: number) => {
       const strength = ((forceConfig?.center ?? 50) / 100) * 0.3 * alpha;
-      const nodes = graphData.nodes as any[];
+      const nodes = graphData.nodes as Array<{ x?: number; y?: number; vx?: number; vy?: number }>;
       for (const node of nodes) {
-        node.vx -= (node.x || 0) * strength;
-        node.vy -= (node.y || 0) * strength;
+        node.vx = (node.vx ?? 0) - (node.x || 0) * strength;
+        node.vy = (node.vy ?? 0) - (node.y || 0) * strength;
       }
     });
     fgRef.current.d3ReheatSimulation();

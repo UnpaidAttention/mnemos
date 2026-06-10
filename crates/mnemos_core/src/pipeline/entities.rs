@@ -13,7 +13,6 @@ sentences) explaining what it is and its role in the context. Respond ONLY \
 with JSON \
 {\"entities\":[{\"name\":\"...\",\"kind\":\"...\",\"description\":\"...\"}]}.";
 
-
 #[derive(Deserialize)]
 struct LinkOut {
     #[serde(default)]

@@ -249,7 +249,11 @@ async fn run_backfill(State(state): State<AppState>) -> Result<Json<Value>, ApiE
 /// Memories table is preserved. Use before a full re-backfill.
 async fn run_wipe_graph(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     use mnemos_core::error::MnemosError;
-    let (conn, _guard) = state.vault.storage().write_conn().await.map_err(MnemosError::from)?;
+    let (conn, _guard) = state
+        .vault
+        .storage()
+        .write_conn()
+        .await?;
 
     let del_communities: u64 = conn
         .execute("DELETE FROM entity_communities", ())
@@ -291,7 +295,11 @@ async fn run_wipe_graph(State(state): State<AppState>) -> Result<Json<Value>, Ap
 /// - Orphaned entities (no edges AND no mentions)
 async fn run_cleanup_graph(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     use mnemos_core::error::MnemosError;
-    let (conn, _guard) = state.vault.storage().write_conn().await.map_err(MnemosError::from)?;
+    let (conn, _guard) = state
+        .vault
+        .storage()
+        .write_conn()
+        .await?;
 
     // 1. Delete single-char entities and their edges/mentions
     let del_single_char_edges: u64 = conn
@@ -408,7 +416,7 @@ async fn run_bulk_ingest(
         .map_err(|e| ApiError::internal(format!("next_entry: {e}")))?
     {
         let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "md") && path.is_file() {
+        if path.extension().is_some_and(|ext| ext == "md") && path.is_file() {
             md_files.push(path);
         }
     }
@@ -537,18 +545,19 @@ async fn run_bulk_ingest(
 
         // Step 2: Resolve each fact against existing memories (ADD/UPDATE/DELETE/NOOP)
         for fact in &facts {
-            let (op, new_id) = match resolve_and_apply(&state.vault, fact, prov.clone(), llm.as_ref()).await {
-                Ok(result) => result,
-                Err(e) => {
-                    tracing::warn!(
-                        file = %filename,
-                        error = %e,
-                        "bulk-ingest: resolve_and_apply failed for a fact; skipping"
-                    );
-                    errors += 1;
-                    continue;
-                }
-            };
+            let (op, new_id) =
+                match resolve_and_apply(&state.vault, fact, prov.clone(), llm.as_ref()).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(
+                            file = %filename,
+                            error = %e,
+                            "bulk-ingest: resolve_and_apply failed for a fact; skipping"
+                        );
+                        errors += 1;
+                        continue;
+                    }
+                };
 
             if let Some(mid) = new_id {
                 if matches!(op, ResolveOp::Add | ResolveOp::Update { .. }) {
@@ -557,7 +566,8 @@ async fn run_bulk_ingest(
 
                 // Step 3: Entity linking + graph update on the new memory
                 if let Ok(mem) = state.vault.get(&mid).await {
-                    match link_entities(state.vault.storage(), &mid, &mem.body, llm.as_ref()).await {
+                    match link_entities(state.vault.storage(), &mid, &mem.body, llm.as_ref()).await
+                    {
                         Ok(ids) => entities_linked += ids.len(),
                         Err(e) => {
                             tracing::warn!(memory_id = %mid, error = %e, "bulk-ingest: entity linking failed");
@@ -571,7 +581,15 @@ async fn run_bulk_ingest(
                         }
                     }
 
-                    match update_graph(state.vault.storage(), &mid, &mem.body, mem.valid_at, llm.as_ref()).await {
+                    match update_graph(
+                        state.vault.storage(),
+                        &mid,
+                        &mem.body,
+                        mem.valid_at,
+                        llm.as_ref(),
+                    )
+                    .await
+                    {
                         Ok(ids) => edges_created += ids.len(),
                         Err(e) => {
                             tracing::warn!(memory_id = %mid, error = %e, "bulk-ingest: graph update failed");
@@ -606,4 +624,3 @@ async fn run_bulk_ingest(
         "errors": errors,
     })))
 }
-
