@@ -25,7 +25,10 @@ export type DaemonEvent =
       total: number;
       swapped: boolean;
     }
-  | { type: "embed_rebuild_failed"; error: string; processed: number };
+  | { type: "embed_rebuild_failed"; error: string; processed: number }
+  | { type: "backfill_started"; total: number }
+  | { type: "backfill_progress"; processed: number; total: number; entities_linked: number; errors: number }
+  | { type: "backfill_completed"; total: number; entities_linked: number; edges_created: number; errors: number };
 
 type Status = "connecting" | "open" | "closed";
 

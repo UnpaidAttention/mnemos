@@ -80,6 +80,21 @@ pub enum Event {
         error: String,
         processed: usize,
     },
+    BackfillStarted {
+        total: usize,
+    },
+    BackfillProgress {
+        processed: usize,
+        total: usize,
+        entities_linked: usize,
+        errors: usize,
+    },
+    BackfillCompleted {
+        total: usize,
+        entities_linked: usize,
+        edges_created: usize,
+        errors: usize,
+    },
 }
 
 /// Cloneable handle to the broadcast channel that backs all WebSocket subscriptions.

@@ -18,6 +18,9 @@ const INVALIDATE: Record<string, string[][]> = {
   embed_rebuild_progress: [["embed-rebuild", "status"]],
   embed_rebuild_completed: [["embed-rebuild", "status"], ["doctor"], ["memories"]],
   embed_rebuild_failed: [["embed-rebuild", "status"]],
+  backfill_started: [["pipelines"]],
+  backfill_progress: [["pipelines"]],
+  backfill_completed: [["pipelines"], ["graph"], ["entities"], ["reflections"]],
   session_started: [], session_ended: [],
 };
 

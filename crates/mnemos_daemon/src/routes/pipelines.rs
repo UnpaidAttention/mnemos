@@ -109,6 +109,9 @@ async fn run_backfill(State(state): State<AppState>) -> Result<Json<Value>, ApiE
 
     let total = memories.len();
     tracing::info!(total, "backfill: starting entity extraction + graph update");
+    state
+        .events
+        .publish(crate::events::Event::BackfillStarted { total });
 
     let mut entities_linked = 0usize;
     let mut edges_created = 0usize;
@@ -167,6 +170,16 @@ async fn run_backfill(State(state): State<AppState>) -> Result<Json<Value>, ApiE
                 errors += 1;
             }
         }
+
+        // Emit progress event every memory so the UI can update its progress bar.
+        state
+            .events
+            .publish(crate::events::Event::BackfillProgress {
+                processed: i + 1,
+                total,
+                entities_linked,
+                errors,
+            });
     }
 
     // 3. Bump salience by the number of memories processed and trigger
@@ -235,6 +248,15 @@ async fn run_backfill(State(state): State<AppState>) -> Result<Json<Value>, ApiE
         errors,
         "backfill: complete"
     );
+
+    state
+        .events
+        .publish(crate::events::Event::BackfillCompleted {
+            total,
+            entities_linked,
+            edges_created,
+            errors,
+        });
 
     Ok(Json(json!({
         "memories_processed": total,
