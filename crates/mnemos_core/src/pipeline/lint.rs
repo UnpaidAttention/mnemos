@@ -91,6 +91,13 @@ pub async fn run_lint(storage: &Storage, llm: &dyn LlmProvider) -> Result<LintRe
         });
     }
 
+    // Cap the number of memories to prevent context window overflow.
+    // With many memories, the full corpus would exceed LLM limits.
+    const MAX_LINT_MEMORIES: usize = 50;
+    if memories_list.len() > MAX_LINT_MEMORIES {
+        memories_list.truncate(MAX_LINT_MEMORIES);
+    }
+
     // 3. Prompt the LLM for contradictions and gaps
     let memories_input = memories_list.join("\n");
     let req = CompletionRequest::new(LINT_SYSTEM, memories_input);

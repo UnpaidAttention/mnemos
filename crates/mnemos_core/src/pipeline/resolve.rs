@@ -1,5 +1,5 @@
 use crate::error::{MnemosError, Result};
-use crate::pipeline::{extract_json, CandidateFact, ResolveOp};
+use crate::pipeline::{extract_json, truncate_chars, CandidateFact, ResolveOp};
 use crate::providers::{CompletionRequest, LlmProvider};
 use crate::retrieval::hybrid::hybrid_recall;
 use crate::retrieval::RecallOpts;
@@ -79,7 +79,17 @@ async fn decide(
     .await?;
     let existing = hits
         .iter()
-        .map(|h| format!("- id={} title={}", h.memory.id, h.memory.title))
+        .map(|h| {
+            let body_preview = if h.memory.body.len() > 200 {
+                truncate_chars(&h.memory.body, 200)
+            } else {
+                h.memory.body.clone()
+            };
+            format!(
+                "- id={} title={}\n  body={}",
+                h.memory.id, h.memory.title, body_preview
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let user = format!(

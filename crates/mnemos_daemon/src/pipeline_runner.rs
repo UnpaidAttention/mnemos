@@ -293,11 +293,22 @@ async fn run_pipeline(
         session: Some(session_id.to_string()),
         chunks: chunk_ids,
     };
+    let added = process_facts(state, &facts, prov, llm).await;
+    mark_processed(state, session_id).await?;
+    Ok(added)
+}
+
+/// Resolve, entity-link, co-mention, and graph-update each candidate fact.
+/// Returns the count of facts added or updated. Individual failures are
+/// logged and skipped so one bad fact never blocks the rest.
+async fn process_facts(
+    state: &AppState,
+    facts: &[mnemos_core::pipeline::CandidateFact],
+    prov: Provenance,
+    llm: &dyn LlmProvider,
+) -> usize {
     let mut added = 0usize;
-    for fact in &facts {
-        // A single fact's failure (transient LLM/parse error) must not discard
-        // the remaining facts or leave the session unprocessed. Log and continue,
-        // mirroring the entity/graph stages below.
+    for fact in facts {
         let (op, new_id) = match resolve_and_apply(&state.vault, fact, prov.clone(), llm).await {
             Ok(result) => result,
             Err(e) => {
@@ -331,8 +342,7 @@ async fn run_pipeline(
             }
         }
     }
-    mark_processed(state, session_id).await?;
-    Ok(added)
+    added
 }
 
 async fn is_processed(state: &AppState, session_id: &str) -> anyhow::Result<bool> {
@@ -498,41 +508,7 @@ async fn run_incremental(
         session: Some(session_id.to_string()),
         chunks: new_chunk_ids,
     };
-    let mut added = 0usize;
-    for fact in &facts {
-        let (op, new_id) = match resolve_and_apply(&state.vault, fact, prov.clone(), llm).await {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::warn!(error = %e, "resolve_and_apply failed for a fact; skipping");
-                continue;
-            }
-        };
-        if let Some(mid) = new_id {
-            if matches!(op, ResolveOp::Add | ResolveOp::Update { .. }) {
-                added += 1;
-            }
-            if let Ok(mem) = state.vault.get(&mid).await {
-                state.events.publish(Event::MemoryCreated {
-                    id: mid.clone(),
-                    title: mem.title.clone(),
-                    tier: mem.tier.as_str().to_string(),
-                });
-                if let Err(e) = link_entities(state.vault.storage(), &mid, &mem.body, llm).await {
-                    tracing::warn!(memory_id = %mid, error = %e, "entity linking failed");
-                }
-                if let Err(e) =
-                    create_co_mention_edges(state.vault.storage(), &mid, mem.valid_at).await
-                {
-                    tracing::warn!(memory_id = %mid, error = %e, "co-mention edge creation failed");
-                }
-                if let Err(e) =
-                    update_graph(state.vault.storage(), &mid, &mem.body, mem.valid_at, llm).await
-                {
-                    tracing::warn!(memory_id = %mid, error = %e, "graph update failed");
-                }
-            }
-        }
-    }
+    let added = process_facts(state, &facts, prov, llm).await;
 
     // Update the watermark.
     update_watermark(state, session_id, max_ordinal as i64).await?;

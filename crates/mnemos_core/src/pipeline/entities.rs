@@ -9,8 +9,10 @@ use serde::Deserialize;
 pub const LINK_SYSTEM: &str = "TASK=link\n\
 List the named entities (people, projects, organizations, tools, concepts) \
 mentioned in the text. For each entity, provide a brief description (1-2 \
-sentences) explaining what it is and its role in the context. Respond ONLY \
-with JSON \
+sentences) explaining what it is and its role in the context. \
+The `kind` field MUST be exactly one of: person, project, organization, tool, \
+concept, place, event. If unsure, use \"concept\". \
+Respond ONLY with JSON \
 {\"entities\":[{\"name\":\"...\",\"kind\":\"...\",\"description\":\"...\"}]}.";
 
 #[derive(Deserialize)]

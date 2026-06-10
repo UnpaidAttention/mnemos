@@ -128,6 +128,7 @@ export function Knowledge() {
   const [hardened, setHardened] = useState<Memory[] | null>(null);
   const [search, setSearch] = useState("");
   const [selectedSourceTool, setSelectedSourceTool] = useState<string>("all");
+  const [displayLimit, setDisplayLimit] = useState(50);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
 
@@ -143,7 +144,7 @@ export function Knowledge() {
     const run = async () => {
       try {
         const [mems, cors, hard] = await Promise.all([
-          client.listMemories({ limit: 100 }),
+          client.listMemories({ limit: 500 }),
           client.listCorrections({ hardened: false }),
           client.listCorrections({ hardened: true }),
         ]);
@@ -291,9 +292,22 @@ export function Knowledge() {
         </Card>
       ) : (
         <Card className="p-4">
-          {filtered?.map((m) => (
+          {filtered?.slice(0, displayLimit).map((m) => (
             <MemoryRow key={m.id} memory={m} onDelete={(id) => void handleDelete(id)} />
           ))}
+          {filtered && filtered.length > displayLimit && (
+            <button
+              onClick={() => setDisplayLimit((l) => l + 50)}
+              className="w-full py-2 mt-2 text-sm text-accent hover:text-text transition-colors rounded-md bg-surface-raised/40"
+            >
+              Load more ({filtered.length - displayLimit} remaining)
+            </button>
+          )}
+          {filtered && filtered.length > 0 && (
+            <p className="text-xs text-text-muted mt-2 text-right mono">
+              Showing {Math.min(displayLimit, filtered.length)} of {filtered.length}
+            </p>
+          )}
         </Card>
       )}
     </div>

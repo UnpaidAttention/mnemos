@@ -3,7 +3,7 @@
 
 use crate::correction::Correction;
 use crate::error::{MnemosError, Result};
-use crate::pipeline::extract_json;
+use crate::pipeline::{extract_json, truncate_chars};
 use crate::providers::{CompletionRequest, LlmProvider};
 use crate::storage::memory_ops::{list_by_kind, mark_reflected, recent_unreflected};
 use crate::types::MemoryType;
@@ -59,7 +59,7 @@ pub async fn reflect(
             .iter()
             .map(|m| {
                 let body = if m.body.len() > MAX_BODY_CHARS {
-                    format!("{}…", &m.body[..MAX_BODY_CHARS])
+                    truncate_chars(&m.body, MAX_BODY_CHARS)
                 } else {
                     m.body.clone()
                 };

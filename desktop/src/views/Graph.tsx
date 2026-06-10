@@ -75,7 +75,12 @@ export function Graph() {
   );
 
   const handleSelect = useCallback(
-    (id: string) => {
+    (id: string | null) => {
+      if (id === null) {
+        setSelectedNode(null);
+        setBreadcrumbs([]);
+        return;
+      }
       setSelectedNode(id);
       setBreadcrumbs([{ id, name: getEntityName(id) }]);
     },

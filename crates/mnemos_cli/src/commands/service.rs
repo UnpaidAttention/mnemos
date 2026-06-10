@@ -148,8 +148,8 @@ mod tests {
     fn unit_contents_contains_exec_start() {
         let contents = unit_contents();
         assert!(
-            contents.contains("ExecStart=%h/.cargo/bin/mnemos-daemon"),
-            "unit file must contain ExecStart=%h/.cargo/bin/mnemos-daemon"
+            contents.contains("ExecStart=%h/.cargo/bin/mnemosd"),
+            "unit file must contain ExecStart=%h/.cargo/bin/mnemosd"
         );
     }
 
@@ -180,7 +180,7 @@ mod tests {
 
         assert!(dest.exists(), "unit file should exist after install");
         let written = std::fs::read_to_string(&dest).unwrap();
-        assert!(written.contains("ExecStart=%h/.cargo/bin/mnemos-daemon"));
+        assert!(written.contains("ExecStart=%h/.cargo/bin/mnemosd"));
         assert!(written.contains("Restart=on-failure"));
     }
 }

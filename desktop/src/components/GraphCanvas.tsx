@@ -175,6 +175,7 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
           fgRef.current.zoomToFit(600, 60);
         }
         setFocusedNode(null);
+        onSelect?.(null);
       } else {
         // First click → zoom in
         if (fgRef.current) {

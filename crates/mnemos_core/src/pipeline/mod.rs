@@ -49,6 +49,19 @@ pub fn extract_json(s: &str) -> &str {
     }
 }
 
+/// Truncate a string to at most `max_chars` characters, appending "…" if
+/// truncated.  Unlike byte-based slicing this is always safe for multi-byte
+/// UTF-8 (emoji, CJK, accented characters).
+pub fn truncate_chars(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{truncated}…")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

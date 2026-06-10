@@ -1,0 +1,53 @@
+name: Feature Request
+description: Suggest a new feature or improvement for Mnemos
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for Mnemos? Describe it below and we'll consider it for a future release.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: What problem does this feature solve? What's frustrating about the current behavior?
+      placeholder: I often need to … but currently Mnemos doesn't …
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How should this work? Be as specific as you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you tried any workarounds or considered alternative approaches?
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of Mnemos would this affect?
+      options:
+        - Desktop App (Tauri UI)
+        - Daemon (mnemosd)
+        - CLI (mnemos)
+        - Pipeline (extraction/reflection/entities)
+        - MCP Server
+        - New Component
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or mockups.
