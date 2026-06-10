@@ -24,7 +24,7 @@ rust-version = "1.78"
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "signal", "process"] }
 
 # Database
-libsql = { version = "0.5", default-features = false, features = ["core", "serde"] }
+libsql = { version = "0.9", default-features = false, features = ["core", "serde"] }
 libsql-sys = "0.7"
 sqlite-vec = "0.1"
 
