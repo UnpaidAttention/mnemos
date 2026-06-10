@@ -17,7 +17,7 @@
   "dependencies": {
     "@codemirror/lang-markdown": "^6.2.5",
     "@codemirror/state": "^6.4.1",
-    "@codemirror/view": "^6.28.0",
+    "@codemirror/view": "^6.43.1",
     "@fontsource-variable/fraunces": "^5.0.21",
     "@fontsource-variable/jetbrains-mono": "^5.0.21",
     "@fontsource-variable/source-serif-4": "^5.0.21",
