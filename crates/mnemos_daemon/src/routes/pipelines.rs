@@ -36,6 +36,7 @@ pub fn router() -> Router<AppState> {
         .route("/v1/maintenance/wipe-graph", post(run_wipe_graph))
         .route("/v1/maintenance/cleanup-graph", post(run_cleanup_graph))
         .route("/v1/maintenance/bulk-ingest", post(run_bulk_ingest))
+        .route("/v1/maintenance/clear-backlog", post(run_clear_backlog))
 }
 
 async fn status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
@@ -614,5 +615,29 @@ async fn run_bulk_ingest(
         "entities_linked": entities_linked,
         "edges_created": edges_created,
         "errors": errors,
+    })))
+}
+
+/// Mark all unprocessed ended sessions as processed, clearing the catch-up
+/// backlog. Use this when you want a fresh start without re-processing old
+/// sessions.
+async fn run_clear_backlog(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let (conn, _g) = state
+        .vault
+        .storage()
+        .write_conn()
+        .await
+        .map_err(|e| ApiError::internal(format!("db write conn: {e}")))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let result = conn
+        .execute(
+            "UPDATE sessions SET processed_at = ? WHERE processed_at IS NULL AND ended_at IS NOT NULL",
+            libsql::params![now],
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("clear backlog: {e}")))?;
+    tracing::info!(cleared = result, "cleared pipeline backlog");
+    Ok(Json(serde_json::json!({
+        "cleared": result,
     })))
 }

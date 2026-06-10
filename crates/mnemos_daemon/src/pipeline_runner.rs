@@ -46,8 +46,11 @@ pub fn spawn(state: AppState) -> PipelineHandle {
     // Subscribe BEFORE spawning so no events are missed between spawn and first poll.
     let mut events = state.events.subscribe();
     let join = tokio::spawn(async move {
-        // Catch-up: retry any sessions that were never successfully processed.
-        catch_up(&state).await;
+        // NOTE: catch-up (reprocessing stale sessions from previous runs) is
+        // intentionally DISABLED on startup. On CPU-only machines, loading the
+        // LLM to churn through a backlog causes sustained high CPU usage that
+        // degrades the user experience. Users can trigger reprocessing manually
+        // via POST /v1/maintenance/clear-backlog (to skip) or the desktop UI.
 
         // Track pending chunks per session for batched incremental processing.
         let mut pending: std::collections::HashMap<String, IncrementalState> =
