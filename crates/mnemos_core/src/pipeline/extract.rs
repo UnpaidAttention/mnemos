@@ -7,10 +7,13 @@ use serde::Deserialize;
 /// System prompt for the extraction stage. The `TASK=extract` marker drives
 /// [`MockLlm`](crate::providers::mock_llm::MockLlm); the prose guides real models.
 pub const EXTRACT_SYSTEM: &str = "TASK=extract\n\
-You extract atomic, standalone facts worth remembering from a conversation \
-transcript. Each fact must be self-contained — resolve pronouns and context so \
-it stands alone. Ignore greetings and chit-chat. Respond ONLY with JSON of the \
-form {\"facts\":[{\"text\":\"...\"}]}.";
+You extract comprehensive knowledge entries worth remembering from a conversation \
+transcript. Each entry should be a detailed, multi-sentence explanation that \
+captures the full context, reasoning, and significance — not just a bare \
+statement. Include WHY something matters, HOW it works, and any constraints or \
+nuances discussed. Resolve all pronouns so each entry stands completely alone. \
+Ignore greetings and chit-chat. Respond ONLY with JSON of the form \
+{\"facts\":[{\"text\":\"...\"}]}.";
 
 #[derive(Deserialize)]
 struct ExtractOut {
@@ -58,12 +61,14 @@ pub async fn extract_facts(
 
 /// System prompt for incremental (mid-session) extraction.
 const EXTRACT_INCREMENTAL_SYSTEM: &str = "TASK=extract\n\
-You extract atomic, standalone facts worth remembering from the NEW section \
-of a conversation transcript. The CONTEXT section shows earlier messages that \
-have already been processed — use them to resolve pronouns and references, but \
-do NOT extract facts from them. Each fact must be self-contained — resolve \
-pronouns and context so it stands alone. Ignore greetings and chit-chat. \
-Respond ONLY with JSON of the form {\"facts\":[{\"text\":\"...\"}]}.";
+You extract comprehensive knowledge entries worth remembering from the NEW \
+section of a conversation transcript. The CONTEXT section shows earlier messages \
+that have already been processed — use them to resolve pronouns and references, \
+but do NOT extract facts from them. Each entry should be a detailed, multi-sentence \
+explanation that captures the full context, reasoning, and significance. Include \
+WHY something matters, HOW it works, and any constraints or nuances discussed. \
+Resolve all pronouns so each entry stands completely alone. Ignore greetings and \
+chit-chat. Respond ONLY with JSON of the form {\"facts\":[{\"text\":\"...\"}]}.";
 
 /// Run fact extraction over new chunks with full session context.
 ///

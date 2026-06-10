@@ -17,7 +17,7 @@ export function TierChip({ tier }: { tier: Tier }) {
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" };
 export function Button({ variant = "primary", className = "", children, ...rest }: ButtonProps) {
   const base =
-    "font-body text-sm rounded-md px-3 py-1.5 transition-[transform,box-shadow,background] duration-[120ms] ease-brand focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none";
+    "font-body text-sm rounded-sm px-3 py-1.5 transition-[transform,box-shadow,background] duration-[120ms] ease-brand focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none";
   const styles =
     variant === "primary"
       ? "bg-accent text-accent-contrast shadow-subtle hover:shadow-raised"
@@ -32,7 +32,7 @@ export function Button({ variant = "primary", className = "", children, ...rest 
 type CardProps = HTMLAttributes<HTMLDivElement> & { children: ReactNode; className?: string };
 export function Card({ children, className = "", ...rest }: CardProps) {
   return (
-    <div className={`bg-surface border border-border rounded-lg shadow-subtle ${className}`} {...rest}>
+    <div className={`bg-surface border border-border rounded shadow-subtle ${className}`} {...rest}>
       {children}
     </div>
   );

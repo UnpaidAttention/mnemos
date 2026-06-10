@@ -12,10 +12,10 @@ async fn fixture() -> (axum::Router, String, String, String) {
         .remember("rust note", RememberOpts::default())
         .await
         .unwrap();
-    let a = upsert_entity(vault.storage(), "Rust", "tool")
+    let a = upsert_entity(vault.storage(), "Rust", "tool", None)
         .await
         .unwrap();
-    let b = upsert_entity(vault.storage(), "Tauri", "tool")
+    let b = upsert_entity(vault.storage(), "Tauri", "tool", None)
         .await
         .unwrap();
     upsert_edge(vault.storage(), &a, &b, "uses", &mem, chrono::Utc::now())

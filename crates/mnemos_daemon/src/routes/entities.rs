@@ -107,7 +107,7 @@ async fn get_entity(
 
     let mut rows = conn
         .query(
-            "SELECT id, name, kind, aliases, description FROM entities WHERE id = ?",
+            "SELECT id, name, kind, aliases, description, created_at FROM entities WHERE id = ?",
             params![id.clone()],
         )
         .await
@@ -119,35 +119,61 @@ async fn get_entity(
         .ok_or_else(|| ApiError::not_found(format!("entity {id}")))?;
     let aliases: Vec<String> =
         serde_json::from_str(&row.get::<String>(3).map_err(MnemosError::from)?).unwrap_or_default();
-    let detail = serde_json::json!({
+    let created_at: String = row.get::<String>(5).map_err(MnemosError::from)?;
+    let mut detail = serde_json::json!({
         "id": row.get::<String>(0).map_err(MnemosError::from)?,
         "name": row.get::<String>(1).map_err(MnemosError::from)?,
         "kind": row.get::<String>(2).map_err(MnemosError::from)?,
         "aliases": aliases,
         "description": row.get::<Option<String>>(4).map_err(MnemosError::from)?,
+        "created_at": created_at,
     });
     drop(rows);
 
-    // memory ids that mention this entity
+    // memories that mention this entity — fetch title + body preview + tier + created_at
     let mut mrows = conn
         .query(
-            "SELECT memory_id FROM entity_mentions WHERE entity_id = ?",
+            "SELECT m.id, m.title, m.body, m.tier, m.created_at FROM memories m \
+             JOIN entity_mentions em ON em.memory_id = m.id \
+             WHERE em.entity_id = ? AND m.invalid_at IS NULL",
             params![id.clone()],
         )
         .await
         .map_err(MnemosError::from)?;
+    let mut memories: Vec<serde_json::Value> = Vec::new();
     let mut memory_ids: Vec<String> = Vec::new();
     while let Some(r) = mrows.next().await.map_err(MnemosError::from)? {
-        memory_ids.push(r.get::<String>(0).map_err(MnemosError::from)?);
+        let mid: String = r.get::<String>(0).map_err(MnemosError::from)?;
+        let title: String = r.get::<String>(1).map_err(MnemosError::from)?;
+        let body: String = r.get::<String>(2).map_err(MnemosError::from)?;
+        let tier: String = r.get::<String>(3).map_err(MnemosError::from)?;
+        let mem_created_at: String = r.get::<String>(4).map_err(MnemosError::from)?;
+        let preview = if body.len() > 300 {
+            format!("{}…", &body[..body.char_indices().take_while(|(i, _)| *i <= 297).last().map(|(i,_)| i).unwrap_or(0)])
+        } else {
+            body
+        };
+        memory_ids.push(mid.clone());
+        memories.push(serde_json::json!({
+            "id": mid,
+            "title": title,
+            "body_preview": preview,
+            "tier": tier,
+            "created_at": mem_created_at,
+        }));
     }
     drop(mrows);
 
-    // incident active edges
+    // Incident active edges — with source/target names and kinds
     let mut erows = conn
         .query(
-            "SELECT id, source_entity_id, target_entity_id, relation, weight
-               FROM entity_edges
-              WHERE (source_entity_id = ?1 OR target_entity_id = ?1) AND invalid_at IS NULL",
+            "SELECT ee.id, ee.source_entity_id, ee.target_entity_id, ee.relation, ee.weight,
+                    es.name AS source_name, es.kind AS source_kind,
+                    et.name AS target_name, et.kind AS target_kind
+               FROM entity_edges ee
+               JOIN entities es ON es.id = ee.source_entity_id
+               JOIN entities et ON et.id = ee.target_entity_id
+              WHERE (ee.source_entity_id = ?1 OR ee.target_entity_id = ?1) AND ee.invalid_at IS NULL",
             params![id.clone()],
         )
         .await
@@ -160,13 +186,77 @@ async fn get_entity(
             "target": r.get::<String>(2).map_err(MnemosError::from)?,
             "relation": r.get::<String>(3).map_err(MnemosError::from)?,
             "weight": r.get::<f64>(4).map_err(MnemosError::from)?,
+            "source_name": r.get::<String>(5).map_err(MnemosError::from)?,
+            "source_kind": r.get::<String>(6).map_err(MnemosError::from)?,
+            "target_name": r.get::<String>(7).map_err(MnemosError::from)?,
+            "target_kind": r.get::<String>(8).map_err(MnemosError::from)?,
         }));
     }
+    drop(erows);
 
-    let mut detail = detail;
+    // Co-mentioned entities: entities that share at least one memory with this entity
+    let mut co_rows = conn
+        .query(
+            "SELECT e.id, e.name, e.kind, COUNT(DISTINCT em2.memory_id) AS shared_count
+               FROM entity_mentions em1
+               JOIN entity_mentions em2 ON em1.memory_id = em2.memory_id
+               JOIN entities e ON e.id = em2.entity_id
+              WHERE em1.entity_id = ?1 AND em2.entity_id != ?1
+              GROUP BY e.id, e.name, e.kind
+              ORDER BY shared_count DESC
+              LIMIT 50",
+            params![id.clone()],
+        )
+        .await
+        .map_err(MnemosError::from)?;
+    let mut co_mentioned: Vec<serde_json::Value> = Vec::new();
+    while let Some(r) = co_rows.next().await.map_err(MnemosError::from)? {
+        co_mentioned.push(serde_json::json!({
+            "id": r.get::<String>(0).map_err(MnemosError::from)?,
+            "name": r.get::<String>(1).map_err(MnemosError::from)?,
+            "kind": r.get::<String>(2).map_err(MnemosError::from)?,
+            "shared_memory_count": r.get::<i64>(3).map_err(MnemosError::from)?,
+        }));
+    }
+    drop(co_rows);
+
+    // Community info
+    let mut com_rows = conn
+        .query(
+            "SELECT community_id FROM entity_communities WHERE entity_id = ?",
+            params![id.clone()],
+        )
+        .await
+        .map_err(MnemosError::from)?;
+    let community = if let Some(r) = com_rows.next().await.map_err(MnemosError::from)? {
+        let cid: i64 = r.get(0).map_err(MnemosError::from)?;
+        drop(com_rows);
+        // Try to find a community summary memory
+        let mut sum_rows = conn
+            .query(
+                "SELECT m.body FROM memories m WHERE m.kind = 'community-summary'
+                 AND m.body LIKE '%community ' || ?1 || '%' AND m.invalid_at IS NULL LIMIT 1",
+                params![cid.to_string()],
+            )
+            .await
+            .map_err(MnemosError::from)?;
+        let summary = if let Some(sr) = sum_rows.next().await.map_err(MnemosError::from)? {
+            Some(sr.get::<String>(0).map_err(MnemosError::from)?)
+        } else {
+            None
+        };
+        Some(serde_json::json!({ "id": cid, "summary": summary }))
+    } else {
+        drop(com_rows);
+        None
+    };
+
     detail["mention_count"] = serde_json::json!(memory_ids.len());
     detail["memory_ids"] = serde_json::json!(memory_ids);
+    detail["memories"] = serde_json::json!(memories);
     detail["edges"] = serde_json::json!(edges);
+    detail["co_mentioned_entities"] = serde_json::json!(co_mentioned);
+    detail["community"] = serde_json::json!(community);
     Ok(Json(detail))
 }
 

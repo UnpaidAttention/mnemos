@@ -8,26 +8,55 @@ use chrono::{DateTime, Utc};
 use libsql::params;
 
 /// Insert an entity by unique `name`, or return the id of the existing one.
-pub async fn upsert_entity(storage: &Storage, name: &str, kind: &str) -> Result<String> {
+/// When `description` is `Some` and the entity already exists, the description
+/// is updated only if the new one is longer (enrichment, not overwrite).
+pub async fn upsert_entity(
+    storage: &Storage,
+    name: &str,
+    kind: &str,
+    description: Option<&str>,
+) -> Result<String> {
     let (conn, _guard) = storage.write_conn().await?;
     let mut rows = conn
         .query(
-            "SELECT id FROM entities WHERE name = ?",
+            "SELECT id, description FROM entities WHERE name = ?",
             params![name.to_string()],
         )
         .await?;
     if let Some(r) = rows.next().await? {
-        return Ok(r.get::<String>(0)?);
+        let id: String = r.get::<String>(0)?;
+        let existing_desc: Option<String> = r.get::<Option<String>>(1)?;
+        drop(rows);
+        // Enrich: update description if new one is provided and longer
+        if let Some(new_desc) = description {
+            let new_desc = new_desc.trim();
+            let should_update = match &existing_desc {
+                None => !new_desc.is_empty(),
+                Some(old) => new_desc.len() > old.len(),
+            };
+            if should_update {
+                conn.execute(
+                    "UPDATE entities SET description = ? WHERE id = ?",
+                    params![new_desc.to_string(), id.clone()],
+                )
+                .await?;
+            }
+        }
+        return Ok(id);
     }
     drop(rows);
     let id = new_entity_id();
+    let desc_val = description
+        .map(|d| d.trim().to_string())
+        .filter(|d| !d.is_empty());
     conn.execute(
         "INSERT INTO entities (id, name, kind, aliases, description, file_path, created_at)
-             VALUES (?, ?, ?, '[]', NULL, NULL, ?)",
+             VALUES (?, ?, ?, '[]', ?, NULL, ?)",
         params![
             id.clone(),
             name.to_string(),
             kind.to_string(),
+            desc_val,
             Utc::now().to_rfc3339()
         ],
     )
@@ -279,9 +308,9 @@ mod merge_tests {
     async fn merge_moves_mentions_and_edges() {
         let tmp = TempDir::new().unwrap();
         let v = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
-        let a = upsert_entity(v.storage(), "A", "x").await.unwrap();
-        let b = upsert_entity(v.storage(), "B", "x").await.unwrap();
-        let c = upsert_entity(v.storage(), "C", "x").await.unwrap();
+        let a = upsert_entity(v.storage(), "A", "x", None).await.unwrap();
+        let b = upsert_entity(v.storage(), "B", "x", None).await.unwrap();
+        let c = upsert_entity(v.storage(), "C", "x", None).await.unwrap();
         // entity_mentions has an ON DELETE CASCADE FK to memories — create a
         // real memory so the link insert satisfies the constraint.
         let mem = v.remember("source", RememberOpts::default()).await.unwrap();
@@ -326,7 +355,7 @@ mod merge_tests {
     async fn merge_missing_target_returns_error() {
         let tmp = TempDir::new().unwrap();
         let v = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
-        let a = upsert_entity(v.storage(), "A", "x").await.unwrap();
+        let a = upsert_entity(v.storage(), "A", "x", None).await.unwrap();
         let err = merge_entities(v.storage(), &a, "ent_nope")
             .await
             .unwrap_err();
@@ -337,7 +366,7 @@ mod merge_tests {
     async fn merge_idempotent_when_source_missing() {
         let tmp = TempDir::new().unwrap();
         let v = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
-        let b = upsert_entity(v.storage(), "B", "x").await.unwrap();
+        let b = upsert_entity(v.storage(), "B", "x", None).await.unwrap();
         // Source doesn't exist; target does. Should be a no-op Ok.
         merge_entities(v.storage(), "ent_gone", &b).await.unwrap();
     }

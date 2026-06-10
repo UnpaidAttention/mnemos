@@ -10,10 +10,10 @@ use tempfile::TempDir;
 async fn communities_endpoint_lists_members() {
     let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
     let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
-    let a = upsert_entity(vault.storage(), "Rust", "tool")
+    let a = upsert_entity(vault.storage(), "Rust", "tool", None)
         .await
         .unwrap();
-    let b = upsert_entity(vault.storage(), "Tauri", "tool")
+    let b = upsert_entity(vault.storage(), "Tauri", "tool", None)
         .await
         .unwrap();
     store_communities(

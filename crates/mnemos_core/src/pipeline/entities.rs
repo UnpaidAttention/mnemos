@@ -8,8 +8,11 @@ use serde::Deserialize;
 /// System prompt for the entity-linking stage.
 pub const LINK_SYSTEM: &str = "TASK=link\n\
 List the named entities (people, projects, organizations, tools, concepts) \
-mentioned in the text. Respond ONLY with JSON \
-{\"entities\":[{\"name\":\"...\",\"kind\":\"...\"}]}.";
+mentioned in the text. For each entity, provide a brief description (1-2 \
+sentences) explaining what it is and its role in the context. Respond ONLY \
+with JSON \
+{\"entities\":[{\"name\":\"...\",\"kind\":\"...\",\"description\":\"...\"}]}.";
+
 
 #[derive(Deserialize)]
 struct LinkOut {
@@ -22,6 +25,8 @@ struct EntityIn {
     name: String,
     #[serde(default)]
     kind: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 /// Extract entities from `body`, upsert them, and link mentions to `memory_id`.
@@ -44,7 +49,8 @@ pub async fn link_entities(
             continue;
         }
         let kind = e.kind.unwrap_or_else(|| "unknown".into());
-        let id = upsert_entity(storage, name, &kind).await?;
+        let desc = e.description.as_deref();
+        let id = upsert_entity(storage, name, &kind, desc).await?;
         link_entity_mention(storage, memory_id, &id).await?;
         ids.push(id);
     }

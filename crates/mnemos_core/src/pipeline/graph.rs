@@ -9,8 +9,10 @@ use serde::Deserialize;
 /// System prompt for the graph-update stage.
 pub const RELATIONS_SYSTEM: &str = "TASK=relations\n\
 Extract relationships between entities as subject–relation–object triples. \
-Respond ONLY with JSON \
-{\"relations\":[{\"source\":\"A\",\"relation\":\"REL\",\"target\":\"B\"}]}.";
+The relation should be a specific, descriptive verb phrase (e.g. \"is built with\", \
+\"stores data in\", \"was created by\", \"prefers over\") — never use generic labels \
+like \"REL\" or \"has\". Respond ONLY with JSON \
+{\"relations\":[{\"source\":\"A\",\"relation\":\"descriptive verb phrase\",\"target\":\"B\"}]}.";
 
 #[derive(Deserialize)]
 struct RelOut {
@@ -46,8 +48,8 @@ pub async fn update_graph(
         if s.is_empty() || r.is_empty() || o.is_empty() {
             continue;
         }
-        let src = upsert_entity(storage, s, "unknown").await?;
-        let tgt = upsert_entity(storage, o, "unknown").await?;
+        let src = upsert_entity(storage, s, "unknown", None).await?;
+        let tgt = upsert_entity(storage, o, "unknown", None).await?;
         let edge = upsert_edge(storage, &src, &tgt, r, memory_id, valid_at).await?;
         edge_ids.push(edge);
     }

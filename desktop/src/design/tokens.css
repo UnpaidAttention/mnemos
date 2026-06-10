@@ -69,6 +69,15 @@ code, pre, .mono { font-family: "JetBrains Mono Variable", ui-monospace, monospa
 @keyframes mnemos-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .pulse-weak { animation: mnemos-pulse 2.4s var(--ease) infinite; }
 
+/* Elegant glassmorphism for overlays without being generic AI slop */
+.glass-panel {
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-floating);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
   .pulse-weak { animation: none; }

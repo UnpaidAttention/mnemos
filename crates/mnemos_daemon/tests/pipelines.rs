@@ -56,9 +56,9 @@ async fn communities_endpoint_runs_detection() {
     let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
     let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
     // Build a small graph so there is something to cluster.
-    let a = upsert_entity(vault.storage(), "A", "c").await.unwrap();
-    let b = upsert_entity(vault.storage(), "B", "c").await.unwrap();
-    let c = upsert_entity(vault.storage(), "C", "c").await.unwrap();
+    let a = upsert_entity(vault.storage(), "A", "c", None).await.unwrap();
+    let b = upsert_entity(vault.storage(), "B", "c", None).await.unwrap();
+    let c = upsert_entity(vault.storage(), "C", "c", None).await.unwrap();
     for (x, y) in [(&a, &b), (&b, &c), (&a, &c)] {
         upsert_edge(vault.storage(), x, y, "rel", "m", chrono::Utc::now())
             .await

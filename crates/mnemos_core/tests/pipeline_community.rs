@@ -15,17 +15,17 @@ async fn detects_and_summarizes_communities() {
     let v = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
 
     // Triangle {A,B,C} + edge {D,E}, weak bridge C-D.
-    let a = upsert_entity(v.storage(), "Alpha", "concept")
+    let a = upsert_entity(v.storage(), "Alpha", "concept", None)
         .await
         .unwrap();
-    let b = upsert_entity(v.storage(), "Beta", "concept").await.unwrap();
-    let c = upsert_entity(v.storage(), "Gamma", "concept")
+    let b = upsert_entity(v.storage(), "Beta", "concept", None).await.unwrap();
+    let c = upsert_entity(v.storage(), "Gamma", "concept", None)
         .await
         .unwrap();
-    let d = upsert_entity(v.storage(), "Delta", "concept")
+    let d = upsert_entity(v.storage(), "Delta", "concept", None)
         .await
         .unwrap();
-    let f = upsert_entity(v.storage(), "Epsilon", "concept")
+    let f = upsert_entity(v.storage(), "Epsilon", "concept", None)
         .await
         .unwrap();
     let m = "mem_x";

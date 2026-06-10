@@ -15,10 +15,10 @@ async fn graph_ppr_returns_entity_scores() {
         .remember("rust topic", RememberOpts::default())
         .await
         .unwrap();
-    let a = upsert_entity(vault.storage(), "Rust", "tool")
+    let a = upsert_entity(vault.storage(), "Rust", "tool", None)
         .await
         .unwrap();
-    let b = upsert_entity(vault.storage(), "Tauri", "tool")
+    let b = upsert_entity(vault.storage(), "Tauri", "tool", None)
         .await
         .unwrap();
     upsert_edge(vault.storage(), &a, &b, "uses", &mem, chrono::Utc::now())
@@ -50,10 +50,10 @@ async fn graph_ppr_returns_entity_scores() {
 async fn graph_endpoint_returns_nodes_and_edges() {
     let tmp = Box::leak(Box::new(TempDir::new().unwrap()));
     let vault = Vault::open(Paths::with_root(tmp.path())).await.unwrap();
-    let a = upsert_entity(vault.storage(), "Rust", "tool")
+    let a = upsert_entity(vault.storage(), "Rust", "tool", None)
         .await
         .unwrap();
-    let b = upsert_entity(vault.storage(), "Tauri", "tool")
+    let b = upsert_entity(vault.storage(), "Tauri", "tool", None)
         .await
         .unwrap();
     upsert_edge(vault.storage(), &a, &b, "uses", "mem_1", chrono::Utc::now())

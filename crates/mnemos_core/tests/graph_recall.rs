@@ -21,8 +21,8 @@ async fn graph_rank_surfaces_multi_hop_memory() {
         .remember("zebra unrelated words", RememberOpts::default())
         .await
         .unwrap();
-    let rust = upsert_entity(v.storage(), "Rust", "tool").await.unwrap();
-    let tauri = upsert_entity(v.storage(), "Tauri", "tool").await.unwrap();
+    let rust = upsert_entity(v.storage(), "Rust", "tool", None).await.unwrap();
+    let tauri = upsert_entity(v.storage(), "Tauri", "tool", None).await.unwrap();
     upsert_edge(v.storage(), &rust, &tauri, "uses", &mem1, Utc::now())
         .await
         .unwrap();

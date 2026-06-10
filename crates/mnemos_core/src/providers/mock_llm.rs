@@ -71,7 +71,7 @@ impl LlmProvider for MockLlm {
                 .split_whitespace()
                 .filter_map(|tok| tok.strip_prefix('@'))
                 .filter(|n| !n.is_empty())
-                .map(|name| json!({ "name": name }))
+                .map(|name| json!({ "name": name, "description": format!("Mock description for {name}") }))
                 .collect();
             json!({ "entities": entities }).to_string()
         } else if req.system.contains("TASK=reflect") {

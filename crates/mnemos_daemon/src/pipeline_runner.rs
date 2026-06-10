@@ -6,6 +6,7 @@ use crate::pipeline_status::RecentRun;
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use libsql::params;
+use mnemos_core::pipeline::co_mention::create_co_mention_edges;
 use mnemos_core::pipeline::entities::link_entities;
 use mnemos_core::pipeline::extract::{extract_facts, extract_facts_incremental};
 use mnemos_core::pipeline::graph::update_graph;
@@ -283,6 +284,9 @@ async fn run_pipeline(
                 if let Err(e) = link_entities(state.vault.storage(), &mid, &mem.body, llm).await {
                     tracing::warn!(memory_id = %mid, error = %e, "entity linking failed");
                 }
+                if let Err(e) = create_co_mention_edges(state.vault.storage(), &mid, mem.valid_at).await {
+                    tracing::warn!(memory_id = %mid, error = %e, "co-mention edge creation failed");
+                }
                 if let Err(e) =
                     update_graph(state.vault.storage(), &mid, &mem.body, mem.valid_at, llm).await
                 {
@@ -479,6 +483,9 @@ async fn run_incremental(
                 });
                 if let Err(e) = link_entities(state.vault.storage(), &mid, &mem.body, llm).await {
                     tracing::warn!(memory_id = %mid, error = %e, "entity linking failed");
+                }
+                if let Err(e) = create_co_mention_edges(state.vault.storage(), &mid, mem.valid_at).await {
+                    tracing::warn!(memory_id = %mid, error = %e, "co-mention edge creation failed");
                 }
                 if let Err(e) =
                     update_graph(state.vault.storage(), &mid, &mem.body, mem.valid_at, llm).await

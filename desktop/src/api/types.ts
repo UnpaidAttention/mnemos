@@ -60,10 +60,33 @@ export interface Entity {
   aliases?: string[];
   description?: string | null;
 }
+export interface EntityMemoryPreview {
+  id: string;
+  title: string;
+  body_preview: string;
+  tier?: string;
+  created_at?: string;
+}
+export interface CoMentionedEntity {
+  id: string;
+  name: string;
+  kind: string;
+  shared_memory_count: number;
+}
+export interface EnrichedEdge extends GraphEdge {
+  source_name: string;
+  target_name: string;
+  source_kind: string;
+  target_kind: string;
+}
 export interface EntityDetail extends Entity {
   mention_count: number;
   memory_ids: string[];
-  edges: GraphEdge[];
+  memories?: EntityMemoryPreview[];
+  edges: EnrichedEdge[];
+  co_mentioned_entities: CoMentionedEntity[];
+  created_at?: string;
+  community?: { id: number; summary?: string | null } | null;
 }
 export interface GraphNode { id: string; name: string; kind: string; community_id?: number; mentions?: number; }
 export interface GraphEdge { id: string; source: string; target: string; relation: string; weight: number; }
