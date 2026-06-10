@@ -249,11 +249,7 @@ async fn run_backfill(State(state): State<AppState>) -> Result<Json<Value>, ApiE
 /// Memories table is preserved. Use before a full re-backfill.
 async fn run_wipe_graph(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     use mnemos_core::error::MnemosError;
-    let (conn, _guard) = state
-        .vault
-        .storage()
-        .write_conn()
-        .await?;
+    let (conn, _guard) = state.vault.storage().write_conn().await?;
 
     let del_communities: u64 = conn
         .execute("DELETE FROM entity_communities", ())
@@ -295,11 +291,7 @@ async fn run_wipe_graph(State(state): State<AppState>) -> Result<Json<Value>, Ap
 /// - Orphaned entities (no edges AND no mentions)
 async fn run_cleanup_graph(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     use mnemos_core::error::MnemosError;
-    let (conn, _guard) = state
-        .vault
-        .storage()
-        .write_conn()
-        .await?;
+    let (conn, _guard) = state.vault.storage().write_conn().await?;
 
     // 1. Delete single-char entities and their edges/mentions
     let del_single_char_edges: u64 = conn
