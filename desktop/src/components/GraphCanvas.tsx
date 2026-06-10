@@ -165,15 +165,27 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
     return () => observer.disconnect();
   }, []);
 
+  const [focusedNode, setFocusedNode] = useState<string | null>(null);
+
   const handleNodeClick = useCallback(
     (node: Node) => {
-      if (fgRef.current) {
-        fgRef.current.centerAt(node.x, node.y, 1000);
-        fgRef.current.zoom(4, 2000);
+      if (focusedNode === node.id) {
+        // Second click on same node → zoom back out to fit all
+        if (fgRef.current) {
+          fgRef.current.zoomToFit(600, 60);
+        }
+        setFocusedNode(null);
+      } else {
+        // First click → zoom in
+        if (fgRef.current) {
+          fgRef.current.centerAt(node.x, node.y, 1000);
+          fgRef.current.zoom(4, 2000);
+        }
+        setFocusedNode(node.id);
+        onSelect?.(node.id);
       }
-      onSelect?.(node.id);
     },
-    [onSelect],
+    [onSelect, focusedNode],
   );
 
   const maxPpr = Math.max(0.0001, ...Object.values(pprScores ?? {}));
