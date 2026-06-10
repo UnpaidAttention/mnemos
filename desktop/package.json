@@ -31,7 +31,7 @@
     "@visx/shape": "^3.5.0",
     "graphology": "^0.25.4",
     "graphology-layout-forceatlas2": "^0.10.1",
-    "lucide-react": "^0.408.0",
+    "lucide-react": "^1.17.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-force-graph-2d": "^1.25.5",
