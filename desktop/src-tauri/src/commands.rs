@@ -437,6 +437,31 @@ pub async fn pull_model(app: AppHandle, model: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Tell Ollama to unload a model (set keep_alive=0), freeing CPU/RAM.
+/// Silently ignores errors (model may not be loaded, Ollama may be down, etc.).
+async fn unload_ollama_model(model_name: &str) {
+    if model_name.is_empty() {
+        return;
+    }
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    // Unload the model by setting keep_alive to 0
+    let _ = client
+        .post("http://localhost:11434/api/generate")
+        .json(&serde_json::json!({
+            "model": model_name,
+            "keep_alive": 0
+        }))
+        .send()
+        .await;
+    tracing::info!(model = model_name, "unloaded previous Ollama model");
+}
+
 /// Write [llm] config and restart the daemon to apply.
 #[tauri::command]
 pub async fn apply_llm_config(
@@ -445,6 +470,14 @@ pub async fn apply_llm_config(
     model: String,
 ) -> Result<(), String> {
     let cfg_path = config_io::config_path()?;
+
+    // Before switching, unload the *previous* Ollama model to free CPU/RAM.
+    let prev = read_model_config().ok();
+    if let Some(ref prev) = prev {
+        if prev.llm_kind == "ollama" && prev.llm_model != model {
+            unload_ollama_model(&prev.llm_model).await;
+        }
+    }
 
     // Determine the URL based on kind.
     let url = match kind.as_str() {
@@ -474,6 +507,14 @@ pub async fn apply_embedder_config(
     dim: u32,
 ) -> Result<(), String> {
     let cfg_path = config_io::config_path()?;
+
+    // Before switching, unload the *previous* Ollama embedder model.
+    let prev = read_model_config().ok();
+    if let Some(ref prev) = prev {
+        if prev.embedder_kind == "ollama" && prev.embedder_model != model {
+            unload_ollama_model(&prev.embedder_model).await;
+        }
+    }
 
     let url = match kind.as_str() {
         "ollama" => "http://localhost:11434".to_string(),
