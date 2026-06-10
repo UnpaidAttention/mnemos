@@ -58,7 +58,7 @@ jobs:
           # runners don't ship it. (APPIMAGE_EXTRACT_AND_RUN below is a fallback.)
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
