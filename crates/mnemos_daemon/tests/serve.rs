@@ -17,9 +17,10 @@ async fn build_app_full_without_llm_has_no_pipeline_handle() {
     assert!(sync.is_none(), "no sync config → no sync worker");
     assert!(state.llm.is_none());
     // pipeline status starts empty
-    let (counters, recent) = state.pipeline_status.snapshot().await;
+    let (counters, recent, backfill) = state.pipeline_status.snapshot().await;
     assert_eq!(counters.completed, 0);
     assert!(recent.is_empty());
+    assert!(backfill.is_none());
 }
 
 #[tokio::test]
