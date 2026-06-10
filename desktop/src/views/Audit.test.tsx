@@ -11,9 +11,8 @@ afterAll(() => server.close());
 
 test("shows audit entries and an Export CSV button", async () => {
   renderWithQuery(<Audit />);
-  // The richer fixture set produces many create rows — at least one must
-  // appear in the rendered table.
-  const rows = await screen.findAllByText("create");
+  // The new UI displays action labels as "Created" (capitalized).
+  const rows = await screen.findAllByText("Created");
   expect(rows.length).toBeGreaterThan(0);
   expect(screen.getByRole("button", { name: /export csv/i })).toBeInTheDocument();
 });
