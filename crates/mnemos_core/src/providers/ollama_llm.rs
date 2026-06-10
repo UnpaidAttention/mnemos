@@ -62,12 +62,13 @@ impl LlmProvider for OllamaLlm {
             "model": self.cfg.model,
             "messages": messages,
             "stream": false,
-            // Keep the model loaded indefinitely. Mnemos is a background
-            // service that must respond to sessions at any time — the
-            // default 5-minute timeout would unload the model between
-            // sessions, causing cold-start delays and unnecessary CPU
-            // churn from repeated model loads.
-            "keep_alive": -1,
+            // Keep the model loaded for 30 minutes after the last request.
+            // During an active session, each extraction/embedding request
+            // resets this timer, so the model stays resident. After 30 min
+            // of no activity (no active sessions), Ollama auto-unloads to
+            // free CPU/RAM. The next session triggers an automatic reload
+            // (a few seconds for lightweight models like Phi-4 Mini).
+            "keep_alive": 1800,
         });
         if req.json {
             body["format"] = serde_json::json!("json");

@@ -66,9 +66,9 @@ impl OllamaEmbedder {
 struct EmbedReq<'a> {
     model: &'a str,
     prompt: &'a str,
-    /// Keep the model loaded indefinitely (-1). Mnemos is a background
-    /// service that must embed at any time — the default 5-minute Ollama
-    /// timeout would unload the model between sessions.
+    /// Keep the model loaded for 30 minutes after the last request.
+    /// Each embedding request resets the timer. After 30 min of no
+    /// sessions, Ollama auto-unloads to free resources.
     keep_alive: i64,
 }
 
@@ -102,7 +102,7 @@ impl Embedder for OllamaEmbedder {
             .json(&EmbedReq {
                 model: &self.config.model,
                 prompt: text,
-                keep_alive: -1,
+                keep_alive: 1800,
             })
             .send()
             .await

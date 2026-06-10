@@ -454,52 +454,7 @@ async fn unload_ollama_model(client: &reqwest::Client, model_name: &str) {
     eprintln!("[mnemos] unloaded Ollama model: {model_name}");
 }
 
-/// Query Ollama for ALL currently loaded models and unload every one of them.
-/// This ensures no stale models eat CPU/RAM. Safe to call at any time — if
-/// Ollama is not running or has no models loaded, this is a no-op.
-pub async fn unload_all_ollama_models() {
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return,
-    };
 
-    // Query Ollama for currently loaded models
-    let resp = match client
-        .get("http://localhost:11434/api/ps")
-        .send()
-        .await
-    {
-        Ok(r) if r.status().is_success() => r,
-        _ => return, // Ollama not running or unreachable
-    };
-
-    let body: serde_json::Value = match resp.json().await {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    // Extract model names from the response
-    let models = body
-        .get("models")
-        .and_then(|m| m.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    if models.is_empty() {
-        return;
-    }
-
-    eprintln!("[mnemos] unloading {} Ollama model(s)", models.len());
-
-    for model in &models {
-        if let Some(name) = model.get("name").and_then(|n| n.as_str()) {
-            unload_ollama_model(&client, name).await;
-        }
-    }
-}
 
 /// Write [llm] config and restart the daemon to apply.
 #[tauri::command]
