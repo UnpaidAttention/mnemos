@@ -20,6 +20,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CandidateFact {
     pub text: String,
+    /// Knowledge category assigned during extraction. Helps the resolve stage
+    /// compare apples-to-apples and improves extraction quality by forcing the
+    /// LLM to classify before writing.
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 /// What resolution decided to do with a candidate fact relative to existing

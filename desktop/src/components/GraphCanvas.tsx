@@ -103,7 +103,7 @@ interface GraphCanvasProps {
   data: GraphData;
   pprScores?: Record<string, number>;
   colorByCommunity: boolean;
-  onSelect?: (id: string) => void;
+  onSelect?: (id: string | null) => void;
   forceConfig?: ForceConfig;
 }
 

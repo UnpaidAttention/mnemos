@@ -23,8 +23,8 @@ use serde_json::json;
 ///   `{"relations":[{"source":"A","relation":"REL","target":"B"}]}`
 /// * `TASK=reflect`   → one reflection per `REFLECT:<kind>|<text>` occurrence →
 ///   `{"reflections":[{"kind":"<kind>","text":"<text>"}]}`
-/// * `TASK=harden`    → first `RULE:<text>` occurrence →
-///   `{"rule":"<text>"}`
+/// * `TASK=harden`    → all `RULE:<text>` occurrences →
+///   `{"rules":["<text>",...]}`
 /// * `TASK=mine-corrections` → one correction per
 ///   `CORRECTION:<wrong>|<right>|<why>|<trigger>` occurrence →
 ///   `{"corrections":[{"wrong":"...","right":"...","why":"...","trigger":"..."}]}`
@@ -90,15 +90,16 @@ impl LlmProvider for MockLlm {
                 .collect();
             json!({ "reflections": reflections }).to_string()
         } else if req.system.contains("TASK=harden") {
-            // One hardened rule per `RULE:<text>` occurrence (first match wins).
-            let rule_text = content
+            // All `RULE:<text>` occurrences → rules array.
+            let rules: Vec<_> = content
                 .lines()
-                .find_map(|l| {
+                .filter_map(|l| {
                     l.find("RULE:")
                         .map(|i| l[i + "RULE:".len()..].trim().to_string())
                 })
-                .unwrap_or_default();
-            json!({ "rule": rule_text }).to_string()
+                .filter(|r| !r.is_empty())
+                .collect();
+            json!({ "rules": rules }).to_string()
         } else if req.system.contains("TASK=mine-corrections") {
             // One correction per `CORRECTION:<wrong>|<right>|<why>|<trigger>` occurrence.
             let corrections: Vec<_> = content

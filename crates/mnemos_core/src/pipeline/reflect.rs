@@ -108,21 +108,44 @@ pub async fn reflect(
 /// System prompt for the correction-hardening LLM call.
 pub const HARDEN_SYSTEM: &str = "TASK=harden\n\
 You review a cluster of related correction memories sharing a common trigger. \
-Synthesize them into ONE concise, actionable rule. \
-Respond ONLY with JSON {\"rule\":\"...\"}. \
-The rule must be standalone and self-explanatory.";
+Synthesize them into a concise, actionable rule that captures the key lesson. \
+If the corrections contain distinct lessons, you may produce more than one rule. \
+Respond ONLY with JSON {\"rules\":[\"...\"]}.\n\
+Each rule must be standalone and self-explanatory.";
 
 #[derive(Deserialize)]
 struct HardenOut {
+    /// New format: array of rules.
     #[serde(default)]
-    rule: String,
+    rules: Vec<String>,
+    /// Legacy format: single rule string. Merged into `rules` during processing.
+    #[serde(default)]
+    rule: Option<String>,
+}
+
+impl HardenOut {
+    fn into_rules(self) -> Vec<String> {
+        let mut result = self.rules;
+        if let Some(single) = self.rule {
+            let trimmed = single.trim().to_string();
+            if !trimmed.is_empty() && !result.contains(&trimmed) {
+                result.push(trimmed);
+            }
+        }
+        result.retain(|r| !r.trim().is_empty());
+        // Deduplicate while preserving order — identical corrections in a
+        // cluster often produce duplicate rule texts from the LLM.
+        let mut seen = std::collections::HashSet::new();
+        result.retain(|r| seen.insert(r.clone()));
+        result
+    }
 }
 
 /// Cluster recent un-reflected `Correction` memories by shared trigger tag.
-/// For each cluster of `>= min_cluster` members, synthesize one hardened rule
-/// (Reflection tier, tagged `mnemos:hardened` and the cluster tag, importance
-/// 1.0), link it to the source memories with `reflects_on` edges, and mark
-/// the sources reflected so they are not processed again.
+/// For each cluster of `>= min_cluster` members, synthesize one or more
+/// hardened rules (Reflection tier, tagged `mnemos:hardened` and the cluster
+/// tag, importance 1.0), link them to the source memories with `reflects_on`
+/// edges, and mark the sources reflected so they are not processed again.
 ///
 /// Returns the ids of all newly created hardened-rule memories.
 pub async fn harden_corrections(
@@ -225,27 +248,30 @@ pub async fn harden_corrections(
             }
         };
 
-        let rule_text = parsed.rule.trim().to_string();
-        if rule_text.is_empty() {
+        let rules = parsed.into_rules();
+        if rules.is_empty() {
             continue;
         }
 
         let source_ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
 
-        // Write the hardened rule as a Reflection-tier memory.
-        let rule_id = vault
-            .remember_reflection(
-                &rule_text,
-                Some(format!("Hardened rule ({cluster_tag})")),
-                MemoryType::Reflection,
-                vec!["mnemos:hardened".into(), cluster_tag.clone()],
-                &source_ids,
-                vec![],
-            )
-            .await?;
+        // Write each hardened rule as a Reflection-tier memory.
+        for rule_text in &rules {
+            let rule_id = vault
+                .remember_reflection(
+                    rule_text,
+                    Some(format!("Hardened rule ({cluster_tag})")),
+                    MemoryType::Reflection,
+                    vec!["mnemos:hardened".into(), cluster_tag.clone()],
+                    &source_ids,
+                    vec![],
+                )
+                .await?;
 
-        // Override the default importance (0.5) with 1.0 to signal high confidence.
-        vault.patch(&rule_id, None, Some(1.0)).await?;
+            // Override the default importance (0.5) with 1.0 to signal high confidence.
+            vault.patch(&rule_id, None, Some(1.0)).await?;
+            created.push(rule_id);
+        }
 
         // Mark sources reflected so they won't be re-clustered.
         mark_reflected(vault.storage(), &source_ids, Utc::now()).await?;
@@ -253,7 +279,6 @@ pub async fn harden_corrections(
         for id in &source_ids {
             used_ids.insert(id.clone());
         }
-        created.push(rule_id);
     }
 
     Ok(created)

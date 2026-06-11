@@ -454,7 +454,28 @@ async fn unload_ollama_model(client: &reqwest::Client, model_name: &str) {
     eprintln!("[mnemos] unloaded Ollama model: {model_name}");
 }
 
-
+/// Unload all Ollama models that Mnemos has configured (LLM + embedder).
+/// Called at app startup (to clean up stale models from previous sessions) and
+/// at app exit (to free CPU/RAM). Silently ignores all errors.
+pub async fn unload_all_ollama_models() {
+    let cfg = match read_model_config() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if cfg.llm_kind == "ollama" {
+        unload_ollama_model(&client, &cfg.llm_model).await;
+    }
+    if cfg.embedder_kind == "ollama" {
+        unload_ollama_model(&client, &cfg.embedder_model).await;
+    }
+}
 
 /// Write [llm] config and restart the daemon to apply.
 #[tauri::command]

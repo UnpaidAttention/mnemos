@@ -8,8 +8,8 @@ use serde::Deserialize;
 /// System prompt for the entity-linking stage.
 pub const LINK_SYSTEM: &str = "TASK=link\n\
 List the named entities (people, projects, organizations, tools, concepts) \
-mentioned in the text. For each entity, provide a brief description (1-2 \
-sentences) explaining what it is and its role in the context. \
+mentioned in the text. For each entity, provide a brief description explaining \
+what it is and its role in the context — as much detail as needed but no more. \
 The `kind` field MUST be exactly one of: person, project, organization, tool, \
 concept, place, event. If unsure, use \"concept\". \
 Respond ONLY with JSON \

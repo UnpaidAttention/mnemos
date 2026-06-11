@@ -24,6 +24,7 @@ async fn add_creates_new_memory() {
     let v = vault().await;
     let cand = CandidateFact {
         text: "Shaun loves Rust".into(),
+        category: None,
     };
     let (op, new_id) = resolve_and_apply(&v, &cand, prov(), &MockLlm::new())
         .await
@@ -42,6 +43,7 @@ async fn update_supersedes_existing() {
         .unwrap();
     let cand = CandidateFact {
         text: format!("Shaun now uses Helix OP=update TARGET={old}"),
+        category: None,
     };
     let (op, new_id) = resolve_and_apply(&v, &cand, prov(), &MockLlm::new())
         .await
@@ -63,6 +65,7 @@ async fn delete_invalidates_target() {
         .unwrap();
     let cand = CandidateFact {
         text: format!("that is no longer true OP=delete TARGET={target}"),
+        category: None,
     };
     let (op, new_id) = resolve_and_apply(&v, &cand, prov(), &MockLlm::new())
         .await
@@ -78,6 +81,7 @@ async fn noop_creates_nothing() {
     let before = v.list(ListFilter::default()).await.unwrap().len();
     let cand = CandidateFact {
         text: "already known OP=noop".into(),
+        category: None,
     };
     let (op, new_id) = resolve_and_apply(&v, &cand, prov(), &MockLlm::new())
         .await

@@ -43,6 +43,15 @@ const QUERY_BUDGET_CHARS: usize = 1_600;
 /// Default number of recall hits to request from the daemon per prompt.
 const RECALL_K: usize = 8;
 
+/// Minimum aggregate recall score for a hit to be injected. Hits below this
+/// threshold are too weakly related to the prompt and would add noise.
+const MIN_RECALL_SCORE: f64 = 0.25;
+
+/// Maximum working-tier memories rendered into the session-start context.
+/// Identity and rule-type memories are prioritised; the cap prevents the
+/// working set from growing unboundedly as the vault accumulates entries.
+const MAX_SESSION_START_MEMORIES: usize = 15;
+
 /// Entry point for `mnemos hook <event>`.
 ///
 /// Always returns `ExitCode::SUCCESS` (fail-open guarantee).
@@ -112,6 +121,7 @@ async fn session_start(input: Value) -> Option<String> {
                     next_ordinal: 0,
                     keyword_first_seen: std::collections::HashMap::new(),
                     last_prompt_ordinal: 0,
+                    injected_ids: std::collections::HashSet::new(),
                 };
                 if let Err(e) = save_active_session(sid, &state) {
                     eprintln!("mnemos hook session-start: failed to write state file: {e}");
@@ -149,6 +159,12 @@ async fn user_prompt(input: Value) -> Option<String> {
         .trim()
         .to_string();
     if prompt.is_empty() {
+        return None;
+    }
+
+    // Improvement 4: skip recall for trivial prompts (affirmations, short
+    // commands) that won't benefit from historical context.
+    if is_trivial_prompt(&prompt) {
         return None;
     }
 
@@ -219,13 +235,15 @@ async fn user_prompt(input: Value) -> Option<String> {
     };
 
     // ── Layer 2: query-matched recall with entity expansion ──────────────────
-    let hits = fetch_recall(&token, &recall_query, workspace.as_deref(), true).await;
+    let hits = fetch_recall(&token, &recall_query, workspace.as_deref(), true).await
+        .map(|h| filter_by_score(h, MIN_RECALL_SCORE));
 
     // Also fetch recall specifically for returning topics (if any) to ensure
     // we surface the original context that may have fallen out.
     let recovery_hits = if !returning_keywords.is_empty() {
         let recovery_query = returning_keywords.join(" ");
         fetch_recall(&token, &recovery_query, workspace.as_deref(), false).await
+            .map(|h| filter_by_score(h, MIN_RECALL_SCORE))
     } else {
         None
     };
@@ -237,6 +255,18 @@ async fn user_prompt(input: Value) -> Option<String> {
             let _ = save_active_session(sid, &state);
         }
     }
+
+    // ── Improvement 3: session-level dedup ───────────────────────────────────
+    // Load previously injected IDs so we never re-inject the same memory
+    // within a single session. The AI already has it in context.
+    let mut session_injected: std::collections::HashSet<String> = if let Some(ref sid) = session_id
+    {
+        load_active_session(sid)
+            .map(|s| s.injected_ids)
+            .unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
 
     // ── Merge all layers into the injection text ─────────────────────────────
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -253,6 +283,10 @@ async fn user_prompt(input: Value) -> Option<String> {
                 if project_chars >= PROJECT_BUDGET_CHARS {
                     break;
                 }
+                // Session-level dedup: skip memories already injected this session.
+                if session_injected.contains(&m.id) {
+                    continue;
+                }
                 let snippet: String = m.body.chars().take(300).collect();
                 let line = format!("- {}: {}", m.title, snippet);
                 let line_len = line.chars().count() + 1;
@@ -268,7 +302,7 @@ async fn user_prompt(input: Value) -> Option<String> {
     if let Some(ref recovery_list) = recovery_hits {
         let recovery_unique: Vec<&RecallHit> = recovery_list
             .iter()
-            .filter(|h| !seen_ids.contains(&h.memory.id))
+            .filter(|h| !seen_ids.contains(&h.memory.id) && !session_injected.contains(&h.memory.id))
             .take(3) // max 3 recovery hits to avoid crowding
             .collect();
         if !recovery_unique.is_empty() {
@@ -295,7 +329,7 @@ async fn user_prompt(input: Value) -> Option<String> {
     if let Some(ref hit_list) = hits {
         let query_hits: Vec<&RecallHit> = hit_list
             .iter()
-            .filter(|h| !seen_ids.contains(&h.memory.id))
+            .filter(|h| !seen_ids.contains(&h.memory.id) && !session_injected.contains(&h.memory.id))
             .collect();
         if !query_hits.is_empty() {
             if !lines.is_empty() {
@@ -313,6 +347,7 @@ async fn user_prompt(input: Value) -> Option<String> {
                 let line_len = line.chars().count() + 1;
                 query_chars += line_len;
                 char_budget = char_budget.saturating_sub(line_len);
+                seen_ids.insert(h.memory.id.clone());
                 lines.push(line);
             }
         }
@@ -320,6 +355,18 @@ async fn user_prompt(input: Value) -> Option<String> {
 
     if lines.is_empty() {
         return None;
+    }
+
+    // Persist newly injected IDs into session state for future dedup.
+    let newly_injected = &seen_ids;
+    if !newly_injected.is_empty() {
+        if let Some(ref sid) = session_id {
+            if let Some(mut state) = load_active_session(sid) {
+                session_injected.extend(newly_injected.iter().cloned());
+                state.injected_ids = session_injected;
+                let _ = save_active_session(sid, &state);
+            }
+        }
     }
 
     let text = lines.join("\n");
@@ -1124,6 +1171,11 @@ struct ActiveSessionState {
     /// how far back an "old" keyword is relative to the current prompt.
     #[serde(default)]
     last_prompt_ordinal: u32,
+    /// Session-level dedup: IDs of memories already injected during this
+    /// session. Prevents the same memory from being re-injected on subsequent
+    /// prompts when the AI already has it in context.
+    #[serde(default)]
+    injected_ids: std::collections::HashSet<String>,
 }
 
 /// Resolve the directory for active session state files.
@@ -1232,11 +1284,32 @@ async fn fetch_working_set(token: &str, workspace: Option<&str>) -> Option<Strin
 /// The daemon returns `{ "memories": [...], "hardened_rules": [...] }`.
 /// We format each entry as `[title]: [body snippet]` lines so the LLM can
 /// parse the context easily.
+///
+/// Improvement 1: prioritise identity and rule-type memories. Project-specific
+/// context comes from per-prompt Layer 1 injection, so we deprioritise it here
+/// to avoid duplicating context. Capped at `MAX_SESSION_START_MEMORIES` to
+/// prevent unbounded growth.
 fn render_working_set(body: &Value) -> String {
     let mut lines: Vec<String> = vec![];
 
     if let Some(mems) = body.get("memories").and_then(|v| v.as_array()) {
+        // Partition memories: identity/rule types first, then the rest.
+        let mut priority_mems: Vec<&Value> = Vec::new();
+        let mut other_mems: Vec<&Value> = Vec::new();
         for m in mems {
+            let kind = m.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            match kind {
+                "identity" | "rule" | "correction" => priority_mems.push(m),
+                _ => other_mems.push(m),
+            }
+        }
+        // Combine: priority entries first, then backfill with others up to cap.
+        let combined: Vec<&Value> = priority_mems
+            .into_iter()
+            .chain(other_mems.into_iter())
+            .take(MAX_SESSION_START_MEMORIES)
+            .collect();
+        for m in combined {
             let title = m
                 .get("title")
                 .and_then(|v| v.as_str())
@@ -1260,6 +1333,74 @@ fn render_working_set(body: &Value) -> String {
     }
 
     lines.join("\n")
+}
+
+// ── Injection path helpers ────────────────────────────────────────────────────────
+
+/// Improvement 4: Detect trivial prompts that don't benefit from memory recall.
+///
+/// Trivial prompts are short affirmations, single-word responses, or simple
+/// commands where injecting historical context would waste token budget.
+///
+/// Heuristics:
+/// - Under 15 chars: too short to carry meaningful semantic signal
+/// - Matches a known pattern: affirmations, confirmations, simple directives
+pub(crate) fn is_trivial_prompt(prompt: &str) -> bool {
+    let lower = prompt.to_lowercase();
+    let trimmed = lower.trim();
+
+    // Very short prompts rarely benefit from recall.
+    if trimmed.len() < 15 {
+        return true;
+    }
+
+    // Common trivial patterns (anchored: the entire trimmed prompt must match).
+    const TRIVIAL_PATTERNS: &[&str] = &[
+        "yes",
+        "no",
+        "ok",
+        "okay",
+        "sure",
+        "thanks",
+        "thank you",
+        "looks good",
+        "lgtm",
+        "sounds good",
+        "go ahead",
+        "do it",
+        "proceed",
+        "continue",
+        "next",
+        "done",
+        "got it",
+        "perfect",
+        "great",
+        "correct",
+        "exactly",
+        "agreed",
+        "approve",
+        "confirmed",
+        "ship it",
+        "merge it",
+        "yeah",
+        "yep",
+        "nope",
+        "nah",
+    ];
+
+    // Strip trailing punctuation for matching ("yes!" → "yes").
+    let stripped = trimmed.trim_end_matches(|c: char| c.is_ascii_punctuation());
+
+    TRIVIAL_PATTERNS.contains(&stripped)
+}
+
+/// Improvement 2: Filter recall hits by minimum score.
+///
+/// Returns only hits whose aggregate score meets or exceeds `min_score`.
+/// If all hits are below the threshold, returns an empty vec (the caller
+/// should inject nothing rather than noise).
+fn filter_by_score(hits: Vec<RecallHit>, min_score: f64) -> Vec<RecallHit> {
+    hits.into_iter().filter(|h| h.score >= min_score).collect()
 }
 
 // ── user_prompt pure helpers ──────────────────────────────────────────────────
@@ -2390,6 +2531,7 @@ mod tests {
                 m
             },
             last_prompt_ordinal: 9,
+            injected_ids: std::collections::HashSet::new(),
         };
         // "connector" gap = 10-0 = 10 >= 4 (OLD_TOPIC_ORDINAL_GAP) => returning
         // "module" gap = 10-8 = 2 < 4 => NOT returning
@@ -2410,6 +2552,7 @@ mod tests {
             next_ordinal: 0,
             keyword_first_seen: std::collections::HashMap::new(),
             last_prompt_ordinal: 0,
+            injected_ids: std::collections::HashSet::new(),
         };
         let returning = detect_returning_topics(&state, "fix the connector");
         assert!(returning.is_empty());
@@ -2428,6 +2571,7 @@ mod tests {
                 m
             },
             last_prompt_ordinal: 4,
+            injected_ids: std::collections::HashSet::new(),
         };
         record_prompt_keywords(&mut state, "fix the connector again");
         assert_eq!(
@@ -2437,6 +2581,114 @@ mod tests {
         assert_eq!(
             state.keyword_first_seen["again"], 5,
             "new keyword gets current ordinal"
+        );
+    }
+
+    // ── is_trivial_prompt: short/affirmative prompt detection ─────────────
+
+    #[test]
+    fn trivial_prompt_detects_short_prompts() {
+        assert!(is_trivial_prompt("yes"));
+        assert!(is_trivial_prompt("ok"));
+        assert!(is_trivial_prompt("do it"));
+        assert!(is_trivial_prompt("fix it")); // 6 chars < 15
+    }
+
+    #[test]
+    fn trivial_prompt_detects_affirmations() {
+        assert!(is_trivial_prompt("looks good"));
+        assert!(is_trivial_prompt("Looks Good!")); // case-insensitive + punctuation stripped
+        assert!(is_trivial_prompt("LGTM"));
+        assert!(is_trivial_prompt("sounds good"));
+        assert!(is_trivial_prompt("go ahead"));
+        assert!(is_trivial_prompt("ship it"));
+    }
+
+    #[test]
+    fn trivial_prompt_passes_meaningful_prompts() {
+        assert!(!is_trivial_prompt(
+            "How does the injection path work with connected AI tools?"
+        ));
+        assert!(!is_trivial_prompt(
+            "Fix the pipeline extraction for multi-rule output"
+        ));
+        assert!(!is_trivial_prompt(
+            "Can you explain the session manager?"
+        ));
+    }
+
+    #[test]
+    fn trivial_prompt_passes_short_but_meaningful() {
+        // 15+ chars but not a known trivial pattern
+        assert!(!is_trivial_prompt("add error handling to the API"));
+    }
+
+    // ── filter_by_score: recall score cutoff ─────────────────────────────
+
+    #[test]
+    fn filter_by_score_removes_low_scoring_hits() {
+        let mut low = make_hit("Low", "barely relevant");
+        low.score = 0.10;
+        let mut high = make_hit("High", "very relevant");
+        high.score = 0.80;
+        let hits = vec![low, high];
+        let filtered = filter_by_score(hits, 0.25);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].memory.title, "High");
+    }
+
+    #[test]
+    fn filter_by_score_keeps_hits_at_threshold() {
+        let mut exact = make_hit("Exact", "at threshold");
+        exact.score = 0.25;
+        let hits = vec![exact];
+        let filtered = filter_by_score(hits, 0.25);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn filter_by_score_returns_empty_when_all_below() {
+        let mut low1 = make_hit("A", "a");
+        low1.score = 0.05;
+        let mut low2 = make_hit("B", "b");
+        low2.score = 0.15;
+        let filtered = filter_by_score(vec![low1, low2], 0.25);
+        assert!(filtered.is_empty());
+    }
+
+    // ── render_working_set: identity/rule prioritisation + cap ────────────
+
+    #[test]
+    fn render_working_set_prioritises_identity_type() {
+        let body = serde_json::json!({
+            "memories": [
+                { "title": "Project A", "body": "A project", "type": "project" },
+                { "title": "I am Jon", "body": "identity fact", "type": "identity" },
+                { "title": "Some fact", "body": "random fact", "type": "fact" },
+            ]
+        });
+        let out = render_working_set(&body);
+        let lines: Vec<&str> = out.lines().collect();
+        // Identity should come first since it's prioritised
+        assert!(
+            lines[0].contains("I am Jon"),
+            "identity memory should be rendered first, got: {}",
+            lines[0]
+        );
+    }
+
+    #[test]
+    fn render_working_set_caps_at_max_memories() {
+        // Create more memories than MAX_SESSION_START_MEMORIES
+        let mems: Vec<Value> = (0..MAX_SESSION_START_MEMORIES + 10)
+            .map(|i| serde_json::json!({ "title": format!("Mem {i}"), "body": "body", "type": "fact" }))
+            .collect();
+        let body = serde_json::json!({ "memories": mems });
+        let out = render_working_set(&body);
+        let line_count = out.lines().count();
+        assert!(
+            line_count <= MAX_SESSION_START_MEMORIES,
+            "should cap at {MAX_SESSION_START_MEMORIES} memories, got {line_count}"
         );
     }
 }

@@ -7,13 +7,40 @@ use serde::Deserialize;
 /// System prompt for the extraction stage. The `TASK=extract` marker drives
 /// [`MockLlm`](crate::providers::mock_llm::MockLlm); the prose guides real models.
 pub const EXTRACT_SYSTEM: &str = "TASK=extract\n\
-You extract comprehensive knowledge entries worth remembering from a conversation \
-transcript. Each entry should be a detailed, multi-sentence explanation that \
-captures the full context, reasoning, and significance — not just a bare \
-statement. Include WHY something matters, HOW it works, and any constraints or \
-nuances discussed. Resolve all pronouns so each entry stands completely alone. \
-Ignore greetings and chit-chat. Respond ONLY with JSON of the form \
-{\"facts\":[{\"text\":\"...\"}]}.";
+You are a knowledge-base curator. Your job is to read a conversation transcript \
+and extract durable reference entries that would be valuable to recall in future \
+sessions. Write each entry as a standalone fact — someone reading it should \
+understand the knowledge without seeing the original conversation.\n\n\
+CATEGORIES — classify each entry:\n\
+- technical: How something works, architecture, APIs, data formats, dependencies\n\
+- preference: Personal choices, coding style, tool preferences, opinions\n\
+- procedural: Steps to accomplish something, workflows, recipes, commands\n\
+- constraint: Limitations, gotchas, things that don't work, deadlines\n\
+- decision: Choices that were made and WHY, trade-offs considered\n\n\
+GRANULARITY: Each entry should cover one coherent topic. It can contain \
+multiple related claims — just don't mash unrelated topics together.\n\n\
+VOICE: Write declaratively. State what IS true, not what was discussed.\n\
+- NEVER write 'The user said', 'The assistant proposed', 'It was discussed', \
+'They agreed', 'It was confirmed', or any narrative framing.\n\
+- NEVER describe what happened in the conversation — describe the knowledge.\n\n\
+SKIP: Greetings, acknowledgments, chit-chat, troubleshooting back-and-forth \
+that didn't reach a conclusion, vague plans with no specifics.\n\n\
+EXAMPLES:\n\
+{\"text\": \"Apple Music API tokens expire 6 months after creation. Regeneration \
+requires the MusicKit private key stored in the developer portal. The token \
+format is a JWT signed with ES256.\", \"category\": \"technical\"}\n\
+{\"text\": \"Shaun prefers Rust over Go for systems work and uses DM Sans for \
+body text in UI projects.\", \"category\": \"preference\"}\n\
+{\"text\": \"To deploy Mnemos: bump the version in Cargo.toml, update CHANGELOG.md, \
+commit, then push a v*.*.* tag — the release workflow handles .deb and .rpm \
+builds automatically.\", \"category\": \"procedural\"}\n\
+{\"text\": \"libsql-sys uses Unix-only OsStr::as_bytes() and does not compile on \
+Windows. Full Windows support requires libsql to gain Windows compatibility or \
+Mnemos to swap storage backends.\", \"category\": \"constraint\"}\n\
+{\"text\": \"The project uses the bundled llama.cpp embedder as the default instead \
+of Ollama because it eliminates a 200MB dependency and works offline out of the \
+box.\", \"category\": \"decision\"}\n\n\
+Respond ONLY with JSON: {\"facts\":[{\"text\":\"...\",\"category\":\"...\"}]}.";
 
 #[derive(Deserialize)]
 struct ExtractOut {
@@ -54,6 +81,7 @@ pub async fn extract_facts(
         .into_iter()
         .map(|f| CandidateFact {
             text: f.text.trim().to_string(),
+            category: f.category,
         })
         .filter(|f| !f.text.is_empty())
         .collect())
@@ -61,14 +89,25 @@ pub async fn extract_facts(
 
 /// System prompt for incremental (mid-session) extraction.
 const EXTRACT_INCREMENTAL_SYSTEM: &str = "TASK=extract\n\
-You extract comprehensive knowledge entries worth remembering from the NEW \
-section of a conversation transcript. The CONTEXT section shows earlier messages \
-that have already been processed — use them to resolve pronouns and references, \
-but do NOT extract facts from them. Each entry should be a detailed, multi-sentence \
-explanation that captures the full context, reasoning, and significance. Include \
-WHY something matters, HOW it works, and any constraints or nuances discussed. \
-Resolve all pronouns so each entry stands completely alone. Ignore greetings and \
-chit-chat. Respond ONLY with JSON of the form {\"facts\":[{\"text\":\"...\"}]}.";
+You are a knowledge-base curator. Extract durable reference entries from the \
+NEW section of a conversation transcript. The CONTEXT section shows earlier \
+messages that have already been processed — use them to resolve pronouns and \
+references, but do NOT extract facts from them.\n\n\
+CATEGORIES — classify each entry:\n\
+- technical: How something works, architecture, APIs, data formats, dependencies\n\
+- preference: Personal choices, coding style, tool preferences, opinions\n\
+- procedural: Steps to accomplish something, workflows, recipes, commands\n\
+- constraint: Limitations, gotchas, things that don't work, deadlines\n\
+- decision: Choices that were made and WHY, trade-offs considered\n\n\
+GRANULARITY: Each entry should cover one coherent topic. It can contain \
+multiple related claims — just don't mash unrelated topics together.\n\n\
+VOICE: Write declaratively. State what IS true, not what was discussed.\n\
+- NEVER write 'The user said', 'The assistant proposed', 'It was discussed', \
+'They agreed', 'It was confirmed', or any narrative framing.\n\
+- NEVER describe what happened in the conversation — describe the knowledge.\n\n\
+SKIP: Greetings, acknowledgments, chit-chat, troubleshooting back-and-forth \
+that didn't reach a conclusion, vague plans with no specifics.\n\n\
+Respond ONLY with JSON: {\"facts\":[{\"text\":\"...\",\"category\":\"...\"}]}.";
 
 /// Run fact extraction over new chunks with full session context.
 ///
@@ -114,6 +153,7 @@ pub async fn extract_facts_incremental(
         .into_iter()
         .map(|f| CandidateFact {
             text: f.text.trim().to_string(),
+            category: f.category,
         })
         .filter(|f| !f.text.is_empty())
         .collect())

@@ -2,6 +2,46 @@
 
 All notable changes to this project are recorded here.
 
+## [0.9.1] - 2026-06-11
+
+> **Smarter injection path + pipeline prompt refinements.** The Claude Code
+> hook now filters recall hits by relevance score, deduplicates memories
+> across a session, skips trivial prompts, and prioritises identity/rule
+> memories at session start. Pipeline extraction and reflection prompts
+> are freed from rigid numerical constraints that limited LLM output
+> quality.
+
+### Added
+- **Recall score cutoff.** Hits below a 0.25 aggregate score are filtered
+  out before injection, preventing weakly-related noise from consuming
+  the token budget.
+- **Session-level memory dedup.** `ActiveSessionState` now tracks
+  `injected_ids` — memories already injected in the current session are
+  never re-injected on subsequent prompts.
+- **Trivial prompt detection.** Short affirmations and single-word
+  responses (`"yes"`, `"looks good"`, `"lgtm"`, etc.) skip recall
+  entirely, saving latency and budget.
+- **Session-start memory prioritisation.** Identity, rule, and correction
+  type memories are rendered first in the working set; total capped at
+  15 entries to prevent unbounded growth.
+- **10 new unit tests** covering all four injection improvements.
+
+### Changed
+- **Extraction prompt** no longer forces "exactly one claim per entry" —
+  the LLM is free to include as many claims as a fact naturally warrants.
+- **Reflection prompt** removes hard numerical caps (e.g., "1–2
+  sentences") on rule descriptions, allowing richer reflections.
+- **Entity extraction** instructions clarified to avoid artificial
+  constraints on output shape.
+
+### Fixed
+- `render_working_set` no longer renders all working-tier memories
+  without limit, which could bloat session-start context as the vault
+  grew.
+- Query-matched recall hits were missing `seen_ids` tracking, allowing
+  the same memory to appear in both `[Recovered Context]` and
+  `[Relevant Memories]` sections.
+
 ## [0.9.0] - 2026-06-10
 
 > **Desktop redesign + pipeline intelligence.** The desktop app gets a
