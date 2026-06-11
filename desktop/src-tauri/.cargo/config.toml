@@ -1,0 +1,4 @@
+# Share the root workspace's target directory so shared crates
+# (mnemos_core, mnemos_cli, etc.) are only compiled once.
+[build]
+target-dir = "../../target"
