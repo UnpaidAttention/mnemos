@@ -17,6 +17,8 @@ export function Shell({ children }: { children: ReactNode }) {
 
   // Views that manage their own context panels — hide the global Inspector
   const hideInspector = currentPath === "/graph" || currentPath === "/knowledge";
+  // Views that manage their own scroll/canvas — suppress page-level scroll
+  const suppressScroll = currentPath === "/graph";
 
   // ⌘K / Ctrl+K global shortcut
   useEffect(() => {
@@ -60,7 +62,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <TopBar onCommand={() => setPaletteOpen(true)} onAdd={() => setAddOpen(true)} />
       <div className="flex min-h-0 flex-1">
         <LeftSidebar />
-        <main className={`min-w-0 flex-1 ${hideInspector ? "overflow-hidden" : "overflow-y-auto"}`}>{children}</main>
+        <main className={`min-w-0 flex-1 ${suppressScroll ? "overflow-hidden" : "overflow-y-auto"}`}>{children}</main>
         {!hideInspector && <Inspector />}
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
