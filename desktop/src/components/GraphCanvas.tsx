@@ -112,6 +112,7 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
   const fgRef = useRef<ForceGraphMethods>();
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hoverNode, setHoverNode] = useState<string | null>(null);
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
 
   const graphData = useMemo(() => ({
     nodes: data.nodes.map(n => ({ ...n })),
@@ -308,11 +309,13 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
       }
 
       // ── Labels ──────────────────────────────────────────────────
+      // When a node is hovered, only show the hovered node's canvas label.
+      // Neighbor labels are displayed in the floating tooltip instead.
       ctx.globalAlpha = dimOthers ? 0.12 : 1;
       const showLabel =
-        isFocused ||
-        (globalScale > 1.5 && baseRadius > 5) ||
-        (!hoverNode && globalScale > 2);
+        isHovered ||
+        (!hoverNode && globalScale > 2) ||
+        (!hoverNode && globalScale > 1.5 && baseRadius > 5);
 
       if (showLabel) {
         const fontSize = isHovered ? 14 / globalScale : 11 / globalScale;
@@ -330,8 +333,33 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
     [hoverNode, neighbors, pprScores, colorByCommunity, maxPpr],
   );
 
+  // Build tooltip data when hovering
+  const tooltipData = useMemo(() => {
+    if (!hoverNode) return null;
+    const node = graphData.nodes.find((n) => n.id === hoverNode);
+    if (!node) return null;
+    const neighborIds = neighbors.get(hoverNode);
+    if (!neighborIds) return { name: node.name, connections: [] };
+    const connections = Array.from(neighborIds)
+      .map((nid) => {
+        const n = graphData.nodes.find((nd) => nd.id === nid);
+        return n ? n.name : nid;
+      })
+      .sort((a, b) => a.localeCompare(b));
+    return { name: node.name, connections };
+  }, [hoverNode, graphData.nodes, neighbors]);
+
   return (
-    <div ref={containerRef} className="h-full w-full relative" data-testid="graph-canvas">
+    <div
+      ref={containerRef}
+      className="h-full w-full relative"
+      data-testid="graph-canvas"
+      onMouseMove={(e) => {
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        setHoverPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      }}
+    >
       {dimensions.width > 0 && (
         <ForceGraph2D
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -348,7 +376,10 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
             ctx.fill();
           }}
           onNodeClick={handleNodeClick}
-          onNodeHover={(node: Node | null) => setHoverNode(node ? node.id : null)}
+          onNodeHover={(node: Node | null) => {
+            setHoverNode(node ? node.id : null);
+            if (!node) setHoverPos(null);
+          }}
           linkColor={(link: Link) => {
             const srcId = typeof link.source === "object" ? (link.source as Node).id : (link.source as string);
             const tgtId = typeof link.target === "object" ? (link.target as Node).id : (link.target as string);
@@ -370,6 +401,47 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
           }}
           backgroundColor="transparent"
         />
+      )}
+
+      {/* ── Floating Hover Tooltip ─────────────────────────────────── */}
+      {tooltipData && hoverPos && (
+        <div
+          className="absolute z-20 pointer-events-none"
+          style={{
+            left: Math.min(hoverPos.x + 16, dimensions.width - 280),
+            top: Math.min(hoverPos.y - 12, dimensions.height - 200),
+          }}
+        >
+          <div className="bg-surface/95 backdrop-blur-sm border border-border rounded-lg shadow-floating px-3 py-2.5 w-64">
+            <p className="display text-sm text-accent truncate mb-1">
+              {tooltipData.name}
+            </p>
+            {tooltipData.connections.length > 0 ? (
+              <>
+                <p className="label text-[0.6rem] text-text-muted mb-1">
+                  {tooltipData.connections.length} connection{tooltipData.connections.length !== 1 ? "s" : ""}
+                </p>
+                <ul className="space-y-0.5">
+                  {tooltipData.connections.slice(0, 8).map((name) => (
+                    <li key={name} className="text-xs font-body text-text truncate">
+                      <span className="text-text-muted mr-1">·</span>{name}
+                    </li>
+                  ))}
+                  {tooltipData.connections.length > 8 && (
+                    <li className="text-xs font-body text-text-muted italic">
+                      +{tooltipData.connections.length - 8} more
+                    </li>
+                  )}
+                </ul>
+              </>
+            ) : (
+              <p className="text-xs text-text-muted font-body">No connections</p>
+            )}
+            <p className="text-[0.6rem] text-text-muted mt-1.5 border-t border-border/50 pt-1">
+              Click node to inspect all
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );
