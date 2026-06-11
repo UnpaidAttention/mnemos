@@ -235,14 +235,16 @@ async fn user_prompt(input: Value) -> Option<String> {
     };
 
     // ── Layer 2: query-matched recall with entity expansion ──────────────────
-    let hits = fetch_recall(&token, &recall_query, workspace.as_deref(), true).await
+    let hits = fetch_recall(&token, &recall_query, workspace.as_deref(), true)
+        .await
         .map(|h| filter_by_score(h, MIN_RECALL_SCORE));
 
     // Also fetch recall specifically for returning topics (if any) to ensure
     // we surface the original context that may have fallen out.
     let recovery_hits = if !returning_keywords.is_empty() {
         let recovery_query = returning_keywords.join(" ");
-        fetch_recall(&token, &recovery_query, workspace.as_deref(), false).await
+        fetch_recall(&token, &recovery_query, workspace.as_deref(), false)
+            .await
             .map(|h| filter_by_score(h, MIN_RECALL_SCORE))
     } else {
         None
@@ -302,7 +304,9 @@ async fn user_prompt(input: Value) -> Option<String> {
     if let Some(ref recovery_list) = recovery_hits {
         let recovery_unique: Vec<&RecallHit> = recovery_list
             .iter()
-            .filter(|h| !seen_ids.contains(&h.memory.id) && !session_injected.contains(&h.memory.id))
+            .filter(|h| {
+                !seen_ids.contains(&h.memory.id) && !session_injected.contains(&h.memory.id)
+            })
             .take(3) // max 3 recovery hits to avoid crowding
             .collect();
         if !recovery_unique.is_empty() {
@@ -329,7 +333,9 @@ async fn user_prompt(input: Value) -> Option<String> {
     if let Some(ref hit_list) = hits {
         let query_hits: Vec<&RecallHit> = hit_list
             .iter()
-            .filter(|h| !seen_ids.contains(&h.memory.id) && !session_injected.contains(&h.memory.id))
+            .filter(|h| {
+                !seen_ids.contains(&h.memory.id) && !session_injected.contains(&h.memory.id)
+            })
             .collect();
         if !query_hits.is_empty() {
             if !lines.is_empty() {
@@ -2612,9 +2618,7 @@ mod tests {
         assert!(!is_trivial_prompt(
             "Fix the pipeline extraction for multi-rule output"
         ));
-        assert!(!is_trivial_prompt(
-            "Can you explain the session manager?"
-        ));
+        assert!(!is_trivial_prompt("Can you explain the session manager?"));
     }
 
     #[test]
