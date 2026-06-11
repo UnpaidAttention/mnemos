@@ -1312,7 +1312,7 @@ fn render_working_set(body: &Value) -> String {
         // Combine: priority entries first, then backfill with others up to cap.
         let combined: Vec<&Value> = priority_mems
             .into_iter()
-            .chain(other_mems.into_iter())
+            .chain(other_mems)
             .take(MAX_SESSION_START_MEMORIES)
             .collect();
         for m in combined {
