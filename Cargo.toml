@@ -87,7 +87,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # ONNX reranker (optional; pulled in only with feature rerank-onnx)
 ort = { version = "2.0.0-rc.12", default-features = false, features = ["load-dynamic"] }
-tokenizers = "0.20"
+tokenizers = "0.23"
 ndarray = "0.16"
 
 # Test helpers
