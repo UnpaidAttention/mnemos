@@ -2,6 +2,24 @@
 
 All notable changes to this project are recorded here.
 
+## [0.9.2] - 2026-06-12
+
+> **Graph node visual redesign.** Memory nodes in the knowledge graph
+> are now rendered as faceted crystalline obsidian shards with
+> directional lighting, specular highlights, and glowing energy cracks
+> — replacing the previous simple asteroid shapes.
+
+### Changed
+- **Crystalline obsidian node renderer.** Graph nodes now use a
+  procedurally generated faceted-shard shape with per-facet linear
+  gradients, a global specular shine sweep from a top-left light
+  source, and crisp lit-edge highlights. Larger nodes gain neon-glowing
+  energy cracks with a soft outer bloom and hot white inner core.
+- **Shape generation** uses a seeded PRNG for deterministic,
+  highly-irregular crystal silhouettes (6–9 vertices with 0.55–1.1×
+  radius variation) and an offset interior hub for asymmetric facet
+  geometry.
+
 ## [0.9.1] - 2026-06-11
 
 > **Smarter injection path + pipeline prompt refinements.** The Claude Code

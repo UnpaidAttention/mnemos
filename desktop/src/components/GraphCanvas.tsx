@@ -32,61 +32,139 @@ function hashString(str: string): number {
   return Math.abs(hash);
 }
 
-// ── Procedural asteroid shape generation ────────────────────────────
-// Generates a deterministic irregular polygon shape for each node,
-// seeded by the node's ID hash so it doesn't change on rerender.
-
-interface AsteroidShape {
-  vertices: { angle: number; radius: number }[];
-  craters: { cx: number; cy: number; r: number }[];
-  highlightAngle: number; // angle of specular highlight
+// Helper functions for color conversion and manipulation
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16),
+      }
+    : null;
 }
 
-function generateAsteroidShape(seed: number, baseRadius: number): AsteroidShape {
-  // Seeded random — deterministic per node
+function hexToRgba(hex: string, alpha: number): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return `rgba(58, 157, 151, ${alpha})`;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+}
+
+// ── Procedural shape generation ────────────────────────────────────
+
+interface Facet {
+  p1: { x: number; y: number };
+  p2: { x: number; y: number };
+  p3: { x: number; y: number };
+  brightness: number; // 0 to 1 shade multiplier
+}
+
+interface GlowingCrack {
+  points: { x: number; y: number }[];
+  brightness: number;
+}
+
+interface ObsidianShape {
+  vertices: { x: number; y: number }[];
+  facets: Facet[];
+  cracks: GlowingCrack[];
+}
+
+function generateObsidianShape(seed: number, baseRadius: number): ObsidianShape {
   let s = seed;
   const rand = () => {
     s = (s * 16807 + 0) % 2147483647;
     return (s & 0x7fffffff) / 0x7fffffff;
   };
 
-  // Generate 10-14 vertices with irregular radial offsets
-  const vertexCount = 10 + Math.floor(rand() * 5);
-  const vertices: AsteroidShape["vertices"] = [];
+  // Sharp, angular shard look: 6 to 9 vertices
+  const vertexCount = 6 + Math.floor(rand() * 4);
+  const outerVertices: { x: number; y: number }[] = [];
+  const lightAngle = -Math.PI * 0.75; // light source from top-left
+
   for (let i = 0; i < vertexCount; i++) {
     const angle = (i / vertexCount) * Math.PI * 2;
-    // ±25% radial variation for rocky look
-    const variation = 0.75 + rand() * 0.5;
-    vertices.push({ angle, radius: baseRadius * variation });
-  }
-
-  // Generate 2-4 craters (relative to center, within radius)
-  const craterCount = 2 + Math.floor(rand() * 3);
-  const craters: AsteroidShape["craters"] = [];
-  for (let i = 0; i < craterCount; i++) {
-    const dist = rand() * baseRadius * 0.5;
-    const angle = rand() * Math.PI * 2;
-    craters.push({
-      cx: Math.cos(angle) * dist,
-      cy: Math.sin(angle) * dist,
-      r: baseRadius * (0.08 + rand() * 0.12),
+    // High variation (0.55 to 1.1) to create highly irregular crystal shapes
+    const r = baseRadius * (0.55 + rand() * 0.55);
+    outerVertices.push({
+      x: Math.cos(angle) * r,
+      y: Math.sin(angle) * r,
     });
   }
 
+  // Offset center hub for asymmetric 3D crystal look
+  const hubOffsetDist = baseRadius * 0.28 * rand();
+  const hubOffsetAngle = rand() * Math.PI * 2;
+  const hub = {
+    x: Math.cos(hubOffsetAngle) * hubOffsetDist,
+    y: Math.sin(hubOffsetAngle) * hubOffsetDist,
+  };
+
+  const facets: Facet[] = [];
+  for (let i = 0; i < vertexCount; i++) {
+    const p1 = hub;
+    const p2 = outerVertices[i];
+    const p3 = outerVertices[(i + 1) % vertexCount];
+
+    // Midpoint of the facet triangle
+    const midX = (p1.x + p2.x + p3.x) / 3;
+    const midY = (p1.y + p2.y + p3.y) / 3;
+    const angleToMid = Math.atan2(midY, midX);
+
+    // Light alignment
+    const diff = angleToMid - lightAngle;
+    const alignment = Math.cos(diff);
+    
+    // Specular highlight facets
+    const isSpecular = rand() > 0.6 && alignment > 0.25;
+    let brightness = 0.2 + (alignment + 1) * 0.35; // range [0.2, 0.9]
+    if (isSpecular) {
+      brightness = 0.98;
+    }
+
+    facets.push({ p1, p2, p3, brightness });
+  }
+
+  const cracks: GlowingCrack[] = [];
+  // Only add energy cracks for larger nodes (more importance/mentions)
+  if (baseRadius > 7) {
+    const crackCount = 1 + Math.floor(rand() * 2); // 1 or 2 cracks
+    for (let c = 0; c < crackCount; c++) {
+      const targetIdx = Math.floor(rand() * vertexCount);
+      const target = outerVertices[targetIdx];
+      const points = [hub];
+      
+      const segmentCount = 2 + Math.floor(rand() * 2);
+      for (let sc = 1; sc < segmentCount; sc++) {
+        const t = sc / segmentCount;
+        const lx = hub.x + (target.x - hub.x) * t;
+        const ly = hub.y + (target.y - hub.y) * t;
+        const perpAngle = Math.atan2(target.y - hub.y, target.x - hub.x) + Math.PI / 2;
+        const jitterDist = baseRadius * 0.16 * (rand() - 0.5);
+        points.push({
+          x: lx + Math.cos(perpAngle) * jitterDist,
+          y: ly + Math.sin(perpAngle) * jitterDist,
+        });
+      }
+      points.push(target);
+      cracks.push({ points, brightness: 0.7 + rand() * 0.3 });
+    }
+  }
+
   return {
-    vertices,
-    craters,
-    highlightAngle: rand() * Math.PI * 2,
+    vertices: outerVertices,
+    facets,
+    cracks,
   };
 }
 
 // Cache shapes per node to avoid regeneration
-const shapeCache = new Map<string, AsteroidShape>();
+const shapeCache = new Map<string, ObsidianShape>();
 
-function getAsteroidShape(nodeId: string, baseRadius: number): AsteroidShape {
+function getObsidianShape(nodeId: string, baseRadius: number): ObsidianShape {
   const key = `${nodeId}-${Math.round(baseRadius)}`;
   if (!shapeCache.has(key)) {
-    shapeCache.set(key, generateAsteroidShape(hashString(nodeId), baseRadius));
+    shapeCache.set(key, generateObsidianShape(hashString(nodeId), baseRadius));
   }
   return shapeCache.get(key)!;
 }
@@ -192,7 +270,7 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
 
   const maxPpr = Math.max(0.0001, ...Object.values(pprScores ?? {}));
 
-  // ── Asteroid node renderer ──────────────────────────────────────────
+  // ── High-Fidelity Crystalline Obsidian Node Renderer ─────────────────
   const paintNode = useCallback(
     (node: Node, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const isHovered = node.id === hoverNode;
@@ -215,73 +293,146 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
 
       ctx.globalAlpha = dimOthers ? 0.12 : 1;
 
-      const shape = getAsteroidShape(node.id, radius);
+      const shape = getObsidianShape(node.id, radius);
+      const isDark = document.documentElement.getAttribute("data-theme") === "dark";
 
-      // ── Draw asteroid body ──────────────────────────────────────
+      // ── Render Faceted Obsidian Shard ──
+      ctx.save();
+      
+      // 1. Draw outer boundary and clip
       ctx.beginPath();
       for (let i = 0; i < shape.vertices.length; i++) {
         const v = shape.vertices[i];
-        const x = cx + Math.cos(v.angle) * v.radius;
-        const y = cy + Math.sin(v.angle) * v.radius;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        if (i === 0) ctx.moveTo(cx + v.x, cy + v.y);
+        else ctx.lineTo(cx + v.x, cy + v.y);
       }
       ctx.closePath();
+      ctx.clip();
 
-      // Dark charcoal gradient fill
-      const isDark = document.documentElement.getAttribute("data-theme") === "dark";
-      const grad = ctx.createRadialGradient(
-        cx - radius * 0.3, cy - radius * 0.3, 0,
-        cx, cy, radius * 1.2,
-      );
-      if (isDark) {
-        grad.addColorStop(0, "#555a64");
-        grad.addColorStop(0.5, "#3a3f4a");
-        grad.addColorStop(1, "#24282f");
-      } else {
-        grad.addColorStop(0, "#8a8d94");
-        grad.addColorStop(0.5, "#6a6d74");
-        grad.addColorStop(1, "#4a4d54");
-      }
-      ctx.fillStyle = grad;
-      ctx.fill();
-
-      // ── Edge highlight (specular reflection) ────────────────────
-      ctx.save();
-      ctx.clip(); // clip to asteroid shape
-      const hlX = cx + Math.cos(shape.highlightAngle) * radius * 0.5;
-      const hlY = cy + Math.sin(shape.highlightAngle) * radius * 0.5;
-      const hlGrad = ctx.createRadialGradient(hlX, hlY, 0, hlX, hlY, radius * 0.7);
-      hlGrad.addColorStop(0, isDark ? "rgba(255, 255, 255, 0.35)" : "rgba(255, 255, 255, 0.2)");
-      hlGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
-      ctx.fillStyle = hlGrad;
-      ctx.fill();
-
-      // ── Craters ─────────────────────────────────────────────────
-      for (const crater of shape.craters) {
+      // 2. Draw glossy, linear-shaded facets
+      for (const facet of shape.facets) {
         ctx.beginPath();
-        ctx.arc(cx + crater.cx, cy + crater.cy, crater.r, 0, Math.PI * 2);
-        ctx.fillStyle = isDark ? "rgba(0, 0, 0, 0.3)" : "rgba(0, 0, 0, 0.15)";
+        ctx.moveTo(cx + facet.p1.x, cy + facet.p1.y);
+        ctx.lineTo(cx + facet.p2.x, cy + facet.p2.y);
+        ctx.lineTo(cx + facet.p3.x, cy + facet.p3.y);
+        ctx.closePath();
+
+        const baseColor = hexToRgb(nodeColor) || { r: 58, g: 157, b: 151 };
+        
+        // Solid dark blend factor for Obsidian base stone
+        const blendFactor = isDark ? 0.82 : 0.65;
+        const bgR = isDark ? 14 : 200;
+        const bgG = isDark ? 16 : 204;
+        const bgB = isDark ? 20 : 210;
+
+        const rBase = bgR * blendFactor + baseColor.r * (1 - blendFactor);
+        const gBase = bgG * blendFactor + baseColor.g * (1 - blendFactor);
+        const bBase = bgB * blendFactor + baseColor.b * (1 - blendFactor);
+
+        const fGrad = ctx.createLinearGradient(
+          cx + facet.p1.x, cy + facet.p1.y,
+          cx + (facet.p2.x + facet.p3.x) / 2, cy + (facet.p2.y + facet.p3.y) / 2
+        );
+        
+        const bStart = Math.min(1.0, facet.brightness * 1.35);
+        const bEnd = Math.max(0.1, facet.brightness * 0.55);
+
+        fGrad.addColorStop(0, `rgb(${Math.round(rBase * bStart)}, ${Math.round(gBase * bStart)}, ${Math.round(bBase * bStart)})`);
+        fGrad.addColorStop(1, `rgb(${Math.round(rBase * bEnd)}, ${Math.round(gBase * bEnd)}, ${Math.round(bBase * bEnd)})`);
+
+        ctx.fillStyle = fGrad;
         ctx.fill();
       }
-      ctx.restore();
 
-      // ── Colored glow rim for community identification ───────────
+      // 3. Global Specular Shine Sweep
+      const hlGrad = ctx.createLinearGradient(cx - radius * 0.8, cy - radius * 0.8, cx + radius * 0.5, cy + radius * 0.5);
+      hlGrad.addColorStop(0, isDark ? "rgba(255, 255, 255, 0.35)" : "rgba(255, 255, 255, 0.45)");
+      hlGrad.addColorStop(0.2, "rgba(255, 255, 255, 0.12)");
+      hlGrad.addColorStop(0.5, "rgba(255, 255, 255, 0)");
+      hlGrad.addColorStop(1, "rgba(0, 0, 0, 0.45)");
+      ctx.fillStyle = hlGrad;
       ctx.beginPath();
       for (let i = 0; i < shape.vertices.length; i++) {
         const v = shape.vertices[i];
-        const x = cx + Math.cos(v.angle) * v.radius;
-        const y = cy + Math.sin(v.angle) * v.radius;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        if (i === 0) ctx.moveTo(cx + v.x, cy + v.y);
+        else ctx.lineTo(cx + v.x, cy + v.y);
       }
       ctx.closePath();
+      ctx.fill();
 
-      const glowIntensity = isHovered ? 0.9 : isFocused ? 0.7 : 0.5;
-      ctx.strokeStyle = nodeColor;
-      ctx.lineWidth = isHovered ? 2.5 / globalScale : 1.5 / globalScale;
-      ctx.globalAlpha = (dimOthers ? 0.12 : 1) * glowIntensity;
+      // 4. Glowing magma/energy cracks (Neon core rendering)
+      for (const crack of shape.cracks) {
+        // Pass 1: Soft Outer Glow
+        ctx.save();
+        ctx.shadowColor = nodeColor;
+        ctx.shadowBlur = 12 / globalScale;
+        ctx.strokeStyle = hexToRgba(nodeColor, 0.85);
+        ctx.lineWidth = 4 / globalScale;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        for (let i = 0; i < crack.points.length; i++) {
+          const pt = crack.points[i];
+          if (i === 0) ctx.moveTo(cx + pt.x, cy + pt.y);
+          else ctx.lineTo(cx + pt.x, cy + pt.y);
+        }
+        ctx.stroke();
+        ctx.restore();
+
+        // Pass 2: Hot Inner Core (White core)
+        ctx.save();
+        ctx.strokeStyle = isDark ? "#ffffff" : "#fff8e1";
+        ctx.lineWidth = 1.2 / globalScale;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        for (let i = 0; i < crack.points.length; i++) {
+          const pt = crack.points[i];
+          if (i === 0) ctx.moveTo(cx + pt.x, cy + pt.y);
+          else ctx.lineTo(cx + pt.x, cy + pt.y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.restore(); // restore clipping
+
+      // 5. Crisp edge highlights facing top-left light source
+      const lightDir = { x: Math.cos(-Math.PI * 0.75), y: Math.sin(-Math.PI * 0.75) };
+      for (let i = 0; i < shape.vertices.length; i++) {
+        const v1 = shape.vertices[i];
+        const v2 = shape.vertices[(i + 1) % shape.vertices.length];
+        
+        const dx = v2.x - v1.x;
+        const dy = v2.y - v1.y;
+        const len = Math.sqrt(dx*dx + dy*dy) || 1;
+        const nx = -dy / len;
+        const ny = dx / len;
+        
+        const dot = nx * lightDir.x + ny * lightDir.y;
+        if (dot > 0.25) {
+          ctx.beginPath();
+          ctx.moveTo(cx + v1.x, cy + v1.y);
+          ctx.lineTo(cx + v2.x, cy + v2.y);
+          ctx.strokeStyle = `rgba(255, 255, 255, ${0.48 * dot})`;
+          ctx.lineWidth = 1.6 / globalScale;
+          ctx.stroke();
+        }
+      }
+
+      // Outer outline matching brand/community color
+      ctx.beginPath();
+      for (let i = 0; i < shape.vertices.length; i++) {
+        const v = shape.vertices[i];
+        if (i === 0) ctx.moveTo(cx + v.x, cy + v.y);
+        else ctx.lineTo(cx + v.x, cy + v.y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = hexToRgba(nodeColor, isHovered ? 0.95 : 0.45);
+      ctx.lineWidth = isHovered ? 2.2 / globalScale : 0.9 / globalScale;
       ctx.stroke();
+
+      ctx.globalAlpha = dimOthers ? 0.12 : 1;
 
       // ── Outer glow aura (always visible in dark mode) ────────────
       if (isDark && !dimOthers) {
@@ -309,8 +460,6 @@ export function GraphCanvas({ data, pprScores, colorByCommunity, onSelect, force
       }
 
       // ── Labels ──────────────────────────────────────────────────
-      // When a node is hovered, only show the hovered node's canvas label.
-      // Neighbor labels are displayed in the floating tooltip instead.
       ctx.globalAlpha = dimOthers ? 0.12 : 1;
       const showLabel =
         isHovered ||
