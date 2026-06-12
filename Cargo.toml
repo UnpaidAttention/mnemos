@@ -74,7 +74,7 @@ urlencoding = "2"
 libc = "0.2"
 
 # Hashing
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Executable path resolution
 which = "6"
