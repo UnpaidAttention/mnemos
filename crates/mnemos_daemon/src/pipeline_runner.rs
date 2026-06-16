@@ -213,7 +213,10 @@ async fn end_stale_open_sessions(state: &AppState) {
     if stale_ids.is_empty() {
         return;
     }
-    tracing::info!(count = stale_ids.len(), "stale-sweep: ending abandoned open sessions");
+    tracing::info!(
+        count = stale_ids.len(),
+        "stale-sweep: ending abandoned open sessions"
+    );
     let now = chrono::Utc::now().to_rfc3339();
     for id in &stale_ids {
         if let Ok((wconn, _g)) = state.vault.storage().write_conn().await {

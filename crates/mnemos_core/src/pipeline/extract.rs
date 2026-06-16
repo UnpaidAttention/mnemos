@@ -81,8 +81,7 @@ pub async fn extract_facts(
         system_prompt.push_str("\n\nCustom Schema Guidelines:\n");
         system_prompt.push_str(schema);
     }
-    let req = CompletionRequest::new(&system_prompt, transcript)
-        .with_schema(extraction_schema());
+    let req = CompletionRequest::new(&system_prompt, transcript).with_schema(extraction_schema());
     let raw = llm.complete(&req).await?;
     let parsed: ExtractOut = serde_json::from_str(extract_json(&raw))
         .map_err(|e| MnemosError::Internal(format!("extract parse failed: {e}; raw={raw}")))?;
@@ -142,8 +141,7 @@ pub async fn extract_facts_incremental(
         system_prompt.push_str("\n\nCustom Schema Guidelines:\n");
         system_prompt.push_str(schema);
     }
-    let req = CompletionRequest::new(&system_prompt, transcript)
-        .with_schema(extraction_schema());
+    let req = CompletionRequest::new(&system_prompt, transcript).with_schema(extraction_schema());
     let raw = llm.complete(&req).await?;
     let parsed: ExtractOut = serde_json::from_str(extract_json(&raw))
         .map_err(|e| MnemosError::Internal(format!("extract parse failed: {e}; raw={raw}")))?;

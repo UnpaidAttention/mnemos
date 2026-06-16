@@ -83,4 +83,3 @@ pub fn build_embedder() -> Result<Option<Arc<dyn Embedder>>> {
         }
     }
 }
-
