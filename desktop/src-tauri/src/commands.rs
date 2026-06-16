@@ -650,11 +650,28 @@ pub async fn check_for_updates() -> Result<UpdateInfo, String> {
     let (asset_name, asset_url) = release.get("assets")
         .and_then(|a| a.as_array())
         .and_then(|assets| {
+            // Prefer the desktop bundle over standalone server packages.
+            // Desktop bundles from Tauri are named like "mnemos_0.9.4_amd64.deb"
+            // or "mnemos-0.9.4-1.x86_64.rpm". Skip assets with "daemon" or "cli"
+            // in the name — those are standalone server packages.
             assets.iter().find(|a| {
                 a.get("name")
                     .and_then(|n| n.as_str())
-                    .map(|n| n.ends_with(ext))
+                    .map(|n| {
+                        n.ends_with(ext)
+                            && !n.contains("daemon")
+                            && !n.contains("cli")
+                    })
                     .unwrap_or(false)
+            })
+            // Fallback: grab any matching extension if no desktop bundle found
+            .or_else(|| {
+                assets.iter().find(|a| {
+                    a.get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|n| n.ends_with(ext))
+                        .unwrap_or(false)
+                })
             })
         })
         .map(|asset| {
