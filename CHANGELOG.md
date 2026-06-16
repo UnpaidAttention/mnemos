@@ -2,6 +2,32 @@
 
 All notable changes to this project are recorded here.
 
+## [0.9.4] - 2026-06-16
+
+> **Pipeline reliability & CLI config fix.** Resolves the primary cause
+> of zero new memories: the CLI used a hardcoded bundled embedder instead
+> of reading `config.toml`, abandoned sessions were never ended, and the
+> LLM timeout was too short for extraction workloads.
+
+### Fixed
+- **CLI reads `config.toml`.** The `mnemos` CLI now reads
+  `~/.config/mnemos/config.toml` via `Config::load_default()`, matching
+  the daemon's embedder kind/model/URL exactly. Previously the CLI
+  hardcoded `bundled` (384d), causing a dimension mismatch when the
+  daemon was configured for `ollama` (768d). (`crates/mnemos_cli`)
+- **DB-level stale session sweep.** On startup, the daemon now finds
+  sessions stuck OPEN in the database (where `ended_at IS NULL` but the
+  most recent chunk is >10 minutes old) and ends them automatically.
+  This catches hook-originated sessions (Claude Code) that the in-memory
+  `SessionManager` sweep never tracked. (`pipeline_runner`)
+- **LLM timeout increased.** Default `timeout_secs` raised from 120 to
+  300 seconds. Extraction prompts send the full session context to the
+  LLM; small models with thinking enabled (qwen3:4b) routinely exceeded
+  120s on sessions with many chunks. (`config.rs`)
+- **Catch-up logging.** `catch_up()` now logs an `info!` message when
+  it finds zero unprocessed sessions, making it diagnosable from logs
+  whether the function ran vs was never called. (`pipeline_runner`)
+
 ## [0.9.3] - 2026-06-16
 
 > **Memory quality & extraction mode.** Schema-enforced JSON extraction

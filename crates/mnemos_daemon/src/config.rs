@@ -189,7 +189,7 @@ impl Default for LlmConfig {
             kind: LlmKind::Bundled,
             url: "http://127.0.0.1:7425".into(),
             model: "Qwen3-0.6B".into(),
-            timeout_secs: 120,
+            timeout_secs: 300,
         }
     }
 }

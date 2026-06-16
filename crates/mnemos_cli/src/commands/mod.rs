@@ -25,6 +25,7 @@ use mnemos_core::providers::{
     Embedder,
 };
 use mnemos_core::{paths::Paths, vault::Vault};
+use mnemos_daemon::config::{Config, EmbedderKind};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -37,53 +38,49 @@ pub async fn open_vault(vault_override: Option<PathBuf>) -> Result<Vault> {
     Ok(Vault::open_with_embedder(paths, embedder).await?)
 }
 
-/// Embedder selection by env var. Mirrors the daemon's `build_embedder_for_daemon`
-/// so the CLI's direct-vault commands (`remember`, `recall`) use the same backend
-/// the daemon seeded the vault with. `Vault::open_with_embedder` enforces that the
-/// selected kind/dim matches the vault's stored metadata, so a mismatch surfaces a
-/// clear error rather than silently corrupting vectors.
+/// Build the embedder from `config.toml`, with environment-variable overrides.
 ///
-/// - `MNEMOS_EMBEDDER=bundled` (default) → bundled llama-server HTTP client
-///   (`MNEMOS_BUNDLED_URL`, default `http://127.0.0.1:7424`). Requires `mnemosd`
-///   to be running, since only the daemon spawns the llama-server child process.
-/// - `MNEMOS_EMBEDDER=ollama`  → `OllamaEmbedder` (`MNEMOS_OLLAMA_URL`, `MNEMOS_OLLAMA_MODEL`)
-/// - `MNEMOS_EMBEDDER=openai`  → `OpenAiEmbedder` (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MNEMOS_EMBEDDER_MODEL`)
-/// - `MNEMOS_EMBEDDER=mock`    → deterministic `MockEmbedder` (`MNEMOS_EMBEDDER_DIM`, default 768)
-/// - `MNEMOS_EMBEDDER=none`    → no embedder; BM25-only mode
+/// This uses the same `Config::load_default()` as the daemon, ensuring the CLI
+/// and daemon always agree on the embedder kind, model, URL, and dimension.
+/// Previously the CLI only read `MNEMOS_EMBEDDER` env vars and defaulted to
+/// `bundled` (384d), causing a dimension mismatch when the daemon was
+/// configured for `ollama` (768d).
 pub fn build_embedder() -> Result<Option<Arc<dyn Embedder>>> {
-    let kind = std::env::var("MNEMOS_EMBEDDER").unwrap_or_else(|_| "bundled".into());
-    match kind.as_str() {
-        "none" => Ok(None),
-        "mock" => {
-            let dim = std::env::var("MNEMOS_EMBEDDER_DIM")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(768);
+    let cfg = Config::load_default().unwrap_or_default();
+    let ecfg = &cfg.embedder;
+
+    match ecfg.kind {
+        EmbedderKind::None => Ok(None),
+        EmbedderKind::Mock => {
+            let dim = if ecfg.dim > 0 { ecfg.dim } else { 768 };
             Ok(Some(Arc::new(MockEmbedder::new(dim))))
         }
-        "bundled" => {
-            let url = std::env::var("MNEMOS_BUNDLED_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:7424".into());
+        EmbedderKind::Bundled => {
+            let url = if ecfg.url.is_empty() {
+                "http://127.0.0.1:7424".to_string()
+            } else {
+                ecfg.url.clone()
+            };
             let embedder =
                 BundledEmbedder::new(url).map_err(|e| anyhow!("bundled embedder init: {e}"))?;
             Ok(Some(Arc::new(embedder)))
         }
-        "ollama" => {
-            let mut cfg = OllamaConfig::default();
-            if let Ok(url) = std::env::var("MNEMOS_OLLAMA_URL") {
-                cfg.base_url = url;
+        EmbedderKind::Ollama => {
+            let mut oc = OllamaConfig::default();
+            if !ecfg.url.is_empty() {
+                oc.base_url = ecfg.url.clone();
             }
-            if let Ok(model) = std::env::var("MNEMOS_OLLAMA_MODEL") {
-                cfg.model = model;
+            if !ecfg.model.is_empty() {
+                oc.model = ecfg.model.clone();
             }
-            Ok(Some(Arc::new(OllamaEmbedder::new(cfg))))
+            Ok(Some(Arc::new(OllamaEmbedder::new(oc))))
         }
-        "openai" => {
-            let cfg = openai_embedder::config_from_env()
+        EmbedderKind::OpenAi => {
+            let oc = openai_embedder::config_from_env()
                 .map_err(|e| anyhow!("openai embedder env: {e}"))?;
-            let e = OpenAiEmbedder::new(&cfg).map_err(|e| anyhow!("openai embedder init: {e}"))?;
+            let e = OpenAiEmbedder::new(&oc).map_err(|e| anyhow!("openai embedder init: {e}"))?;
             Ok(Some(Arc::new(e)))
         }
-        other => anyhow::bail!("unknown MNEMOS_EMBEDDER value: {other:?}"),
     }
 }
+

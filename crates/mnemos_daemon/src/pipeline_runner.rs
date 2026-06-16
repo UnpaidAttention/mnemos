@@ -148,6 +148,12 @@ async fn catch_up(state: &AppState) {
         return;
     }
 
+    // End any sessions stuck OPEN in the database (hook-created sessions
+    // whose session_end was never called). The in-memory SessionManager
+    // sweep only handles sessions it created via touch(); hook-originated
+    // sessions bypass that entirely.
+    end_stale_open_sessions(state).await;
+
     let ids = match unprocessed_session_ids(state).await {
         Ok(ids) => ids,
         Err(e) => {
@@ -156,11 +162,71 @@ async fn catch_up(state: &AppState) {
         }
     };
     if ids.is_empty() {
+        tracing::info!("catch-up: no unprocessed sessions found");
         return;
     }
     tracing::info!(count = ids.len(), "catch-up: retrying unprocessed sessions");
     for id in ids {
         process_session(state, &id).await;
+    }
+}
+
+/// End sessions that are stuck OPEN in the database. These are sessions
+/// created by hooks (Claude Code, etc.) where session_end was never called.
+/// A session is considered stale if:
+/// - `ended_at IS NULL` (never ended)
+/// - It has at least one chunk
+/// - The most recent chunk was added more than 10 minutes ago
+async fn end_stale_open_sessions(state: &AppState) {
+    let conn = match state.vault.storage().conn() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "stale-sweep: failed to get DB connection");
+            return;
+        }
+    };
+    // Find sessions that are open, have chunks, and whose last chunk
+    // is older than 10 minutes.
+    let mut rows = match conn
+        .query(
+            "SELECT s.id FROM sessions s \
+             JOIN chunks c ON c.session_id = s.id \
+             WHERE s.ended_at IS NULL \
+             GROUP BY s.id \
+             HAVING max(c.created_at) < datetime('now', '-10 minutes')",
+            params![],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "stale-sweep: query failed");
+            return;
+        }
+    };
+    let mut stale_ids = Vec::new();
+    while let Ok(Some(r)) = rows.next().await {
+        if let Ok(id) = r.get::<String>(0) {
+            stale_ids.push(id);
+        }
+    }
+    if stale_ids.is_empty() {
+        return;
+    }
+    tracing::info!(count = stale_ids.len(), "stale-sweep: ending abandoned open sessions");
+    let now = chrono::Utc::now().to_rfc3339();
+    for id in &stale_ids {
+        if let Ok((wconn, _g)) = state.vault.storage().write_conn().await {
+            let _ = wconn
+                .execute(
+                    "UPDATE sessions SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
+                    params![now.clone(), id.clone()],
+                )
+                .await;
+            tracing::info!(session_id = %id, "stale-sweep: ended abandoned session");
+            // Fire SessionEnded so the pipeline picks it up during catch_up.
+            state.events.publish(Event::SessionEnded { id: id.clone() });
+        }
     }
 }
 
