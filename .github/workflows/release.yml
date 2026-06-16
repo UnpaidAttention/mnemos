@@ -19,8 +19,8 @@ permissions:
 # a future release. The daemon + CLI ship as Tauri sidecars inside
 # the desktop bundle — no separate server packages.
 jobs:
-  build:
-    name: Build desktop bundle (linux-x86_64)
+  build-and-release:
+    name: Build and publish desktop bundle (linux-x86_64)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -75,45 +75,15 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Stage artifacts
+      - name: Stage release artifacts
         shell: bash
         run: |
-          mkdir -p staged
+          mkdir -p release
           shopt -s globstar nullglob
           for f in desktop/src-tauri/target/release/bundle/**/*.{deb,rpm,AppImage,AppImage.tar.gz,sig}; do
-            cp "$f" staged/
+            cp -v "$f" release/
           done
-          ls -la staged/
-
-      - name: Upload bundle artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: bundle-linux-x86_64
-          path: staged/
-          retention-days: 7
-
-  release:
-    name: Publish release
-    needs: [build]
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-
-      - name: Flatten + list
-        run: |
-          mkdir -p release/
-          find artifacts/ -type f \( \
-              -name "*.deb" -o \
-              -name "*.rpm" -o \
-              -name "*.AppImage" -o \
-              -name "*.AppImage.tar.gz" -o \
-              -name "*.sig" \
-            \) -exec cp -v {} release/ \;
+          echo "--- Release artifacts ---"
           ls -la release/
 
       - name: Publish GitHub Release
