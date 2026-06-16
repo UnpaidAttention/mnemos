@@ -7,20 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g. v0.7.0). Must already exist."
+        description: "Tag to release (e.g. v0.9.4). Must already exist."
         required: true
 
 permissions:
   contents: write
 
-# v0.7.0 ships Linux-only. macOS bundles fail on `dispatch2`
+# Linux-only desktop bundle. macOS bundles fail on `dispatch2`
 # bitflags-macro recursion (a Tauri transitive); Windows fails on
 # `libsql-sys` using Unix-only OsStr::as_bytes(). Both tracked for
-# a future v0.8.0+ release. The Linux jobs here build .deb + .rpm +
-# .AppImage desktop bundles AND stand-alone CLI/daemon .deb + .rpm.
+# a future release. The daemon + CLI ship as Tauri sidecars inside
+# the desktop bundle — no separate server packages.
 jobs:
   build:
-    name: Build (linux-x86_64)
+    name: Build desktop bundle (linux-x86_64)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -33,8 +33,6 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # Bundled embedder assets needed for Tauri to copy them into the
-      # AppImage/deb/rpm resources.
       - name: Cache bundled assets
         id: cache-assets
         uses: actions/cache@v4
@@ -53,9 +51,6 @@ jobs:
             libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
             librsvg2-dev libappindicator3-dev patchelf libssl-dev \
             libfuse2
-          # libfuse2: linuxdeploy + its appimage plugin are themselves AppImages
-          # and need FUSE to mount during the AppImage bundle step. ubuntu-22.04
-          # runners don't ship it. (APPIMAGE_EXTRACT_AND_RUN below is a fallback.)
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -75,12 +70,6 @@ jobs:
 
       - name: Build desktop bundle
         working-directory: desktop
-        # AppImage temporarily excluded: linuxdeploy resolves the bundled
-        # llama-server's ELF deps and fails on the embedder .so libraries
-        # (libllama-server-impl.so etc.) which aren't yet staged into the
-        # AppDir. The .deb/.rpm desktop bundles + the daemon packages build
-        # fine and ship the working product. Re-add `appimage` once the
-        # embedder .so libs are bundled into the desktop resources.
         run: pnpm tauri build --bundles deb,rpm
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -91,9 +80,6 @@ jobs:
         run: |
           mkdir -p staged
           shopt -s globstar nullglob
-          # .AppImage.tar.gz + .sig are emitted by Tauri when
-          # createUpdaterArtifacts is true; they back the auto-update
-          # latest.json manifest published below.
           for f in desktop/src-tauri/target/release/bundle/**/*.{deb,rpm,AppImage,AppImage.tar.gz,sig}; do
             cp "$f" staged/
           done
@@ -106,52 +92,12 @@ jobs:
           path: staged/
           retention-days: 7
 
-  linux-packages:
-    name: Linux server-side packages
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      # The mnemos-daemon .deb / .rpm bundle the llama-server binary +
-      # .so libraries + GGUF model. Prepare-linux-packages.sh will fetch
-      # them on demand, but caching here saves ~50 MB / ~30s per build.
-      - name: Cache bundled assets
-        id: cache-assets
-        uses: actions/cache@v4
-        with:
-          path: assets/
-          key: bundled-assets-llamacpp-b9400-runtime-embedder
-
-      - name: Fetch bundled assets
-        if: steps.cache-assets.outputs.cache-hit != 'true'
-        run: bash scripts/fetch-bundled-assets.sh
-
-      - name: Install cargo-deb + cargo-generate-rpm
-        run: |
-          cargo install cargo-deb --locked
-          cargo install cargo-generate-rpm --locked
-      - name: Build server packages
-        run: bash scripts/prepare-linux-packages.sh
-      - name: Upload server-side artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-server-packages
-          path: |
-            target/debian/*.deb
-            target/generate-rpm/*.rpm
-          retention-days: 7
-
   release:
     name: Publish release
-    needs: [build, linux-packages]
+    needs: [build]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -161,9 +107,6 @@ jobs:
       - name: Flatten + list
         run: |
           mkdir -p release/
-          # Include Tauri auto-update artifacts (.AppImage.tar.gz, .sig)
-          # alongside the regular packages so latest.json + signature files
-          # are uploaded to the GitHub Release.
           find artifacts/ -type f \( \
               -name "*.deb" -o \
               -name "*.rpm" -o \
@@ -172,67 +115,6 @@ jobs:
               -name "*.sig" \
             \) -exec cp -v {} release/ \;
           ls -la release/
-
-      - name: Build release-manifest tool
-        run: cargo build --release --bin mnemos-release-manifest
-
-      # CI guard: if the updater is re-enabled in tauri.conf.json (i.e. a
-      # "plugins.updater" block with endpoints is present) but no
-      # latest.json is produced, fail loudly so docs and reality cannot
-      # silently diverge again.  When the updater is disabled (current
-      # state) this step is a no-op and the release proceeds without a
-      # latest.json.
-      - name: Updater consistency guard + generate latest.json
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          VERSION="${TAG#v}"
-
-          # Detect whether the updater plugin is active in tauri.conf.json.
-          # "Active" = the plugins.updater block exists AND has a non-empty
-          # endpoints array.  The jq expression returns "true" or "false".
-          UPDATER_ENABLED=$(jq '
-            if (.plugins.updater // null) != null
-               and ((.plugins.updater.endpoints // []) | length) > 0
-            then "true" else "false" end
-          ' desktop/src-tauri/tauri.conf.json)
-
-          LIN_FILE=$(ls release/*.AppImage.tar.gz 2>/dev/null | head -1 || true)
-
-          if [[ "$UPDATER_ENABLED" == "true" && -z "$LIN_FILE" ]]; then
-            echo "::error::UPDATER CONSISTENCY FAILURE: plugins.updater is enabled in" \
-              "tauri.conf.json but no *.AppImage.tar.gz was produced by this release." \
-              "Either re-enable AppImage bundling (and .so staging) or disable the" \
-              "updater plugin. Docs must match the actual release artifacts."
-            exit 1
-          fi
-
-          if [[ -z "$LIN_FILE" ]]; then
-            echo "Updater is disabled (no AppImage.tar.gz produced); skipping latest.json."
-            exit 0
-          fi
-
-          SIG_FILE="${LIN_FILE}.sig"
-          if [[ -f "$SIG_FILE" ]]; then
-            LIN_SIG=$(cat "$SIG_FILE")
-          else
-            echo "no .sig file alongside $LIN_FILE; latest.json signature will be empty" >&2
-            LIN_SIG=""
-          fi
-          NOTES=$(awk "/^## \[$VERSION\]/{f=1;next} /^## \[/{f=0} f" CHANGELOG.md | head -100)
-          if [[ -z "$NOTES" ]]; then
-            NOTES="Release ${TAG}"
-          fi
-          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          ./target/release/mnemos-release-manifest \
-            --version "$VERSION" \
-            --notes "$NOTES" \
-            --platform linux-x86_64 \
-            --url "${base_url}/$(basename "$LIN_FILE")" \
-            --signature "$LIN_SIG" \
-            --output release/latest.json
-          cat release/latest.json
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

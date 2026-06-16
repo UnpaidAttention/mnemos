@@ -8,23 +8,29 @@
 
 ### Option A: Download the installer (fastest)
 
-**Debian / Ubuntu:**
+Grab the latest desktop bundle from the [Releases page](https://github.com/UnpaidAttention/mnemos/releases/latest):
+
+**Debian / Ubuntu (.deb):**
 ```bash
-# Install (or upgrade from a previous version):
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-daemon_0.9.3-1_amd64.deb
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-cli_0.9.3-1_amd64.deb
-sudo dpkg -i mnemos-daemon_0.9.3-1_amd64.deb mnemos-cli_0.9.3-1_amd64.deb
+# Download and install (or upgrade from a previous version):
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_0.9.4_amd64.deb
+sudo dpkg -i mnemos_0.9.4_amd64.deb
 ```
 
-**Fedora / RHEL:**
+**Fedora / RHEL (.rpm):**
 ```bash
-# Install (or upgrade from a previous version):
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-daemon-0.9.3-1.x86_64.rpm
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_cli-0.9.3-1.x86_64.rpm
-sudo rpm -U mnemos-daemon-0.9.3-1.x86_64.rpm mnemos_cli-0.9.3-1.x86_64.rpm
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-0.9.4-1.x86_64.rpm
+sudo rpm -U mnemos-0.9.4-1.x86_64.rpm
 ```
 
-Launch **Mnemos** from your application launcher. Done.
+**AppImage (any distro):**
+```bash
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_0.9.4_amd64.AppImage
+chmod +x mnemos_0.9.4_amd64.AppImage
+./mnemos_0.9.4_amd64.AppImage
+```
+
+Launch **Mnemos** from your application launcher. The daemon, CLI, and bundled embedder are all included — no separate installs needed.
 
 ---
 
@@ -85,7 +91,7 @@ pnpm tauri dev
 
 ```bash
 pnpm tauri build
-# Outputs .deb/.rpm in desktop/src-tauri/target/release/bundle/
+# Outputs .deb/.rpm/.AppImage in desktop/src-tauri/target/release/bundle/
 ```
 
 </details>
@@ -94,24 +100,20 @@ pnpm tauri build
 
 ## Updating from a Previous Version
 
-### Package manager users (`.deb` / `.rpm`)
+### Desktop app users (`.deb` / `.rpm` / `.AppImage`)
 
-Re-download and install the latest packages — they upgrade in place:
+Re-download and install the latest package — it upgrades in place:
 
 **Debian / Ubuntu:**
 ```bash
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-daemon_0.9.3-1_amd64.deb
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-cli_0.9.3-1_amd64.deb
-sudo dpkg -i mnemos-daemon_0.9.3-1_amd64.deb mnemos-cli_0.9.3-1_amd64.deb
-sudo systemctl restart mnemosd   # restart the daemon to load new binaries
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_0.9.4_amd64.deb
+sudo dpkg -i mnemos_0.9.4_amd64.deb
 ```
 
 **Fedora / RHEL:**
 ```bash
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-daemon-0.9.3-1.x86_64.rpm
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_cli-0.9.3-1.x86_64.rpm
-sudo rpm -U mnemos-daemon-0.9.3-1.x86_64.rpm mnemos_cli-0.9.3-1.x86_64.rpm
-sudo systemctl restart mnemosd
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-0.9.4-1.x86_64.rpm
+sudo rpm -U mnemos-0.9.4-1.x86_64.rpm
 ```
 
 ### Source build users
