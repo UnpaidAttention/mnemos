@@ -4,6 +4,8 @@ import type {
 import { getToken } from "./token";
 
 const VALID_RETENTION_VALUES = ["distill-and-prune", "keep-raw"] as const;
+const VALID_EXTRACTION_MODES = ["local", "mcp-piggyback", "none"] as const;
+export type ExtractionMode = (typeof VALID_EXTRACTION_MODES)[number];
 
 export interface ConnectorEdit { path: string; present: boolean }
 export type AutonomyStatus = "autonomous" | "connected" | "not_installed";
@@ -25,6 +27,7 @@ export interface AutonomyConfig {
   capture: boolean;
   retention: "distill-and-prune" | "keep-raw";
   recall_budget_chars: number;
+  extraction_mode: ExtractionMode;
 }
 
 export interface ConnectorPreview {
@@ -214,10 +217,16 @@ export class MnemosClient {
       VALID_RETENTION_VALUES.includes(rawRetention as AutonomyConfig["retention"])
         ? (rawRetention as AutonomyConfig["retention"])
         : "distill-and-prune";
+    const rawMode = a.extraction_mode;
+    const extraction_mode: ExtractionMode =
+      VALID_EXTRACTION_MODES.includes(rawMode as ExtractionMode)
+        ? (rawMode as ExtractionMode)
+        : "local";
     return {
       capture: typeof a.capture === "boolean" ? a.capture : true,
       retention,
       recall_budget_chars: typeof a.recall_budget_chars === "number" ? a.recall_budget_chars : 1200,
+      extraction_mode,
     };
   }
 

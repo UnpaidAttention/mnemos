@@ -83,6 +83,11 @@ pub struct CompletionRequest {
     pub messages: Vec<LlmMessage>,
     /// Hint that the provider should bias toward strict JSON output.
     pub json: bool,
+    /// Optional JSON Schema for grammar-constrained structured output.
+    /// When set, providers that support it (Ollama, OpenAI) will enforce the
+    /// schema at the decoding level, guaranteeing structurally valid output.
+    /// Takes precedence over the `json` flag.
+    pub format_schema: Option<serde_json::Value>,
 }
 
 impl CompletionRequest {
@@ -96,7 +101,15 @@ impl CompletionRequest {
                 content: user.into(),
             }],
             json: true,
+            format_schema: None,
         }
+    }
+
+    /// Set a JSON Schema for grammar-constrained structured output.
+    /// The schema is passed to providers that support it (Ollama, OpenAI).
+    pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
+        self.format_schema = Some(schema);
+        self
     }
 
     /// Concatenate all user-message contents with newlines. Deterministic

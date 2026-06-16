@@ -126,8 +126,18 @@ impl LlmProvider for OpenAiLlm {
             "model": self.cfg.model,
             "messages": messages,
         });
-        if req.json {
-            // OpenAI's JSON mode: nudges the model toward valid JSON output.
+        if let Some(ref schema) = req.format_schema {
+            // Strong mode: OpenAI's structured output with JSON Schema.
+            body["response_format"] = serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": true,
+                    "schema": schema,
+                }
+            });
+        } else if req.json {
+            // Weak mode: nudges the model toward valid JSON output.
             body["response_format"] = serde_json::json!({ "type": "json_object" });
         }
         let url = format!(

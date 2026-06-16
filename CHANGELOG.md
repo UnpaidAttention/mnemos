@@ -2,6 +2,44 @@
 
 All notable changes to this project are recorded here.
 
+## [0.9.3] - 2026-06-16
+
+> **Memory quality & extraction mode.** Schema-enforced JSON extraction
+> via GBNF grammar constraints, configurable extraction modes (local /
+> MCP piggyback / disabled), expanded model catalog, and enriched MCP
+> tool descriptions for better autonomous memory capture.
+
+### Added
+- **Extraction mode setting.** New `extraction_mode` field in Autonomy
+  config with three modes: `local` (default — Ollama model extracts),
+  `mcp-piggyback` (conversation LLM manages via MCP tools), `none`
+  (manual only). Dropdown selector in Autonomy Settings with contextual
+  help text for each mode.
+- **Expanded model catalog.** Added SmolLM3 3B, Ministral 3B Instruct,
+  and Llama 3.2 3B to the CPU-friendly tier. Moved recommended badge
+  from Phi-4 Mini to Qwen3 4B (consensus leader for structured JSON).
+- **Pipeline extraction guardrails.** `pipeline_runner` checks
+  `extraction_mode` before running LLM extraction — skips entirely
+  when mode is `mcp-piggyback` or `none`.
+
+### Changed
+- **Schema-enforced JSON extraction.** `CompletionRequest` gains
+  `format_schema` field. Ollama provider passes the full JSON Schema
+  to the `format` field (GBNF grammar-based token masking). OpenAI
+  provider uses `json_schema` response format. Extraction pipeline
+  defines and passes the extraction schema for all calls.
+- **Simplified extraction prompt.** Reduced from ~150 lines / 5
+  examples to ~80 lines / 2 examples (~40% shorter). Flattened
+  instructions for reliable small-model compliance.
+- **Enriched MCP tool descriptions.** `remember` and `recall` tools
+  now include detailed usage guidance, field descriptions, importance
+  guidelines, and examples — improving LLM proactive tool use in
+  MCP piggyback mode.
+
+### Fixed
+- Extraction pipeline no longer runs when `extraction_mode` is set to
+  `mcp-piggyback` or `none`, preventing duplicate memory creation.
+
 ## [0.9.2] - 2026-06-12
 
 > **Graph node visual redesign.** Memory nodes in the knowledge graph

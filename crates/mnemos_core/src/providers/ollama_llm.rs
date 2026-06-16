@@ -70,7 +70,14 @@ impl LlmProvider for OllamaLlm {
             // (a few seconds for lightweight models like Phi-4 Mini).
             "keep_alive": 1800,
         });
-        if req.json {
+        if let Some(ref schema) = req.format_schema {
+            // Strong mode: grammar-enforced structured output via JSON Schema.
+            // Ollama uses GBNF grammars to hard-constrain token generation
+            // against the schema, guaranteeing structurally valid output.
+            body["format"] = schema.clone();
+        } else if req.json {
+            // Weak mode: tells Ollama to output valid JSON, but without
+            // schema constraints the structure is not guaranteed.
             body["format"] = serde_json::json!("json");
         }
         let url = format!("{}/api/chat", self.cfg.base_url.trim_end_matches('/'));

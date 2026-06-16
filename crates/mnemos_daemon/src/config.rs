@@ -467,6 +467,27 @@ pub enum RetentionPolicy {
     KeepRaw,
 }
 
+/// Controls which component performs memory extraction from sessions.
+///
+/// Only one extraction path should be active at a time to prevent duplicate
+/// memories. The pipeline_runner checks this before running LLM extraction,
+/// and the HINT text served to connectors changes based on the active mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExtractionMode {
+    /// Local Ollama model extracts facts at session-end (default).
+    /// MCP HINT is passive ("call remember when the user states a preference").
+    #[default]
+    Local,
+    /// The conversation LLM (Claude, Gemini, etc.) proactively manages
+    /// memories via MCP tool calls throughout the session.
+    /// Local hook extraction is disabled. MCP HINT is proactive.
+    McpPiggyback,
+    /// No automatic extraction. Memories are only created via manual
+    /// `remember()` MCP calls.
+    None,
+}
+
 /// Configuration for the autonomy layer (capture, retention, recall budget).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -492,6 +513,12 @@ pub struct AutonomyConfig {
     /// Maximum characters of recall context injected by the `user-prompt` hook.
     /// Defaults to 1200 (~300 tokens at 4 chars/token).
     pub recall_budget_chars: usize,
+    /// Controls which component performs memory extraction.
+    ///
+    /// - `"local"` (default): Local Ollama model extracts at session-end.
+    /// - `"mcp-piggyback"`: Conversation LLM manages memories via MCP.
+    /// - `"none"`: No automatic extraction.
+    pub extraction_mode: ExtractionMode,
 }
 
 impl Default for AutonomyConfig {
@@ -500,6 +527,7 @@ impl Default for AutonomyConfig {
             capture: true,
             retention: RetentionPolicy::default(),
             recall_budget_chars: 1200,
+            extraction_mode: ExtractionMode::default(),
         }
     }
 }

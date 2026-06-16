@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { client, type AutonomyConfig } from "../api/client";
+import { client, type AutonomyConfig, type ExtractionMode } from "../api/client";
 import { Button, Card, Skeleton } from "../design/primitives";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -147,6 +147,35 @@ export function AutonomySettings() {
           />
           <span className="label">
             Max characters of recall context injected per prompt (~{Math.round(cfg.recall_budget_chars / 4)} tokens).
+          </span>
+        </label>
+
+        {/* Extraction mode */}
+        <label className="flex flex-col gap-1">
+          <span className="label">Knowledge extraction</span>
+          <select
+            className="bg-surface border border-border rounded-md px-2 py-1 text-sm w-full max-w-xs"
+            style={{ color: "var(--text)", backgroundColor: "var(--surface)" }}
+            value={cfg.extraction_mode}
+            onChange={(e) => {
+              setCfg({
+                ...cfg,
+                extraction_mode: e.target.value as ExtractionMode,
+              });
+              setSaveState("idle");
+            }}
+            aria-label="Knowledge extraction mode"
+          >
+            <option value="local" style={{ color: "var(--text)", backgroundColor: "var(--surface-raised)" }}>Local model (default)</option>
+            <option value="mcp-piggyback" style={{ color: "var(--text)", backgroundColor: "var(--surface-raised)" }}>MCP piggyback — conversation LLM extracts</option>
+            <option value="none" style={{ color: "var(--text)", backgroundColor: "var(--surface-raised)" }}>Disabled — manual only</option>
+          </select>
+          <span className="label">
+            {cfg.extraction_mode === "local"
+              ? "A local Ollama model extracts memories from your sessions automatically."
+              : cfg.extraction_mode === "mcp-piggyback"
+                ? "The AI tool you're chatting with (Claude, Gemini, etc.) manages memories via MCP tools. Recommended when hooks aren't available."
+                : "Automatic extraction is off. Use the remember() MCP tool manually."}
           </span>
         </label>
       </div>

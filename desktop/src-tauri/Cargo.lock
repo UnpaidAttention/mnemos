@@ -1917,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "mnemos-desktop"
-version = "0.9.1"
+version = "0.9.3"
 dependencies = [
  "directories",
  "futures-util",

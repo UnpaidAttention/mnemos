@@ -16,6 +16,7 @@ const defaultConfig = {
   capture: true,
   retention: "distill-and-prune" as const,
   recall_budget_chars: 1200,
+  extraction_mode: "local" as const,
 };
 
 describe("AutonomySettings", () => {
@@ -58,6 +59,7 @@ describe("AutonomySettings", () => {
         capture: false,
         retention: "distill-and-prune",
         recall_budget_chars: 1200,
+        extraction_mode: "local",
       }),
     );
   });

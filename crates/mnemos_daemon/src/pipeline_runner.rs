@@ -286,6 +286,22 @@ async fn run_pipeline(
         mark_processed(state, session_id).await?;
         return Ok(0);
     }
+
+    // When extraction_mode is not Local, skip LLM extraction entirely.
+    // Chunks are already saved (capture is a separate concern); we just
+    // don't run the local model. In mcp-piggyback mode, the conversation
+    // LLM handles extraction via proactive MCP tool calls instead.
+    use crate::config::ExtractionMode;
+    if state.config.autonomy.extraction_mode != ExtractionMode::Local {
+        tracing::info!(
+            session_id = %session_id,
+            mode = ?state.config.autonomy.extraction_mode,
+            "skipping local extraction (extraction_mode is not local)"
+        );
+        mark_processed(state, session_id).await?;
+        return Ok(0);
+    }
+
     let chunk_ids: Vec<String> = chunks.iter().map(|c| c.id.clone()).collect();
     let custom_schema = state.vault.load_custom_schema();
     let facts = extract_facts(&chunks, llm, custom_schema.as_deref()).await?;
@@ -442,6 +458,12 @@ async fn maybe_prune_chunks(state: &AppState, session_id: &str) {
 /// whose ordinal is greater than the session's `processed_through_ordinal`
 /// watermark. Updates the watermark after successful extraction.
 async fn run_incremental_pipeline(state: &AppState, session_id: &str) {
+    // Skip incremental extraction when not in Local mode.
+    use crate::config::ExtractionMode;
+    if state.config.autonomy.extraction_mode != ExtractionMode::Local {
+        return;
+    }
+
     let Some(llm) = state.llm.clone() else {
         tracing::debug!("incremental pipeline: no LLM configured; skipping");
         return;

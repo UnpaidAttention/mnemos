@@ -98,10 +98,9 @@ export const LLM_MODELS: ModelEntry[] = [
     ram: "4 GB",
     hardware: "cpu",
     description:
-      "Best reasoning-to-size ratio available. Near-8B quality in a 3.8B package. " +
-      "Strong structured output and JSON extraction.",
+      "Strong reasoning-to-size ratio. Near-8B quality in a 3.8B package. " +
+      "Good for complex reasoning tasks.",
     idealFor: "CPU-only machines, laptops with 8+ GB RAM",
-    recommended: true,
   },
   {
     name: "Gemma 4 E4B",
@@ -123,9 +122,46 @@ export const LLM_MODELS: ModelEntry[] = [
     ram: "4 GB",
     hardware: "cpu",
     description:
-      "Strong multilingual support and coding tasks. Excellent at " +
-      "JSON extraction and entity recognition.",
+      "Gold standard for structured JSON extraction at this size. " +
+      "Best instruction-following and entity recognition among sub-8B models.",
     idealFor: "Developers, multilingual workflows, 8+ GB RAM",
+    recommended: true,
+  },
+  {
+    name: "SmolLM3 3B",
+    tag: "smollm3:3b",
+    provider: "ollama",
+    size: "~2 GB",
+    ram: "3 GB",
+    hardware: "cpu",
+    description:
+      "HuggingFace's efficiency-optimized model. 128k context window, " +
+      "competitive extraction quality at the smallest footprint.",
+    idealFor: "Low-spec machines, laptops with 4+ GB RAM",
+  },
+  {
+    name: "Ministral 3B Instruct",
+    tag: "ministral:3b",
+    provider: "ollama",
+    size: "~2 GB",
+    ram: "3 GB",
+    hardware: "cpu",
+    description:
+      "Mistral's edge-optimized model. Built specifically for tool-calling " +
+      "and JSON-structured outputs. 256k context window.",
+    idealFor: "Agentic workflows, tool-heavy extraction, 4+ GB RAM",
+  },
+  {
+    name: "Llama 3.2 3B",
+    tag: "llama3.2:3b",
+    provider: "ollama",
+    size: "~2 GB",
+    ram: "3 GB",
+    hardware: "cpu",
+    description:
+      "Meta's compact model optimized for edge devices. Fast inference " +
+      "with solid structured extraction capabilities.",
+    idealFor: "Speed-focused workflows, mobile-class hardware, 4+ GB RAM",
   },
   // ── GPU-Accelerated Tier ───────────────────────────────────────────
   {

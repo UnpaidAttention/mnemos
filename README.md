@@ -10,14 +10,18 @@
 
 **Debian / Ubuntu:**
 ```bash
-wget https://github.com/UnpaidAttention/mnemos/releases/download/v0.8.0/Mnemos_0.8.0_amd64.deb
-sudo dpkg -i Mnemos_0.8.0_amd64.deb
+# Install (or upgrade from a previous version):
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-daemon_0.9.3-1_amd64.deb
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-cli_0.9.3-1_amd64.deb
+sudo dpkg -i mnemos-daemon_0.9.3-1_amd64.deb mnemos-cli_0.9.3-1_amd64.deb
 ```
 
 **Fedora / RHEL:**
 ```bash
-wget https://github.com/UnpaidAttention/mnemos/releases/download/v0.8.0/Mnemos-0.8.0-1.x86_64.rpm
-sudo rpm -i Mnemos-0.8.0-1.x86_64.rpm
+# Install (or upgrade from a previous version):
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-daemon-0.9.3-1.x86_64.rpm
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_cli-0.9.3-1.x86_64.rpm
+sudo rpm -U mnemos-daemon-0.9.3-1.x86_64.rpm mnemos_cli-0.9.3-1.x86_64.rpm
 ```
 
 Launch **Mnemos** from your application launcher. Done.
@@ -60,7 +64,7 @@ cd mnemos
 cargo build --release -p mnemos_cli -p mnemos_daemon
 
 # 2. Install to your PATH
-cp target/release/mnemos target/release/mnemosd ~/.cargo/bin/
+cp target/release/mnemos target/release/mnemosd target/release/mnemos-mcp-stdio ~/.cargo/bin/
 
 # 3. Start the daemon
 mnemosd &
@@ -85,6 +89,51 @@ pnpm tauri build
 ```
 
 </details>
+
+---
+
+## Updating from a Previous Version
+
+### Package manager users (`.deb` / `.rpm`)
+
+Re-download and install the latest packages — they upgrade in place:
+
+**Debian / Ubuntu:**
+```bash
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-daemon_0.9.3-1_amd64.deb
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-cli_0.9.3-1_amd64.deb
+sudo dpkg -i mnemos-daemon_0.9.3-1_amd64.deb mnemos-cli_0.9.3-1_amd64.deb
+sudo systemctl restart mnemosd   # restart the daemon to load new binaries
+```
+
+**Fedora / RHEL:**
+```bash
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-daemon-0.9.3-1.x86_64.rpm
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_cli-0.9.3-1.x86_64.rpm
+sudo rpm -U mnemos-daemon-0.9.3-1.x86_64.rpm mnemos_cli-0.9.3-1.x86_64.rpm
+sudo systemctl restart mnemosd
+```
+
+### Source build users
+
+```bash
+cd mnemos
+git pull origin master
+cargo build --release -p mnemos_cli -p mnemos_daemon
+cp target/release/mnemos target/release/mnemosd target/release/mnemos-mcp-stdio ~/.cargo/bin/
+mnemos daemon restart
+```
+
+### After updating
+
+Your existing vault and memories are preserved — schema migrations run automatically on daemon start. Check the [CHANGELOG.md](CHANGELOG.md) for what's new in each version.
+
+If you previously connected AI tools, reconnect them to pick up updated MCP tool descriptions:
+
+```bash
+# In the Mnemos desktop app: Settings → Connections → Reconnect
+# Or manually restart your AI tool (Claude Code, Antigravity IDE, etc.)
+```
 
 
 ## What You Get

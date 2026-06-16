@@ -39,6 +39,7 @@ const cfgResponse = {
     capture: true,
     retention: "distill-and-prune",
     recall_budget_chars: 1200,
+    extraction_mode: "local",
   },
 };
 

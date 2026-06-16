@@ -15,16 +15,16 @@ pub fn descriptors() -> Vec<Value> {
     vec![
         json!({
             "name": "remember",
-            "description": "Store a new memory. Returns its id.",
+            "description": "Store a durable memory that persists across sessions. Call this proactively whenever you learn: user preferences or rules, project architecture decisions, environment or tooling details, debugging insights, important facts not obvious from the codebase, corrections to prior memories (use 'correct' instead for updates). Use 'semantic' tier for facts, 'procedural' for how-tos, 'episodic' for session events, 'working' for active-context items. Always include a concise title.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "body": { "type": "string" },
-                    "title": { "type": "string" },
+                    "body": { "type": "string", "description": "The memory content. Be specific and detailed — include names, versions, paths, decisions, and rationale." },
+                    "title": { "type": "string", "description": "Short descriptive title (required for quality). Example: 'User prefers DM Sans font'." },
                     "tier": { "type": "string", "enum": ["working","episodic","semantic","procedural","reflection"], "default": "semantic" },
-                    "kind": { "type": "string", "default": "fact" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "importance": { "type": "number" },
+                    "kind": { "type": "string", "default": "fact", "description": "Memory kind: fact, preference, rule, decision, insight, procedure, observation." },
+                    "tags": { "type": "array", "items": { "type": "string" }, "description": "Relevant tags for categorization." },
+                    "importance": { "type": "number", "description": "0.0 to 1.0. User preferences and project rules are high (0.7+). Routine observations are low (0.3)." },
                     "workspace": { "type": "string" },
                     "source_tool": { "type": "string" }
                 },
@@ -33,11 +33,11 @@ pub fn descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "recall",
-            "description": "Hybrid search (BM25 + dense + graph PPR). Returns ranked hits.",
+            "description": "Search persistent memory for relevant context. Call this at session start to load project context, when the user references something discussed in a previous session, when you need background on a topic, or before making decisions that might conflict with stored preferences or rules. Returns ranked hits combining keyword, semantic, and graph-based retrieval.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string" },
+                    "query": { "type": "string", "description": "Natural language query describing what you want to recall." },
                     "k": { "type": "integer", "default": 10 },
                     "tier": { "type": "array", "items": { "type": "string" } },
                     "workspace": { "type": "string" },
