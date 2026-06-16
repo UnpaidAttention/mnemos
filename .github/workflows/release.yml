@@ -80,7 +80,9 @@ jobs:
         run: |
           mkdir -p release
           shopt -s globstar nullglob
-          for f in desktop/src-tauri/target/release/bundle/**/*.{deb,rpm,AppImage,AppImage.tar.gz,sig}; do
+          # Tauri resolves frontendDist "../dist" relative to src-tauri/,
+          # so the bundle output lands at the workspace-level target/ dir.
+          for f in target/release/bundle/**/*.{deb,rpm,AppImage,AppImage.tar.gz,sig}; do
             cp -v "$f" release/
           done
           echo "--- Release artifacts ---"

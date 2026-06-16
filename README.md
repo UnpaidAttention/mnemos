@@ -13,21 +13,21 @@ Grab the latest desktop bundle from the [Releases page](https://github.com/Unpai
 **Debian / Ubuntu (.deb):**
 ```bash
 # Download and install (or upgrade from a previous version):
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_0.9.4_amd64.deb
-sudo dpkg -i mnemos_0.9.4_amd64.deb
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/Mnemos_0.9.4_amd64.deb
+sudo dpkg -i Mnemos_0.9.4_amd64.deb
 ```
 
 **Fedora / RHEL (.rpm):**
 ```bash
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-0.9.4-1.x86_64.rpm
-sudo rpm -U mnemos-0.9.4-1.x86_64.rpm
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/Mnemos-0.9.4-1.x86_64.rpm
+sudo rpm -U Mnemos-0.9.4-1.x86_64.rpm
 ```
 
 **AppImage (any distro):**
 ```bash
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_0.9.4_amd64.AppImage
-chmod +x mnemos_0.9.4_amd64.AppImage
-./mnemos_0.9.4_amd64.AppImage
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/Mnemos_0.9.4_amd64.AppImage
+chmod +x Mnemos_0.9.4_amd64.AppImage
+./Mnemos_0.9.4_amd64.AppImage
 ```
 
 Launch **Mnemos** from your application launcher. The daemon, CLI, and bundled embedder are all included — no separate installs needed.
@@ -106,14 +106,14 @@ Re-download and install the latest package — it upgrades in place:
 
 **Debian / Ubuntu:**
 ```bash
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos_0.9.4_amd64.deb
-sudo dpkg -i mnemos_0.9.4_amd64.deb
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/Mnemos_0.9.4_amd64.deb
+sudo dpkg -i Mnemos_0.9.4_amd64.deb
 ```
 
 **Fedora / RHEL:**
 ```bash
-wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/mnemos-0.9.4-1.x86_64.rpm
-sudo rpm -U mnemos-0.9.4-1.x86_64.rpm
+wget https://github.com/UnpaidAttention/mnemos/releases/latest/download/Mnemos-0.9.4-1.x86_64.rpm
+sudo rpm -U Mnemos-0.9.4-1.x86_64.rpm
 ```
 
 ### Source build users
