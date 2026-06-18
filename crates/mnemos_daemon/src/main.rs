@@ -74,9 +74,25 @@ async fn serve_cmd(cfg: Config) -> Result<()> {
     let embedder = build_embedder_for_daemon(&cfg)?;
     let reranker = build_reranker_for_daemon(&cfg)?;
     let llm = mnemos_daemon::llm::build_llm_for_daemon(&cfg);
-    let vault = Vault::open_with_embedder(paths, embedder)
-        .await
-        .context("opening vault")?;
+    let vault = match Vault::open_with_embedder(paths.clone(), embedder).await {
+        Ok(v) => v,
+        Err(e) => {
+            // Embedder mismatch (dim or kind) is the most common cause: the
+            // user switched embedder config without running an embed-rebuild.
+            // Rather than crashing the daemon (which makes the desktop UI
+            // show "Unable to reach daemon"), start in degraded mode: no
+            // embedding, no semantic search, but all other APIs work.
+            tracing::error!(
+                error = %e,
+                "vault open failed — starting WITHOUT embedder (semantic search disabled). \
+                 To fix: either restore your previous embedder config, or run \
+                 `mnemos embed-rebuild` to re-index with the new embedder."
+            );
+            Vault::open(paths)
+                .await
+                .context("opening vault in degraded mode (no embedder)")?
+        }
+    };
     let bind = format!("{}:{}", cfg.daemon.host, cfg.daemon.port);
     let listener = tokio::net::TcpListener::bind(&bind)
         .await

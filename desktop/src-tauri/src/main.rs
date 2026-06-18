@@ -53,7 +53,9 @@ fn main() {
                 // 2. Start the daemon if it's not already running.
                 let st = crate::daemon::status(&handle).await;
                 if !st.running {
-                    let _ = crate::daemon::start(&handle).await;
+                    if let Err(e) = crate::daemon::start(&handle).await {
+                        eprintln!("[mnemos] daemon start failed: {e}");
+                    }
                 }
             });
             Ok(())

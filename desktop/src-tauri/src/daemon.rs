@@ -55,16 +55,21 @@ pub async fn start(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("resolve sidecar: {e}"))?
         .args(["daemon", "start", "--json"]);
     if let Ok(res) = app.path().resource_dir() {
-        // Bundled llama-server + GGUF live under <resource_dir>/_up_/_up_/assets
-        // in packaged builds (Tauri maps the ../../assets resource entries to a
-        // _up_/_up_ prefix). In dev the daemon falls back to ./assets relative
-        // to its CWD, so a missing path here is harmless.
-        let assets = res.join("_up_").join("_up_").join("assets");
+        // Bundled llama-server + GGUF live under <resource_dir>/<up>/<up>/assets
+        // in packaged builds. Tauri maps the ../../assets resource entries but
+        // the prefix varies across versions: some use `_up_/_up_`, others use
+        // `up/up`. Try both, then fall back to a direct `assets` subdir.
+        let candidates = [
+            res.join("_up_").join("_up_").join("assets"),
+            res.join("up").join("up").join("assets"),
+            res.join("assets"),
+        ];
+        let assets = candidates.iter().find(|p| p.is_dir());
         // Only override the daemon's asset discovery when the bundled assets
         // are actually present (packaged builds). In a dev/non-packaged run the
         // path doesn't exist; setting the env var anyway would override the
         // daemon's working `./assets` fallback and break the embedder.
-        if assets.is_dir() {
+        if let Some(assets) = assets {
             let assets_str = assets.to_string_lossy().to_string();
             // Prepend the assets dir so the dynamically-linked llama-server
             // can find its bundled libllama*.so / libggml*.so neighbors.

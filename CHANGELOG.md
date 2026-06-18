@@ -2,6 +2,34 @@
 
 All notable changes to this project are recorded here.
 
+## [0.9.5] - 2026-06-18
+
+> **Daemon crash fix.** Prevents the daemon from crashing entirely when
+> the configured embedder doesn't match the vault's stored dimensions
+> (e.g. switching from Ollama 768d to bundled 384d). Also fixes bundled
+> asset path resolution in Tauri desktop packages.
+
+### Fixed
+- **Graceful degradation on embedder mismatch.** When the vault was
+  previously seeded with a different embedder (e.g. Ollama/nomic-embed-text
+  at 768d) and the config changes to a different embedder (e.g. bundled at
+  384d), the daemon no longer crashes. It starts in degraded mode (semantic
+  search disabled) and logs a clear error with remediation steps.
+  (`crates/mnemos_daemon/src/main.rs`)
+- **Tauri resource path prefix.** The desktop app now handles both `_up_`
+  and `up` directory prefixes when resolving bundled assets in packaged
+  installs. Previously only `_up_/_up_/assets` was tried, but some Tauri
+  versions produce `up/up/assets`, causing `MNEMOS_BUNDLED_BIN_DIR` to
+  never be set. (`desktop/src-tauri/src/daemon.rs`)
+- **Bundled binary name resolution.** `default_binary_path()` now scans
+  for platform-suffixed `llama-server-*` variants when the plain
+  `llama-server` name isn't found. Tauri resource packaging preserves the
+  original filename (`llama-server-linux-x86_64`) without creating a
+  symlink. (`crates/mnemos_daemon/src/bundled_embedder.rs`)
+- **Daemon start error logging.** The desktop app now logs daemon start
+  failures to stderr instead of silently discarding them with `let _ =`.
+  (`desktop/src-tauri/src/main.rs`)
+
 ## [0.9.4] - 2026-06-16
 
 > **Pipeline reliability & CLI config fix.** Resolves the primary cause

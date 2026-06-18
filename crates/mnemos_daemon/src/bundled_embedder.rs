@@ -43,21 +43,40 @@ impl Default for BundledEmbedderConfig {
 /// Resolve the bundled `llama-server` binary path.
 ///
 /// Order of precedence:
-/// 1. `MNEMOS_BUNDLED_BIN_DIR` env var (`<dir>/llama-server`)
-/// 2. Packaged install wrapper at `/usr/bin/mnemos-llama-server` (sets
+/// 1. `MNEMOS_BUNDLED_BIN_DIR` env var — tries `<dir>/llama-server`, then
+///    scans for any `llama-server-*` variant (handles Tauri resource
+///    packaging where the platform-suffixed name is kept).
+/// 2. XDG data home `~/.local/share/mnemos/assets/llama-server`
+/// 3. Packaged install wrapper at `/usr/bin/mnemos-llama-server` (sets
 ///    `LD_LIBRARY_PATH` then execs the real binary in `/usr/lib/mnemos/`)
-/// 3. Raw packaged install at `/usr/lib/mnemos/llama-server` (relies on
+/// 4. Raw packaged install at `/usr/lib/mnemos/llama-server` (relies on
 ///    `LD_LIBRARY_PATH` being set externally)
-/// 4. Dev layout `assets/llama-server-linux-x86_64`
+/// 5. Dev layout `assets/llama-server-linux-x86_64`
 pub fn default_binary_path() -> PathBuf {
     if let Ok(env) = std::env::var("MNEMOS_BUNDLED_BIN_DIR") {
-        return PathBuf::from(env).join("llama-server");
+        let dir = PathBuf::from(&env);
+        // Prefer the canonical name (symlink or renamed binary).
+        let plain = dir.join("llama-server");
+        if plain.exists() {
+            return plain;
+        }
+        // Tauri resource packaging preserves the original filename
+        // (e.g. llama-server-linux-x86_64) without creating a symlink.
+        // Scan for any llama-server-* variant in the directory.
+        if let Some(found) = find_prefixed_binary(&dir, "llama-server-") {
+            return found;
+        }
+        // Dir was set but nothing found — fall through to other strategies.
     }
     // XDG data home: ~/.local/share/mnemos/assets/llama-server
     if let Some(xdg) = xdg_assets_dir() {
         let p = xdg.join("llama-server");
         if p.exists() {
             return p;
+        }
+        // Also check for platform-suffixed variant in XDG.
+        if let Some(found) = find_prefixed_binary(&xdg, "llama-server-") {
+            return found;
         }
     }
     // Packaged install: wrapper at /usr/bin/mnemos-llama-server sets
@@ -73,6 +92,25 @@ pub fn default_binary_path() -> PathBuf {
         return install;
     }
     PathBuf::from("assets/llama-server-linux-x86_64")
+}
+
+/// Scan `dir` for the first file whose name starts with `prefix`.
+/// Returns `None` if the directory doesn't exist or contains no match.
+fn find_prefixed_binary(dir: &std::path::Path, prefix: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if let Some(name_str) = name.to_str() {
+            if name_str.starts_with(prefix) {
+                let path = entry.path();
+                // Sanity check: must be a file (not a directory or .so lib).
+                if path.is_file() && !name_str.ends_with(".so") {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Resolve the bundled GGUF model path.
